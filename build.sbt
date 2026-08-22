@@ -24,21 +24,11 @@ ThisBuild / scalacOptions ++= Seq(
 )
 
 
-// The toolkit lives in GitHub Packages, which serves Maven only to authenticated callers — public repo or
-// not. Credentials come from the environment in CI and from ~/.sbt/1.0/credentials on a laptop; sbt does
-// not read that file unless a build asks it to, which is what the helper below does.
-resolvers += "homelab-toolkit-zio" at "https://maven.pkg.github.com/AndreMeira/homelab-toolkit-zio"
+// The toolkit lives in GitHub Packages; the resolver and the credential lookup are in
+// project/GitHubPackages.scala so this file stays declarative.
+resolvers += GitHubPackages.toolkit
 
-ThisBuild / credentials ++= githubCredentials
-
-def githubCredentials: Seq[Credentials] =
-  (sys.env.get("GITHUB_ACTOR"), sys.env.get("GITHUB_TOKEN")) match {
-    case (Some(actor), Some(token)) =>
-      Seq(Credentials("GitHub Package Registry", "maven.pkg.github.com", actor, token))
-    case _ =>
-      val local = Path.userHome / ".sbt" / "1.0" / "credentials"
-      if (local.exists) Seq(Credentials(local)) else Nil
-  }
+ThisBuild / credentials ++= GitHubPackages.credentials
 
 
 lazy val root = project
