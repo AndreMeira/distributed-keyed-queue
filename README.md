@@ -12,6 +12,8 @@ Built on [`homelab-toolkit-zio`](../homelab-toolkit-zio) — `homelab-common` br
 store ports (`KeyedQueue`, `KeyLock`, `Distributer`, `PollConsumer`); `homelab-postgres` brings the leased
 store behind them.
 
+Docs follow the homelab-wide taxonomy — see [`docs/README.md`](docs/README.md).
+
 ## Build
 
 ```bash
