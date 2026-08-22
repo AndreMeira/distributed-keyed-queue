@@ -1,0 +1,11 @@
+target/
+.bsp/
+.bloop/
+.metals/
+.ammonite/
+project/project/
+project/target/
+.idea/
+.DS_Store
+*.class
+*.log
