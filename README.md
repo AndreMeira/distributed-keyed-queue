@@ -53,3 +53,7 @@ stubs compile under the strict flags, and zio-test executes. Delete them as the 
 - `src/main/protobuf/homelab/keyedqueue/v1/scaffold.proto`
 - `src/test/scala/homelab/keyedqueue/ScaffoldSpec.scala`
 - `src/main/scala/homelab/keyedqueue/Main.scala` (a placeholder `println`)
+
+## Licence
+
+Apache-2.0 — see [`LICENSE`](LICENSE).
