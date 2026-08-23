@@ -1,0 +1,62 @@
+# The deployment the end-to-end suite drives: two dkq instances over one Valkey, each addressed
+# directly. Run it with `sbt e2e` (which builds the image first), or by hand:
+#
+#   sbt Docker/publishLocal
+#   docker compose -p dkq-e2e -f docker-compose.e2e.yml up -d --wait
+#
+# Its own project name and its own host ports, so it never collides with the dev stack in
+# docker-compose.yml — both can be up at once.
+#
+# **No load balancer in front of the instances, deliberately.** The property under test is that a
+# Dequeue parked on one instance is woken by an Enqueue that landed on the *other*; behind a proxy a
+# client could not tell which instance served it, and the test would prove nothing.
+services:
+  redis:
+    image: valkey/valkey:8.1-alpine
+    ports:
+      - "16379:6379" # exposed for debugging a failed run (valkey-cli -p 16379), not used by the suite
+    command:
+      # Same rules as the dev stack: never evict queued jobs, never persist. See docker-compose.yml.
+      - valkey-server
+      - --maxmemory-policy
+      - noeviction
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  dkq-a: &dkq
+    image: distributed-keyed-queue:latest # built by `sbt Docker/publishLocal`
+    ports:
+      - "9101:9000"
+    environment:
+      DKQ_REDIS_URL: redis://redis:6379
+      # A short lease and a brisk sweep: recovery after a killed instance is a thing the suite waits
+      # for, and 30s of waiting per test is the difference between a suite that gets run and one that
+      # does not. Short enough to test, long enough that an idle handler does not lose its claim.
+      DKQ_LEASE_TTL: 5 seconds
+      DKQ_SWEEP_INTERVAL: 2 seconds
+      # Every parked Dequeue holds a connection for its whole wait, and the load test parks several per
+      # instance at once — this is the ceiling on how many it can serve concurrently.
+      DKQ_CLAIMERS: 16
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # The image carries a JRE and no gRPC tooling, so this proves the port is bound rather than that
+      # the service answers. `docker compose up --wait` gates on it, and the suite's own first call is
+      # the real readiness check.
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/9000'"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  dkq-b:
+    <<: *dkq
+    ports:
+      - "9102:9000"

@@ -18,7 +18,8 @@ Docs follow the homelab-wide taxonomy — see [`docs/README.md`](docs/README.md)
 
 ```bash
 sbt compile
-sbt test
+sbt test    # unit + integration, against a Testcontainers Valkey
+sbt e2e     # the deployed thing: builds the image, composes two instances, drives them over the wire
 ```
 
 The toolkit resolves from **GitHub Packages**, which serves Maven only to authenticated callers. You need a
@@ -75,6 +76,12 @@ lease-ttl = ${?DKQ_LEASE_TTL}
 ```
 
 `sbt test` starts its own Valkey container, so it needs Docker but not the compose stack.
+
+`sbt e2e` is the other kind of test: it builds a Docker image, brings up two instances over one Valkey
+(`docker-compose.e2e.yml`) and asserts what only a deployment can be wrong about — that both instances are
+one queue, that a blocked `Dequeue` on one is woken by an `Enqueue` on the other, and that a SIGKILLed
+instance loses no work. Point it at an existing deployment with `DKQ_E2E_ENDPOINTS=host:port,host:port`.
+Details: [`docs/architecture/end-to-end-testing.md`](docs/architecture/end-to-end-testing.md).
 
 ## Known gaps
 
