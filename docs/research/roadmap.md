@@ -35,6 +35,10 @@ the API.
 **Done when:** two pods, one Redis, a client whose dequeue on pod A is woken by an enqueue on pod B, and a
 killed worker whose key is reclaimed and reprocessed.
 
+**The API this phase ships** is sketched in [`phase-1-api.md`](./phase-1-api.md): four unary calls —
+`Enqueue`, a blocking `Dequeue`, `Settle`, `Extend` — written to be replaced by phase 2 rather than extended
+into it.
+
 **Deployment shape — dkq is stateless here, and that is the point.** Every piece of state (queues, keys,
 leases, in-flight messages) lives in Redis, so dkq pods are interchangeable: a plain `Deployment` with N
 replicas, no PVC, no stable identity, scaled at will.
