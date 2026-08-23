@@ -75,7 +75,9 @@ lease-ttl = 30 seconds
 lease-ttl = ${?DKQ_LEASE_TTL}
 ```
 
-`sbt test` starts its own Valkey container, so it needs Docker but not the compose stack.
+`sbt test` starts its own Valkey container, so it needs Docker but not the compose stack. It runs on every
+push ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)); the end-to-end suite is only compiled
+there, not run.
 
 `sbt e2e` is the other kind of test: it builds a Docker image, brings up two instances over one Valkey
 (`docker-compose.e2e.yml`) and asserts what only a deployment can be wrong about — that both instances are
