@@ -45,14 +45,39 @@ Generator options (`flat_package`, package remaps) belong **in the `.proto`**, n
 generator reads them from the file, so a build-side `flatPackage` desynchronises the two generators and the
 ZIO stub ends up referring to a package ScalaPB no longer emits.
 
-## Scaffolding to delete
+## What exists
 
-Three files exist only to prove the build is whole — that the toolkit resolves, protoc runs, zio-grpc's
-stubs compile under the strict flags, and zio-test executes. Delete them as the real thing appears:
+Phase 1 of [`docs/research/roadmap.md`](docs/research/roadmap.md): four unary gRPC calls over Redis, with
+per-key exclusivity, leases and repair. No streaming, no batching — those are phase 2.
 
-- `src/main/protobuf/homelab/keyedqueue/v1/scaffold.proto`
-- `src/test/scala/homelab/keyedqueue/ScaffoldSpec.scala`
-- `src/main/scala/homelab/keyedqueue/Main.scala` (a placeholder `println`)
+```
+src/main/protobuf/homelab/keyedqueue/v1/queue.proto   the contract: Enqueue, Dequeue, Settle, Heartbeat
+src/main/resources/lua/                               the five atomic transitions
+src/main/scala/homelab/keyedqueue/
+  domain/          types, the QueueStore port, one class per use case
+  infrastructure/  the Redis adapter, the claimer pool, the repair loop, config
+  application/grpc the service, and the composition root
+```
+
+Run it against the local Redis:
+
+```bash
+docker compose up -d
+sbt run                    # DKQ_REDIS_URL, DKQ_PORT, DKQ_LEASE_TTL, DKQ_CLAIMERS, ... all have defaults
+```
+
+`sbt test` starts its own Valkey container, so it needs Docker but not the compose stack.
+
+## Known gaps
+
+- **Poison messages.** `attempt` is delivered and counted, but nothing acts on it. Per-key ordering makes
+  this urgent: a message that always fails blocks every later message for its key, for ever. A
+  `max_attempts` plus a dead-letter or park policy is the next thing this needs — see
+  [`docs/research/phase-1-api.md`](docs/research/phase-1-api.md).
+- **One queue per `Dequeue`.** `BLMOVE` takes a single source; a consumer spanning queues needs a connection
+  each.
+- **Claimers bound concurrency.** `DKQ_CLAIMERS` connections may block at once; further `Dequeue` calls wait
+  for one to free rather than opening more.
 
 ## Licence
 

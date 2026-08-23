@@ -52,8 +52,9 @@ message EnqueueResponse {
 }
 
 message DequeueRequest {
-  string                   queue = 1;
-  google.protobuf.Duration wait  = 2;   // how long to block; the RPC deadline should exceed it
+  string                   queue    = 1;
+  google.protobuf.Duration max_wait = 2;   // how long to block; the RPC deadline should exceed it
+                                           // (not `wait`: that collides with Object.wait() on the JVM)
 }
 message DequeueResponse {
   optional Delivery delivery = 1;       // absent = nothing became ready in time. NOT an error
@@ -117,9 +118,9 @@ liveness inside dkq and is invisible to clients. Different lifetimes, different 
 ## The three decisions worth arguing about
 
 **A timeout is an empty response, not an error.** `DequeueResponse.delivery` is absent when nothing became
-ready within `wait`. Returning `DEADLINE_EXCEEDED` for an *expected* outcome would push every client into
+ready within `max_wait`. Returning `DEADLINE_EXCEEDED` for an *expected* outcome would push every client into
 error handling for the normal quiet case, and would make a real deadline indistinguishable from an idle
-queue. The client's own RPC deadline should be set slightly above `wait`, so the server answers first.
+queue. The client's own RPC deadline should be set slightly above `max_wait`, so the server answers first.
 
 **`APPLIED_STALE` is a result, not a status code.** A settle whose lease was revoked mid-handler is an
 expected outcome of an at-least-once system, not a fault — so it belongs in the response, where the client is
@@ -154,7 +155,7 @@ def workLoop(client: KeyedQueue, queue: String, held: Ref[Set[String]])(
   handle: Envelope => Task[Unit]
 ): Task[Nothing] =
   (for
-    reply <- client.dequeue(queue, wait = 20.seconds)
+    reply <- client.dequeue(queue, maxWait = 20.seconds)
     _     <- ZIO.foreachDiscard(reply.delivery): delivery =>
                held.update(_ + delivery.receipt) *>
                  handle(delivery.envelope).exit.flatMap: outcome =>
