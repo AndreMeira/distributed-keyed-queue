@@ -1,6 +1,7 @@
 package homelab.keyedqueue.infrastructure.redis
 
 
+import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.QueueName
@@ -44,10 +45,14 @@ final class RedisWatchdog(store: QueueStore, config: QueueConfig, queues: Ref[Se
    * A sweep that hits its limit is repeated at once rather than after the interval: hitting the limit means
    * there is more to repair, and waiting would leave work stranded for no reason.
    *
-   * @return never completes successfully
+   * '''`spaced`, not `fixed`.''' The interval is a gap *between* passes, not a rate to keep up with. A pass
+   * that overran the interval means the store is busy — the moment when firing the next one immediately, as
+   * a fixed rate would, is exactly the wrong thing to do.
+   *
+   * @return never completes on its own; the schedule has no end
    */
-  def run: URIO[Any, Nothing] =
-    (sweepAll *> ZIO.sleep(config.sweepInterval)).forever
+  def run: URIO[Any, Unit] = 
+    sweepAll.repeat(Schedule.spaced(config.sweepInterval).unit)
 
   /**
    * One pass over the known queues.
@@ -68,18 +73,46 @@ final class RedisWatchdog(store: QueueStore, config: QueueConfig, queues: Ref[Se
     store
       .sweep(queue, config.sweepLimit)
       .foldZIO(
-        error => ZIO.logWarning(s"sweep of $queue failed: ${error.message}"),
+        error => sweptWarn(queue, error),
         swept =>
           val touched = swept.reclaimed.size + swept.recovered.size + swept.released.size
-          ZIO
-            .logInfo(
-              s"swept $queue: reclaimed=${swept.reclaimed.size} recovered=${swept.recovered.size} " +
-                s"released=${swept.released.size}"
-            )
-            .unless(swept.isEmpty)
-            .unit
           // A full pass means there is more waiting; do not make it wait for the next tick.
-            *> sweep(queue).when(touched >= config.sweepLimit).unit,
+          sweptInfo(queue, swept) *> sweep(queue).when(touched >= config.sweepLimit).unit,
+      )
+
+  /**
+   * Report a sweep that failed.
+   *
+   * A warning rather than a failure, and it stops here: a store that is briefly unavailable is not a reason
+   * to stop repairing for ever, and the next pass is one interval away. What it costs is a delay in recovery,
+   * which the lease already tolerates.
+   *
+   * @param queue the queue whose sweep failed
+   * @param error what the store reported
+   * @return noop
+   */
+  private def sweptWarn(queue: QueueName, error: QueueError): UIO[Unit] =
+    ZIO.logWarning(s"sweep of $queue failed: ${error.message}")
+
+  /**
+   * Report what a pass repaired, when it repaired anything.
+   *
+   * '''Silent on an empty pass, deliberately.''' Every instance sweeps every queue it has served, every few
+   * seconds; logging "found nothing" would be almost every line, and would bury the ones that say a claim
+   * lapsed or a worker died — which are the only lines anybody reads this log for.
+   *
+   * @param queue the queue just swept
+   * @param swept what the pass repaired
+   * @return noop
+   */
+  private def sweptInfo(queue: QueueName, swept: QueueStore.Swept): UIO[Unit] =
+    if swept.isEmpty then ZIO.unit
+    else
+      ZIO.logInfo(
+        s"swept $queue: " +
+          s"reclaimed=${swept.reclaimed.size} " +
+          s"recovered=${swept.recovered.size}" +
+          s" released=${swept.released.size}"
       )
 
 
