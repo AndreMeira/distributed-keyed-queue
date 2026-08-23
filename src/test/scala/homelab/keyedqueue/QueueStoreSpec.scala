@@ -5,7 +5,8 @@ import homelab.keyedqueue.domain.model.ClaimRef
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisQueueStore, Scripts }
+import homelab.keyedqueue.infrastructure.redis.{ ClaimerPool, Connection, RedisQueueStore, Scripts }
+import io.lettuce.core.api.sync.RedisCommands
 import org.testcontainers.containers.GenericContainer
 import zio.*
 import zio.test.*
@@ -23,7 +24,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
   private val leaseTtl = 2.seconds
 
   /** A Valkey container for the suite, and two stores over it — a worker's, and a sweeper's. */
-  private val substrate: ZLayer[Any, Any, (QueueStore, QueueStore)] =
+  private val substrate: ZLayer[Any, Any, (QueueStore, QueueStore, RedisCommands[String, Array[Byte]])] =
     ZLayer.scoped:
       for
         container <- ZIO.acquireRelease(
@@ -39,19 +40,20 @@ object QueueStoreSpec extends ZIOSpecDefault:
                          started
                      )(container => ZIO.attemptBlocking(container.stop()).ignore)
         url        = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-        config     = QueueConfig(url, 0, leaseTtl, 1.second, 100, 2, 5.seconds)
+        config     = QueueConfig(url, 0, leaseTtl, 1.second, 100, 1, 5.seconds)
         client    <- Connection.client(url)
         first     <- store(client, config, "w1")
         second    <- store(client, config, "sweeper")
-      yield (first: QueueStore, second: QueueStore)
+        inspect   <- Connection.open(client, config.maxWait) // to assert on what the adapter wrote
+      yield (first: QueueStore, second: QueueStore, inspect)
 
+  /** A store with its own shared connection and its own single claimer, as the service builds one. */
   private def store(client: io.lettuce.core.RedisClient, config: QueueConfig, id: String) =
     for
-      redis   <- Connection.open(client, config.maxWait)
-      scripts <- Scripts.load(redis)
-      worker   = RedisQueueStore(redis, scripts, WorkerId(id), config.leaseTtl)
-      _       <- worker.renew(Chunk.empty) // register before claiming, as every claimer must
-    yield worker
+      redis    <- Connection.open(client, config.maxWait)
+      scripts  <- Scripts.load(redis)
+      claimers <- ClaimerPool.make(client, config)
+    yield RedisQueueStore(redis, scripts, claimers, WorkerId(id), config.leaseTtl)
 
   private def bytes(text: String): Chunk[Byte] = Chunk.fromArray(text.getBytes("UTF-8"))
   private def text(payload: Chunk[Byte]): String = String(payload.toArray, "UTF-8")
@@ -59,7 +61,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueStore over Redis")(
     test("a key's messages are delivered oldest first") {
       for
-        (worker, _) <- ZIO.service[(QueueStore, QueueStore)]
+        (worker, _, _) <- ZIO.service[(QueueStore, QueueStore, RedisCommands[String, Array[Byte]])]
         queue        = QueueName("order")
         key          = MessageKey("k1")
         _           <- ZIO.foreachDiscard(List("a", "b", "c"))(m => worker.enqueue(queue, key, bytes(m)))
@@ -75,7 +77,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
       // The invariant the whole design is built around. While k1 is held, a second claim must find k2 —
       // never k1 again — even though k1 has more messages queued.
       for
-        (worker, other) <- ZIO.service[(QueueStore, QueueStore)]
+        (worker, other, _) <- ZIO.service[(QueueStore, QueueStore, RedisCommands[String, Array[Byte]])]
         queue            = QueueName("exclusive")
         _               <- worker.enqueue(queue, MessageKey("k1"), bytes("first"))
         _               <- worker.enqueue(queue, MessageKey("k1"), bytes("second"))
@@ -91,7 +93,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
     },
     test("a failure returns the message, keeps its place, and counts the attempt") {
       for
-        (worker, _) <- ZIO.service[(QueueStore, QueueStore)]
+        (worker, _, _) <- ZIO.service[(QueueStore, QueueStore, RedisCommands[String, Array[Byte]])]
         queue        = QueueName("retry")
         key          = MessageKey("k1")
         _           <- worker.enqueue(queue, key, bytes("poison"))
@@ -108,7 +110,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
       // The fencing token, end to end: the holder goes silent, the sweep revokes the claim, and the late
       // settle must not apply — otherwise it would re-queue a key somebody else may already hold.
       for
-        (worker, sweeper) <- ZIO.service[(QueueStore, QueueStore)]
+        (worker, sweeper, _) <- ZIO.service[(QueueStore, QueueStore, RedisCommands[String, Array[Byte]])]
         queue              = QueueName("fenced")
         _                 <- worker.enqueue(queue, MessageKey("k1"), bytes("work"))
         held              <- worker.claim(queue, 2.seconds)
@@ -122,9 +124,26 @@ object QueueStoreSpec extends ZIOSpecDefault:
         again.map(c => text(c.payload)).contains("work"),     // and the work is back
       )
     },
+    test("a claimer registers in the queue it claims from, not somewhere else") {
+      // White-box on purpose, because the failure is invisible from outside: a claimer registered under the
+      // wrong namespace still claims happily, and only the recovery path is broken — its in-transition keys
+      // would be unrecoverable, and nothing would say so until a worker died at exactly the wrong moment.
+      for
+        (worker, _, redis) <- ZIO.service[(QueueStore, QueueStore, RedisCommands[String, Array[Byte]])]
+        queue               = QueueName("registered")
+        _                  <- worker.enqueue(queue, MessageKey("k1"), bytes("x"))
+        claimed            <- worker.claim(queue, 2.seconds)
+        here               <- ZIO.attemptBlocking(redis.zcard("{q:registered}:workers")).orDie
+        nowhere            <- ZIO.attemptBlocking(redis.zcard("{q:}:workers")).orDie
+      yield assertTrue(
+        claimed.isDefined,
+        here == 1L,      // the claimer announced itself where the sweep of this queue will look
+        nowhere == 0L,   // and not in the namespace of a queue that does not exist
+      )
+    },
     test("a heartbeat renews what is held and names what is lost") {
       for
-        (worker, sweeper) <- ZIO.service[(QueueStore, QueueStore)]
+        (worker, sweeper, _) <- ZIO.service[(QueueStore, QueueStore, RedisCommands[String, Array[Byte]])]
         queue              = QueueName("beat")
         _                 <- worker.enqueue(queue, MessageKey("k1"), bytes("work"))
         held              <- worker.claim(queue, 2.seconds)

@@ -17,6 +17,6 @@ object Main extends ZIOAppDefault:
   override def run: ZIO[Any, Any, Any] =
     ZIO.scoped:
       for
-        config <- QueueConfig.fromEnvironment
+        config <- QueueConfig.load
         _      <- GrpcApplication.serve(config)
       yield ()

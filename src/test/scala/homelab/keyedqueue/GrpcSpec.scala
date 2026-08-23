@@ -5,7 +5,7 @@ import com.google.protobuf.duration.Duration as ProtoDuration
 import homelab.keyedqueue.application.grpc.GrpcApplication
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.v1.*
-import homelab.keyedqueue.v1.ZioQueue.KeyedQueueClient
+import homelab.keyedqueue.v1.ZioKeyedQueue.KeyedQueueClient
 import io.grpc.ManagedChannelBuilder
 import org.testcontainers.containers.GenericContainer
 import scalapb.zio_grpc.ZManagedChannel

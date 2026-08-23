@@ -2,31 +2,26 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.model.{ ClaimRef, Claimed }
-import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.domain.types.*
+import homelab.keyedqueue.domain.types.WorkerId
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import io.lettuce.core.RedisClient
 import zio.*
-
-import java.time.Instant
 
 
 /**
  * The claimers, and the rule that only they may block.
  *
  * A `BLMOVE` occupies its connection for the whole wait, so the number of connections is the ceiling on
- * concurrent `Dequeue` calls. Borrowing from a fixed pool makes that ceiling explicit — and makes a caller
- * that cannot get one wait for a peer rather than open connections without bound.
+ * concurrent claims. Borrowing from a fixed pool makes that ceiling explicit, and makes a caller that cannot
+ * get one wait for a peer rather than open connections without bound.
  *
- * '''Every claimer registers before it claims.''' Its first heartbeat is awaited during construction, so a
- * connection is known to the store before it can hold anything; one that claimed first would leave a
- * claiming list with no liveness entry to expire, and nothing could ever recover it.
+ * An adapter detail on purpose: [[RedisQueueStore]] owns one of these, so nothing above the port learns that
+ * claiming is connection-bound.
  *
- * @param pool the idle claimers
- * @param all every claimer, for the heartbeat that keeps them registered
+ * @param idle the claimers not currently in use
+ * @param all every claimer, for the beat that keeps them registered
  */
-final class ClaimerPool private (pool: Queue[QueueStore], all: Chunk[QueueStore]):
+final class ClaimerPool private (idle: Queue[Claimer], all: Chunk[Claimer]):
 
   /**
    * Borrow a claimer for one operation, and always give it back.
@@ -35,24 +30,21 @@ final class ClaimerPool private (pool: Queue[QueueStore], all: Chunk[QueueStore]
    * @tparam A what that produces
    * @return the result; aborts with whatever `use` aborts with
    */
-  def borrow[A](use: QueueStore => IO[QueueError, A]): IO[QueueError, A] =
-    ZIO.scoped(ZIO.acquireRelease(pool.take)(pool.offer(_)).flatMap(use))
+  def borrow[A](use: Claimer => IO[QueueError, A]): IO[QueueError, A] =
+    ZIO.scoped(ZIO.acquireRelease(idle.take)(idle.offer(_)).flatMap(use))
 
   /**
    * Keep every claimer registered, whether or not it is holding anything.
    *
-   * Registration lapses on silence, and a lapsed worker's in-transition keys are recovered by the sweep —
-   * so an idle claimer must keep beating or a claim it makes later would be born unrecoverable.
-   *
    * @return noop
    */
-  def beat: UIO[Unit] = ZIO.foreachDiscard(all)(_.renew(Chunk.empty).ignore)
+  def beat: UIO[Unit] = ZIO.foreachDiscard(all)(_.beat)
 
 
 object ClaimerPool:
 
   /**
-   * Open `config.claimers` connections, register each, and hold them for the life of the scope.
+   * Open `config.claimers` connections and hold them for the life of the scope.
    *
    * @param client the Redis client to connect with
    * @param config how many, and with what lease
@@ -60,29 +52,28 @@ object ClaimerPool:
    */
   def make(client: RedisClient, config: QueueConfig): ZIO[Scope, QueueError, ClaimerPool] =
     for
-      stores <- ZIO.foreach(Chunk.fromIterable(0 until config.claimers))(index => claimer(client, config, index))
-      pool   <- Queue.bounded[QueueStore](config.claimers)
-      _      <- pool.offerAll(stores)
-    yield ClaimerPool(pool, stores)
+      claimers <- ZIO.foreach(Chunk.fromIterable(0 until config.claimers))(open(client, config, _))
+      idle     <- Queue.bounded[Claimer](config.claimers)
+      _        <- idle.offerAll(claimers)
+    yield ClaimerPool(idle, claimers)
 
   /**
-   * One connection, its scripts, and its registration.
+   * One connection, its scripts, and its identity.
    *
    * @param client the Redis client
    * @param config the lease and timeout settings
    * @param index distinguishes this claimer from its peers within the process
-   * @return the store bound to that connection
+   * @return the claimer
    */
-  private def claimer(client: RedisClient, config: QueueConfig, index: Int): ZIO[Scope, QueueError, QueueStore] =
+  private def open(client: RedisClient, config: QueueConfig, index: Int): ZIO[Scope, QueueError, Claimer] =
     for
       // The command timeout must exceed the longest blocking wait, or the client gives up on a BLMOVE that
       // is doing exactly what it was told to.
       redis   <- Connection.open(client, config.maxWait + 10.seconds)
       scripts <- Scripts.load(redis)
       id      <- identity(index)
-      store    = RedisQueueStore(redis, scripts, id, config.leaseTtl)
-      _       <- store.renew(Chunk.empty) // registration, awaited: never claim before being known
-    yield store
+      claimer <- Claimer.make(redis, scripts, id, config.leaseTtl)
+    yield claimer
 
   /**
    * A worker id that is unique per connection and stable for its life.

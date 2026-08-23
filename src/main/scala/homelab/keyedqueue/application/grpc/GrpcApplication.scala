@@ -2,12 +2,13 @@ package homelab.keyedqueue.application.grpc
 
 
 import homelab.keyedqueue.domain.error.QueueError
+import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.usecase.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.infrastructure.redis.{ ClaimerPool, Connection, Scripts, RedisQueueStore, Watchdog }
 import homelab.keyedqueue.domain.types.WorkerId
 import io.grpc.ServerBuilder
-import scalapb.zio_grpc.{ ServerLayer, ServiceList }
+import scalapb.zio_grpc.{ Server, ServerLayer, ServiceList }
 import zio.*
 
 
@@ -31,9 +32,9 @@ object GrpcApplication:
       client   <- Connection.client(config.redisUrl)
       shared   <- Connection.open(client, config.maxWait)
       scripts  <- Scripts.load(shared)
-      admin     = RedisQueueStore(shared, scripts, WorkerId("sweeper"), config.leaseTtl)
       claimers <- ClaimerPool.make(client, config)
-      watchdog <- Watchdog.make(admin, config)
+      store     = RedisQueueStore(shared, scripts, claimers, WorkerId("shared"), config.leaseTtl)
+      watchdog <- Watchdog.make(store, config)
       // Claimers must stay registered even while idle: registration lapses on silence, and a claim made
       // after that would be born unrecoverable.
       _        <- claimers.beat.repeat(Schedule.fixed(Duration.fromMillis(config.leaseTtl.toMillis / 3))).forkScoped
@@ -41,31 +42,28 @@ object GrpcApplication:
                     s"dkq listening on ${config.port}, redis=${config.redisUrl}, " +
                       s"claimers=${config.claimers}, lease=${config.leaseTtl.toSeconds}s"
                   )
-      _        <- server(config, service(admin, claimers, watchdog, config)).build
+      _        <- server(config, service(store, watchdog, config)).build
                     .mapError(error => QueueError.StoreUnavailable(s"the server did not start: ${error.getMessage}"))
       forever  <- ZIO.never
     yield forever
 
   /**
-   * The service, with each use case pointed at the right kind of connection.
+   * The service, over one store.
    *
-   * @param admin the shared, never-blocking connection
-   * @param claimers the pool that may block
+   * Every use case holds the same port. That the claim happens on a borrowed connection and the rest on a
+   * shared one is the store's business, not theirs.
+   *
+   * @param store the queue
    * @param watchdog told which queues to sweep
    * @param config the wait ceiling
    * @return the gRPC service
    */
-  private def service(
-    admin: RedisQueueStore,
-    claimers: ClaimerPool,
-    watchdog: Watchdog,
-    config: QueueConfig,
-  ): QueueService =
+  private def service(store: QueueStore, watchdog: Watchdog, config: QueueConfig): QueueService =
     QueueService(
-      EnqueueUseCase(admin),
-      DequeueUseCase((queue, wait) => claimers.borrow(_.claim(queue, wait)), config.maxWait),
-      SettleUseCase(admin),
-      HeartbeatUseCase(admin),
+      EnqueueUseCase(store),
+      DequeueUseCase(store, config.maxWait),
+      SettleUseCase(store),
+      HeartbeatUseCase(store),
       watchdog,
     )
 
@@ -74,9 +72,9 @@ object GrpcApplication:
    *
    * @param config the port to listen on
    * @param service what to serve
-   * @return the server layer
+   * @return the server as a layer, started when built and shut down when the scope closes
    */
-  private def server(config: QueueConfig, service: QueueService) =
+  private def server(config: QueueConfig, service: QueueService): ZLayer[Any, Throwable, Server] =
     ServerLayer.fromServiceList(
       ServerBuilder.forPort(config.port),
       ServiceList.add(service),

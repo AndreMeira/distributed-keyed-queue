@@ -12,6 +12,8 @@ val scalapbVersion        = "0.11.17" // keep in sync with compilerplugin in pro
 val zioGrpcVersion        = "0.6.3"
 val grpcVersion           = "1.64.0" // must match the grpc-core zio-grpc pulls, not scalapb's
 val lettuceVersion        = "6.7.1.RELEASE"
+val typesafeConfigVersion = "1.4.9"
+val pureconfigVersion     = "0.17.10"
 val testcontainersVersion = "1.20.6"
 
 ThisBuild / scalaVersion := scala3Version
@@ -53,6 +55,10 @@ lazy val root = project
       // zio-schema BinaryCodec — that encodes keys and args, and this design needs them byte-exact
       // (the Lua builds key names by concatenation) plus heterogeneous script replies.
       "io.lettuce"                     % "lettuce-core"         % lettuceVersion,
+      // Config: HOCON under resources/config, read with pureconfig — the homelab's convention, and the
+      // one that lets a file carry both a working default and an env override for the same key.
+      "com.typesafe"                   % "config"               % typesafeConfigVersion,
+      "com.github.pureconfig"         %% "pureconfig-core"      % pureconfigVersion,
       // gRPC: generated stubs need the runtime; the server needs a transport (schemas ships neither)
       "com.thesamet.scalapb"          %% "scalapb-runtime-grpc" % scalapbVersion,
       "com.thesamet.scalapb.zio-grpc" %% "zio-grpc-core"        % zioGrpcVersion,

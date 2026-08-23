@@ -1,14 +1,20 @@
 package homelab.keyedqueue.infrastructure.configuration
 
 
+import homelab.keyedqueue.domain.error.QueueError
+import pureconfig.{ ConfigReader, ConfigSource }
 import zio.*
 
 
 /**
- * Everything this service needs to run, from the environment.
+ * Everything this service needs to run, read from `resources/config/queue.conf`.
  *
  * One lease and one heartbeat interval for every queue: per-queue tuning is a knob nobody can set correctly
  * before there is traffic to observe, so phase 1 does not offer it (`docs/research/phase-1-api.md`).
+ *
+ * Defaults live in the HOCON rather than here, so there is one place to read what a setting means and what
+ * it is when nobody sets it — each key carries a working default and a `${?DKQ_...}` override in the same
+ * two lines.
  *
  * @param redisUrl where the substrate lives
  * @param port the port the gRPC server listens on
@@ -27,46 +33,35 @@ final case class QueueConfig(
   sweepLimit: Int,
   claimers: Int,
   maxWait: Duration,
-)
+) derives ConfigReader
 
 
 object QueueConfig:
 
   /**
-   * Read the configuration, falling back to values that work against `docker-compose.yml`.
+   * Read HOCON durations, which pureconfig otherwise cannot.
    *
-   * Defaults exist so a developer can run the service with no environment at all; production sets every one
-   * of them, and `DKQ_LEASE_TTL` in particular should exceed the slowest handler a consumer will run.
-   *
-   * @return the configuration; never fails
+   * `zio.Duration` is `java.time.Duration`, and the reader pureconfig picks for that wants ISO-8601
+   * (`PT30S`). HOCON — and every other config file in the homelab — writes `30 seconds`, so read it as the
+   * Scala duration, which understands that form, and convert. Defined here so it is in scope where the
+   * derived reader for this class is generated.
    */
-  val fromEnvironment: UIO[QueueConfig] =
-    for
-      url      <- env("DKQ_REDIS_URL", "redis://localhost:6379")
-      port     <- env("DKQ_PORT", "9000").map(_.toIntOption.getOrElse(9000))
-      lease    <- millis("DKQ_LEASE_TTL", 30.seconds)
-      interval <- millis("DKQ_SWEEP_INTERVAL", 5.seconds)
-      limit    <- env("DKQ_SWEEP_LIMIT", "100").map(_.toIntOption.getOrElse(100))
-      claimers <- env("DKQ_CLAIMERS", "8").map(_.toIntOption.getOrElse(8))
-      maxWait  <- millis("DKQ_MAX_WAIT", 30.seconds)
-    yield QueueConfig(url, port, lease, interval, limit, claimers, maxWait)
+  private given ConfigReader[Duration] =
+    ConfigReader[scala.concurrent.duration.FiniteDuration].map(Duration.fromScala)
 
   /**
-   * One variable, or its default.
+   * Read the configuration.
    *
-   * @param name the variable
-   * @param fallback what to use when it is unset
-   * @return the value
-   */
-  private def env(name: String, fallback: String): UIO[String] =
-    System.env(name).orDie.map(_.filter(_.nonEmpty).getOrElse(fallback))
-
-  /**
-   * One variable read as milliseconds.
+   * A malformed or missing file fails startup rather than falling back to something invented here: a
+   * service that silently runs on a guessed lease is worse than one that does not start.
    *
-   * @param name the variable
-   * @param fallback what to use when it is unset or unreadable
-   * @return the duration
+   * @return the configuration; aborts with `Invalid` describing every problem pureconfig found, not just
+   *         the first
    */
-  private def millis(name: String, fallback: Duration): UIO[Duration] =
-    env(name, fallback.toMillis.toString).map(_.toLongOption.fold(fallback)(Duration.fromMillis))
+  val load: IO[QueueError, QueueConfig] =
+    ZIO
+      .attempt(ConfigSource.resources("config/queue.conf").load[QueueConfig])
+      .mapError(error => QueueError.Invalid(s"config/queue.conf could not be read: ${error.getMessage}"))
+      .flatMap:
+        case Right(config)  => ZIO.succeed(config)
+        case Left(failures) => ZIO.fail(QueueError.Invalid(s"config/queue.conf is invalid: ${failures.prettyPrint()}"))

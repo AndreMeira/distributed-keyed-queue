@@ -63,7 +63,15 @@ Run it against the local Redis:
 
 ```bash
 docker compose up -d
-sbt run                    # DKQ_REDIS_URL, DKQ_PORT, DKQ_LEASE_TTL, DKQ_CLAIMERS, ... all have defaults
+sbt run                    # settings: src/main/resources/config/queue.conf
+```
+
+Configuration is HOCON, and every key carries both a working default and an environment override in the
+same two lines, so there is one place to read what a setting means:
+
+```hocon
+lease-ttl = 30 seconds
+lease-ttl = ${?DKQ_LEASE_TTL}
 ```
 
 `sbt test` starts its own Valkey container, so it needs Docker but not the compose stack.

@@ -34,7 +34,7 @@ final class QueueService(
   settle: SettleUseCase,
   heartbeat: HeartbeatUseCase,
   watchdog: Watchdog,
-) extends ZioQueue.KeyedQueue:
+) extends ZioKeyedQueue.KeyedQueue:
 
   override def enqueue(request: EnqueueRequest): IO[StatusException, EnqueueResponse] =
     val envelope = request.envelope.getOrElse(Envelope.defaultInstance)

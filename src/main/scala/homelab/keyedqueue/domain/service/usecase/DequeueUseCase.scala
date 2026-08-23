@@ -3,6 +3,7 @@ package homelab.keyedqueue.domain.service.usecase
 
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.Claimed
+import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.QueueName
 import zio.{ duration2DurationOps, Duration, IO, ZIO }
 
@@ -15,10 +16,10 @@ import zio.{ duration2DurationOps, Duration, IO, ZIO }
  * failure the toolkit's `PollConsumer` spent a design cycle on. Here the fiber that waits is the fiber that
  * receives.
  *
- * @param claim what actually waits: a borrowed connection, since only those may block
+ * @param store where the queue lives
  * @param maxWait the longest wait this service will honour
  */
-final class DequeueUseCase(claim: (QueueName, Duration) => IO[QueueError, Option[Claimed]], maxWait: Duration):
+final class DequeueUseCase(store: QueueStore, maxWait: Duration):
 
   /**
    * Wait up to `wait` for a message.
@@ -30,4 +31,4 @@ final class DequeueUseCase(claim: (QueueName, Duration) => IO[QueueError, Option
    */
   def apply(queue: QueueName, wait: Duration): IO[QueueError, Option[Claimed]] =
     if queue.isEmpty then ZIO.fail(QueueError.Invalid("a queue name is required"))
-    else claim(queue, if wait > maxWait then maxWait else wait)
+    else store.claim(queue, if wait > maxWait then maxWait else wait)
