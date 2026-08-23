@@ -1,16 +1,22 @@
 package homelab.keyedqueue
 
+
+import homelab.keyedqueue.application.grpc.GrpcApplication
+import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import zio.*
 
 
 /**
- * Entry point — a placeholder until there is something to run.
+ * Entry point.
  *
- * The shape to grow into is the one `homelab-toolkit-zio`'s `Main` uses: pattern match on CLI args to pick
- * a run mode (`("server", "inmemory" | "postgres")`, `("database", "migrate")`), so the thing can boot
- * without a database while the design is still moving.
+ * One run mode for now — serve. The shape to grow into is the toolkit's: pattern match on CLI args so an
+ * operational task (a purge, a one-off sweep) is a mode of the same binary rather than a second one.
  */
 object Main extends ZIOAppDefault:
 
-  override def run: ZIO[Any, Nothing, Unit] =
-    Console.printLine("distributed-keyed-queue: nothing wired yet").orDie
+  override def run: ZIO[Any, Any, Any] =
+    ZIO.scoped:
+      for
+        config <- QueueConfig.fromEnvironment
+        _      <- GrpcApplication.serve(config)
+      yield ()
