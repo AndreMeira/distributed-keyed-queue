@@ -1,6 +1,8 @@
 package homelab.keyedqueue.domain.error
 
+
 import homelab.common.error.ApplicationError
+import zio.NonEmptyChunk
 
 
 /**
@@ -18,8 +20,22 @@ enum QueueError extends ApplicationError:
   /** A script returned something this code does not know how to read — a defect, not a runtime condition. */
   case MalformedReply(reason: String) extends QueueError, ApplicationError.AdapterError, ApplicationError.ImplementationError
 
-  /** The caller sent something the API cannot act on. */
-  case Invalid(reason: String) extends QueueError, ApplicationError.DomainError
+  /**
+   * The caller sent something the API cannot act on — every reason it cannot, not merely the first.
+   *
+   * Carrying a `NonEmptyChunk` is what makes accumulating validation worth doing: a caller that sent two bad
+   * fields learns about both in one round trip instead of fixing one and being told about the next.
+   */
+  case InvalidRequest(problems: NonEmptyChunk[InvalidInput]) extends QueueError, ApplicationError.DomainError
+
+  /**
+   * The service's own configuration is unusable.
+   *
+   * Deliberately not [[InvalidRequest]], though both are "something is invalid": this one is nobody's request
+   * and no caller can fix it. Conflating them once meant a malformed `queue.conf` was reported to callers as
+   * `INVALID_ARGUMENT`, blaming them for our file.
+   */
+  case Misconfigured(reason: String) extends QueueError, ApplicationError.AdapterError, ApplicationError.UnrecoverableError
 
   /** The service could not start. Nothing is running, so there is nothing to retry against. */
   case StartupFailed(reason: String) extends QueueError, ApplicationError.AdapterError, ApplicationError.UnrecoverableError
@@ -33,5 +49,6 @@ enum QueueError extends ApplicationError:
   override def message: String = this match
     case StoreUnavailable(reason) => s"The queue store is unavailable: $reason"
     case MalformedReply(reason)   => s"The queue store replied with something unreadable: $reason"
-    case Invalid(reason)          => reason
+    case InvalidRequest(problems) => problems.map(_.message).mkString("; ")
+    case Misconfigured(reason)    => s"The service is misconfigured: $reason"
     case StartupFailed(reason)    => s"The service could not start: $reason"

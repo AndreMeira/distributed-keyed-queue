@@ -105,12 +105,16 @@ final class QueueService(
    * Map a failure to a gRPC status.
    *
    * Bad input is the caller's to fix; anything else is ours, and transient by nature — the lease is the
-   * backstop, so a caller that retries will be served.
+   * backstop, so a caller that retries will be served. An invalid request describes *every* problem it had,
+   * because `INVALID_ARGUMENT` is the caller's cue to change something and one round trip per mistake is a
+   * poor way to learn what to change.
    *
    * @param error what went wrong
    * @return the status to fail the call with
    */
   private def status(error: QueueError): StatusException = error match
-    case QueueError.Invalid(reason)          => reject(reason)
+    case invalid: QueueError.InvalidRequest  => reject(invalid.message)
     case QueueError.StoreUnavailable(reason) => StatusException(Status.UNAVAILABLE.withDescription(reason))
     case QueueError.MalformedReply(reason)   => StatusException(Status.INTERNAL.withDescription(reason))
+    case QueueError.Misconfigured(_)         => StatusException(Status.INTERNAL.withDescription(""))
+    case QueueError.StartupFailed(_)         => StatusException(Status.INTERNAL.withDescription(""))

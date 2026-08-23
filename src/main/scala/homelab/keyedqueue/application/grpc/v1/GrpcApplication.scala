@@ -3,6 +3,7 @@ package homelab.keyedqueue.application.grpc.v1
 
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.service.usecase.v1 as usecase
+import homelab.keyedqueue.domain.service.validation as validation
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.infrastructure.redis as redis
 import scalapb.zio_grpc.Server
@@ -37,6 +38,7 @@ object GrpcApplication:
       redis.Module.store,
       redis.Module.watchdog,
       homelab.keyedqueue.infrastructure.configuration.Module.syncUseCases,
+      validation.Module.input,
       usecase.Module.useCases,
       Module.service,
       Module.server,

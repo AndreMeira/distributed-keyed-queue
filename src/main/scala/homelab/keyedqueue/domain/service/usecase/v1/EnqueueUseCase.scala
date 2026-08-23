@@ -6,7 +6,9 @@ import homelab.keyedqueue.domain.request.v1.EnqueueRequest
 import homelab.keyedqueue.domain.response.v1.EnqueueResponse
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import zio.{ IO, ZIO }
+import homelab.keyedqueue.domain.service.validation.QueueInputValidation
+import homelab.keyedqueue.domain.syntax.*
+import zio.IO
 
 
 /**
@@ -14,22 +16,21 @@ import zio.{ IO, ZIO }
  *
  * @param store where the queue lives
  * @param watchdog told about the queue, so its abandoned work is repaired
+ * @param validation what makes a request actionable
  */
-final class EnqueueUseCase(store: QueueStore, watchdog: Watchdog):
+final class EnqueueUseCase(store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation):
 
   /**
-   * Validate and append.
+   * Validate, then append.
    *
-   * The key is rejected when empty rather than treated as "no ordering": every message sharing one empty
-   * key would be serialised behind the others, the opposite of what leaving it blank suggests.
+   * `orFail` is where accumulation stops: the validator reports every problem it found, and this is the
+   * point at which the use case decides it will not proceed with any of them.
    *
    * @param request the queue and the message
-   * @return the key's depth after the append; aborts with `Invalid` when the request cannot be acted on, or
-   *         with `QueueError` when the store fails
+   * @return the key's depth after the append; aborts with `InvalidRequest` naming everything wrong with the
+   *         request, or with `QueueError` when the store fails
    */
   def apply(request: EnqueueRequest): IO[QueueError, EnqueueResponse] =
-    if request.queue.isEmpty then ZIO.fail(QueueError.Invalid("a queue name is required"))
-    else if request.message.key.isEmpty then ZIO.fail(QueueError.Invalid("a message key is required: it is what ordering is defined by"))
-    else
-      watchdog.watch(request.queue)
-        *> store.enqueue(request.queue, request.message).map(EnqueueResponse.apply)
+    validation.parse(request).orFail
+      *> watchdog.watch(request.queue)
+      *> store.enqueue(request.queue, request.message).map(EnqueueResponse.apply)

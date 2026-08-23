@@ -6,7 +6,7 @@ import homelab.keyedqueue.application.grpc.v1.GrpcApplication
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.v1.*
 import homelab.keyedqueue.v1.ZioKeyedQueue.KeyedQueueClient
-import io.grpc.ManagedChannelBuilder
+import io.grpc.{ ManagedChannelBuilder, Status, StatusException }
 import org.testcontainers.containers.GenericContainer
 import scalapb.zio_grpc.ZManagedChannel
 import zio.*
@@ -100,5 +100,20 @@ object GrpcSpec extends ZIOSpecDefault:
         noCodec <- client.enqueue(EnqueueRequest("bad", Some(message("k1", "x").copy(encoding = Encoding.ENCODING_UNSPECIFIED)))).exit
         noKey   <- client.enqueue(EnqueueRequest("bad", Some(message("", "x")))).exit
       yield assertTrue(noCodec.isFailure, noKey.isFailure)
+    },
+    test("a request with two problems is refused once, naming both") {
+      // Accumulating validation is only worth having if it survives to the caller: one INVALID_ARGUMENT
+      // carrying every reason, rather than one round trip per mistake.
+      for
+        client <- ZIO.service[KeyedQueueClient]
+        failed <- client.enqueue(EnqueueRequest("", Some(message("", "x")))).flip
+        status  = failed match
+                    case error: StatusException => Option(error.getStatus)
+                    case _                      => None
+      yield assertTrue(
+        status.map(_.getCode).contains(Status.Code.INVALID_ARGUMENT),
+        status.flatMap(reported => Option(reported.getDescription)).exists(_.contains("a queue name is required")),
+        status.flatMap(reported => Option(reported.getDescription)).exists(_.contains("a message key is required")),
+      )
     },
   ).provideShared(running) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(3.minutes)

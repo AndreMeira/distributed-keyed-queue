@@ -55,13 +55,13 @@ object QueueConfig:
    * A malformed or missing file fails startup rather than falling back to something invented here: a
    * service that silently runs on a guessed lease is worse than one that does not start.
    *
-   * @return the configuration; aborts with `Invalid` describing every problem pureconfig found, not just
+   * @return the configuration; aborts with `Misconfigured` describing every problem pureconfig found, not just
    *         the first
    */
   val load: IO[QueueError, QueueConfig] =
     ZIO
       .attempt(ConfigSource.resources("config/queue.conf").load[QueueConfig])
-      .mapError(error => QueueError.Invalid(s"config/queue.conf could not be read: ${error.getMessage}"))
+      .mapError(error => QueueError.Misconfigured(s"config/queue.conf could not be read: ${error.getMessage}"))
       .flatMap:
         case Right(config)  => ZIO.succeed(config)
-        case Left(failures) => ZIO.fail(QueueError.Invalid(s"config/queue.conf is invalid: ${failures.prettyPrint()}"))
+        case Left(failures) => ZIO.fail(QueueError.Misconfigured(s"config/queue.conf is invalid: ${failures.prettyPrint()}"))
