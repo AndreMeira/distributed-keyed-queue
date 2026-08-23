@@ -26,7 +26,7 @@ for the requirement all of this serves.
 gRPC, across more than one pod.
 
 **Locks in:** the state machine (`idle` / `queued` / `processing`), the lease-and-heartbeat model, the
-fencing token, and the shape of the envelope.
+fencing token, and the shape of the message.
 
 **Must not lock in:** anything Redis-specific above the port boundary. `BLMOVE` and a deadline ZSET are one
 implementation of "claim a ready key, with a deadline"; the phase fails its own purpose if that leaks into
@@ -135,7 +135,7 @@ phase's price rather than as an implementation detail discovered later.
 
 ## What would justify reordering
 
-- Phase 1 shows the envelope or the state machine is wrong → fix it before phase 2, since phase 2 freezes the
+- Phase 1 shows the message or the state machine is wrong → fix it before phase 2, since phase 2 freezes the
   contract.
 - Phase 2 shows credits do not compose with per-key exclusivity (a worker holding credits for keys it cannot
   be given) → that is a design problem, not a sequencing one, and it stops the line.

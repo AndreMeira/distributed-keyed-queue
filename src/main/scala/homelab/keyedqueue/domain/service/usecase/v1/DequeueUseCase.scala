@@ -7,7 +7,6 @@ import homelab.keyedqueue.domain.request.v1.DequeueRequest
 import homelab.keyedqueue.domain.response.v1.DequeueResponse
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.domain.service.serialisation.EnvelopeCodec
 import zio.{ duration2DurationOps, Duration, IO, ZIO }
 
 
@@ -20,11 +19,10 @@ import zio.{ duration2DurationOps, Duration, IO, ZIO }
  * receives.
  *
  * @param store where the queue lives
- * @param codec how the stored bytes become an envelope again
  * @param watchdog told about the queue, so its abandoned work is repaired
  * @param maxWait the longest wait this service will honour
  */
-final class DequeueUseCase(store: QueueStore, codec: EnvelopeCodec, watchdog: Watchdog, maxWait: Duration):
+final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, maxWait: Duration):
 
   /**
    * Wait for a message.
@@ -38,15 +36,17 @@ final class DequeueUseCase(store: QueueStore, codec: EnvelopeCodec, watchdog: Wa
     else
       val patience = if request.maxWait > maxWait then maxWait else request.maxWait
       watchdog.watch(request.queue)
-        *> store.claim(request.queue, patience).flatMap(ZIO.foreach(_)(delivery)).map(DequeueResponse.apply)
+        *> store.claim(request.queue, patience).map(_.map(delivery)).map(DequeueResponse.apply)
 
   /**
-   * Present a claim as a delivery: the stored bytes read back, and the handle that settles them.
+   * Present a claim as a delivery: the same message, with the handle that settles it in place of the claim
+   * the store hands back.
+   *
+   * Total, because the store returns a message rather than bytes to be read: whether what it holds is
+   * readable is settled before it gets here.
    *
    * @param claimed what the store handed over
-   * @return the delivery; aborts when the stored bytes are not an envelope this version can read
+   * @return the delivery
    */
-  private def delivery(claimed: Claimed): IO[QueueError, Delivery] =
-    codec
-      .decode(claimed.payload)
-      .map(Delivery(claimed.claim.receipt, _, claimed.attempt, claimed.leaseExpiresAt))
+  private def delivery(claimed: Claimed): Delivery =
+    Delivery(claimed.claim.receipt, claimed.message, claimed.attempt, claimed.leaseExpiresAt)

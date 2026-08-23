@@ -2,8 +2,9 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.model.{ ClaimRef, Claimed }
+import homelab.keyedqueue.domain.model.{ ClaimRef, Claimed, Message }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
+import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.domain.types.*
 import io.lettuce.core.ScriptOutputType
 import io.lettuce.core.api.sync.RedisCommands
@@ -43,12 +44,20 @@ final class RedisQueueStore(
    * One `produce` call. The conditional push inside it is what keeps a key in `ready` at most once, and so
    * cannot be split into a read and a write here.
    *
+   * The message is serialised here rather than by the caller: what a message looks like at rest is this
+   * adapter's choice — see [[StoredMessage]].
+   *
    * @return the key's depth after the append
    */
-  override def enqueue(queue: QueueName, key: MessageKey, payload: Chunk[Byte]): IO[QueueError, Long] =
-    val ns = Namespace(queue)
-    call(scripts.produce, ScriptOutputType.INTEGER, Array(ns.ready, ns.state, ns.msgs(key)), Array(Lua.utf8(key), payload.toArray))
-      .flatMap(Lua.number("produce"))
+  override def enqueue(queue: QueueName, message: Message): IO[QueueError, Long] =
+    val ns  = Namespace(queue)
+    val key = message.key
+    call(
+      scripts.produce,
+      ScriptOutputType.INTEGER,
+      Array(ns.ready, ns.state, ns.msgs(key)),
+      Array(Lua.utf8(key), StoredMessage.toBytes(message).toArray),
+    ).flatMap(Lua.number("produce"))
 
   /**
    * The only operation that can occupy a connection, so the only one that borrows.

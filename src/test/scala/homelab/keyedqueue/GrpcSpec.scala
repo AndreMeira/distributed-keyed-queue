@@ -44,8 +44,8 @@ object GrpcSpec extends ZIOSpecDefault:
                      )
       yield client
 
-  private def envelope(key: String, body: String): Envelope =
-    Envelope(
+  private def message(key: String, body: String): Message =
+    Message(
       key = key,
       messageId = s"$key-$body",
       payloadType = "test.Message/v1",
@@ -57,13 +57,13 @@ object GrpcSpec extends ZIOSpecDefault:
     test("enqueue, dequeue, settle — the loop a consumer writes") {
       for
         client  <- ZIO.service[KeyedQueueClient]
-        _       <- client.enqueue(EnqueueRequest("jobs", Some(envelope("k1", "hello"))))
+        _       <- client.enqueue(EnqueueRequest("jobs", Some(message("k1", "hello"))))
         reply   <- client.dequeue(DequeueRequest("jobs", Some(ProtoDuration(seconds = 2))))
         delivery = reply.delivery
         settled <- ZIO.foreach(delivery)(d => client.settle(SettleRequest(d.receipt, Outcome.OUTCOME_DONE)))
         empty   <- client.dequeue(DequeueRequest("jobs", Some(ProtoDuration(seconds = 1))))
       yield assertTrue(
-        delivery.flatMap(_.envelope).map(_.payload.toStringUtf8).contains("hello"),
+        delivery.flatMap(_.message).map(_.payload.toStringUtf8).contains("hello"),
         delivery.map(_.attempt).contains(1),
         delivery.exists(_.receipt.nonEmpty),
         settled.map(_.applied).contains(Applied.APPLIED_OK),
@@ -75,7 +75,7 @@ object GrpcSpec extends ZIOSpecDefault:
       // twice and two consumers could hold it.
       for
         client <- ZIO.service[KeyedQueueClient]
-        _      <- client.enqueue(EnqueueRequest("replay", Some(envelope("k1", "once"))))
+        _      <- client.enqueue(EnqueueRequest("replay", Some(message("k1", "once"))))
         reply  <- client.dequeue(DequeueRequest("replay", Some(ProtoDuration(seconds = 2))))
         receipt = reply.delivery.map(_.receipt).getOrElse("")
         first  <- client.settle(SettleRequest(receipt, Outcome.OUTCOME_DONE))
@@ -85,7 +85,7 @@ object GrpcSpec extends ZIOSpecDefault:
     test("heartbeat renews what is held and names what is not") {
       for
         client <- ZIO.service[KeyedQueueClient]
-        _      <- client.enqueue(EnqueueRequest("beats", Some(envelope("k1", "work"))))
+        _      <- client.enqueue(EnqueueRequest("beats", Some(message("k1", "work"))))
         reply  <- client.dequeue(DequeueRequest("beats", Some(ProtoDuration(seconds = 2))))
         receipt = reply.delivery.map(_.receipt).getOrElse("")
         beat   <- client.heartbeat(HeartbeatRequest(Seq(receipt, "not-a-receipt")))
@@ -97,8 +97,8 @@ object GrpcSpec extends ZIOSpecDefault:
     test("a message with no encoding is refused, and one with no key too") {
       for
         client  <- ZIO.service[KeyedQueueClient]
-        noCodec <- client.enqueue(EnqueueRequest("bad", Some(envelope("k1", "x").copy(encoding = Encoding.ENCODING_UNSPECIFIED)))).exit
-        noKey   <- client.enqueue(EnqueueRequest("bad", Some(envelope("", "x")))).exit
+        noCodec <- client.enqueue(EnqueueRequest("bad", Some(message("k1", "x").copy(encoding = Encoding.ENCODING_UNSPECIFIED)))).exit
+        noKey   <- client.enqueue(EnqueueRequest("bad", Some(message("", "x")))).exit
       yield assertTrue(noCodec.isFailure, noKey.isFailure)
     },
   ).provideShared(running) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(3.minutes)

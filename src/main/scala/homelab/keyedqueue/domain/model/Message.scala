@@ -23,7 +23,7 @@ import java.time.Instant
  * @param sentAt the sender's clock: good for lag metrics, not for decisions
  * @param payload the cargo, which the queue never parses
  */
-final case class Envelope(
+final case class Message(
   key: MessageKey,
   messageId: String,
   payloadType: String,

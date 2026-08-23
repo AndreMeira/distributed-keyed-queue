@@ -1,7 +1,7 @@
 package homelab.keyedqueue
 
 
-import homelab.keyedqueue.domain.model.ClaimRef
+import homelab.keyedqueue.domain.model.{ ClaimRef, Message }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
@@ -55,8 +55,11 @@ object QueueStoreSpec extends ZIOSpecDefault:
       claimers <- ClaimerPool.make(client, config)
     yield RedisQueueStore(redis, scripts, claimers, WorkerId(id), config.leaseTtl)
 
-  private def bytes(text: String): Chunk[Byte]   = Chunk.fromArray(text.getBytes("UTF-8"))
-  private def text(payload: Chunk[Byte]): String = String(payload.toArray, "UTF-8")
+  /** A message whose cargo is `body`: these tests care about order and ownership, not about content. */
+  private def message(key: MessageKey, body: String): Message =
+    Message(key, messageId = body, payloadType = "test.Text", Encoding.Json, None, Chunk.fromArray(body.getBytes("UTF-8")))
+
+  private def cargo(message: Message): String = String(message.payload.toArray, "UTF-8")
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueStore over Redis")(
     test("a key's messages are delivered oldest first") {
@@ -64,13 +67,13 @@ object QueueStoreSpec extends ZIOSpecDefault:
         (worker, _, _) <- ZIO.service[(QueueStore, QueueStore, RedisCommands[String, Array[Byte]])]
         queue           = QueueName("order")
         key             = MessageKey("k1")
-        _              <- ZIO.foreachDiscard(List("a", "b", "c"))(m => worker.enqueue(queue, key, bytes(m)))
+        _              <- ZIO.foreachDiscard(List("a", "b", "c"))(m => worker.enqueue(queue, message(key, m)))
         seen           <- ZIO.foreach(1 to 3): _ =>
                             for
                               claimed <- worker.claim(queue, 2.seconds)
-                              message  = claimed.map(c => text(c.payload)).getOrElse("")
+                              body     = claimed.map(c => cargo(c.message)).getOrElse("")
                               _       <- ZIO.foreachDiscard(claimed)(c => worker.settle(c.claim, Verdict.Done, Duration.Zero))
-                            yield message
+                            yield body
       yield assertTrue(seen == Chunk("a", "b", "c"))
     },
     test("a key being worked is not handed to anybody else, and its next message waits") {
@@ -79,16 +82,16 @@ object QueueStoreSpec extends ZIOSpecDefault:
       for
         (worker, other, _) <- ZIO.service[(QueueStore, QueueStore, RedisCommands[String, Array[Byte]])]
         queue               = QueueName("exclusive")
-        _                  <- worker.enqueue(queue, MessageKey("k1"), bytes("first"))
-        _                  <- worker.enqueue(queue, MessageKey("k1"), bytes("second"))
-        _                  <- worker.enqueue(queue, MessageKey("k2"), bytes("other"))
+        _                  <- worker.enqueue(queue, message(MessageKey("k1"), "first"))
+        _                  <- worker.enqueue(queue, message(MessageKey("k1"), "second"))
+        _                  <- worker.enqueue(queue, message(MessageKey("k2"), "other"))
         held               <- worker.claim(queue, 2.seconds)
         next               <- other.claim(queue, 2.seconds)
         third              <- other.claim(queue, 500.millis)
       yield assertTrue(
-        held.map(c => text(c.payload)).contains("first"),
-        next.map(c => text(c.payload)).contains("other"), // k2, because k1 is held
-        third.isEmpty,                                    // and k1's second message is not offered
+        held.map(c => cargo(c.message)).contains("first"),
+        next.map(c => cargo(c.message)).contains("other"), // k2, because k1 is held
+        third.isEmpty,                                     // and k1's second message is not offered
       )
     },
     test("a failure returns the message, keeps its place, and counts the attempt") {
@@ -96,13 +99,13 @@ object QueueStoreSpec extends ZIOSpecDefault:
         (worker, _, _) <- ZIO.service[(QueueStore, QueueStore, RedisCommands[String, Array[Byte]])]
         queue           = QueueName("retry")
         key             = MessageKey("k1")
-        _              <- worker.enqueue(queue, key, bytes("poison"))
+        _              <- worker.enqueue(queue, message(key, "poison"))
         first          <- worker.claim(queue, 2.seconds)
         _              <- ZIO.foreachDiscard(first)(c => worker.settle(c.claim, Verdict.Failed, Duration.Zero))
         second         <- worker.claim(queue, 2.seconds)
       yield assertTrue(
         first.map(_.attempt).contains(1),
-        second.map(c => text(c.payload)).contains("poison"), // the same message, not the next one
+        second.map(c => cargo(c.message)).contains("poison"), // the same message, not the next one
         second.map(_.attempt).contains(2), // and the delivery count shows it
       )
     },
@@ -112,7 +115,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
       for
         (worker, sweeper, _) <- ZIO.service[(QueueStore, QueueStore, RedisCommands[String, Array[Byte]])]
         queue                 = QueueName("fenced")
-        _                    <- worker.enqueue(queue, MessageKey("k1"), bytes("work"))
+        _                    <- worker.enqueue(queue, message(MessageKey("k1"), "work"))
         held                 <- worker.claim(queue, 2.seconds)
         _                    <- ZIO.sleep(leaseTtl + 500.millis) // stop heartbeating: the lease lapses
         swept                <- sweeper.sweep(queue, 100)
@@ -121,7 +124,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
       yield assertTrue(
         swept.reclaimed.map(_.toString) == Chunk("k1"),
         late.contains(false), // rejected: the token is stale
-        again.map(c => text(c.payload)).contains("work"), // and the work is back
+        again.map(c => cargo(c.message)).contains("work"), // and the work is back
       )
     },
     test("a claimer registers in the queue it claims from, not somewhere else") {
@@ -131,7 +134,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
       for
         (worker, _, redis) <- ZIO.service[(QueueStore, QueueStore, RedisCommands[String, Array[Byte]])]
         queue               = QueueName("registered")
-        _                  <- worker.enqueue(queue, MessageKey("k1"), bytes("x"))
+        _                  <- worker.enqueue(queue, message(MessageKey("k1"), "x"))
         claimed            <- worker.claim(queue, 2.seconds)
         here               <- ZIO.attemptBlocking(redis.zcard("{q:registered}:workers")).orDie
         nowhere            <- ZIO.attemptBlocking(redis.zcard("{q:}:workers")).orDie
@@ -145,7 +148,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
       for
         (worker, sweeper, _) <- ZIO.service[(QueueStore, QueueStore, RedisCommands[String, Array[Byte]])]
         queue                 = QueueName("beat")
-        _                    <- worker.enqueue(queue, MessageKey("k1"), bytes("work"))
+        _                    <- worker.enqueue(queue, message(MessageKey("k1"), "work"))
         held                 <- worker.claim(queue, 2.seconds)
         ghost                 = ClaimRef(queue, MessageKey("gone"), Token(7))
         renewed              <- worker.renew(Chunk.fromIterable(held.map(_.claim)) :+ ghost)

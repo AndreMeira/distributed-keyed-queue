@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.persistence
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.model.{ ClaimRef, Claimed }
+import homelab.keyedqueue.domain.model.{ ClaimRef, Claimed, Message }
 import homelab.keyedqueue.domain.types.*
 import zio.{ Chunk, Duration, IO }
 
@@ -17,20 +17,22 @@ import java.time.Instant
  * what lets a second implementation exist without the layer above noticing: a Postgres variant would do with
  * `SKIP LOCKED` and a `claimed_until` column what this one does with `BLMOVE` and a deadline set.
  *
- * '''Payloads are opaque.''' The store never parses a message; the layer above encodes an `Envelope` into
- * bytes and decodes it on the way out. Only the key is structural, because ordering is defined by it.
+ * '''It speaks in messages, and cargo stays opaque.''' How a message is serialised is this port's business,
+ * not its caller's — the same way key layout is. What the store never does is look *inside* a message: only
+ * its key is structural, because ordering is defined by it, and the payload is cargo it moves unread.
  */
 trait QueueStore:
 
   /**
    * Accept a message for a key, and make the key claimable if nothing is working it.
    *
+   * The key is the message's own, so a message cannot be filed under a key that disagrees with it.
+   *
    * @param queue the queue to append to
-   * @param key the key that orders this message
-   * @param payload the message as bytes
+   * @param message the message, ordered by its own key
    * @return the key's queue depth after the append; aborts with `QueueError` if the store fails
    */
-  def enqueue(queue: QueueName, key: MessageKey, payload: Chunk[Byte]): IO[QueueError, Long]
+  def enqueue(queue: QueueName, message: Message): IO[QueueError, Long]
 
   /**
    * Wait up to `timeout` for a key to become claimable, then take its oldest message.

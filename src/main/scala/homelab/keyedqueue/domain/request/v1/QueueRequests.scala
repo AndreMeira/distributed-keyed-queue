@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.request.v1
 
 
-import homelab.keyedqueue.domain.model.Envelope
+import homelab.keyedqueue.domain.model.Message
 import homelab.keyedqueue.domain.types.*
 import zio.{ Chunk, Duration }
 
@@ -11,7 +11,7 @@ import zio.{ Chunk, Duration }
  *
  * Each mirrors its wire message field for field — same names, same shapes, richer types — so the
  * transformer between them carries no decisions. Where one of these differs from the proto, the difference
- * is the point: the queue name is separate from the envelope because it is an address, the enums have no
+ * is the point: the queue name is separate from the message because it is an address, the enums have no
  * `Unspecified` because an unusable request is refused at the boundary rather than carried inwards.
  */
 object QueueRequests
@@ -20,9 +20,9 @@ object QueueRequests
  * Accept a message for a key.
  *
  * @param queue the queue to append to
- * @param envelope the message
+ * @param message the message
  */
-final case class EnqueueRequest(queue: QueueName, envelope: Envelope)
+final case class EnqueueRequest(queue: QueueName, message: Message)
 
 /**
  * Wait for a message.

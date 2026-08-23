@@ -4,7 +4,7 @@ package homelab.keyedqueue.infrastructure.codecs.grpc.v1
 import com.google.protobuf.ByteString
 import com.google.protobuf.duration.Duration as WireDuration
 import com.google.protobuf.timestamp.Timestamp
-import homelab.keyedqueue.domain.model.Envelope
+import homelab.keyedqueue.domain.model.Message
 import homelab.keyedqueue.domain.request.v1.*
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.v1
@@ -24,7 +24,7 @@ import java.time.Instant
  *
  * '''Partial, because the wire can say things the domain cannot hold.''' A proto3 enum always carries an
  * `UNSPECIFIED`, and a message field is always optional, so a request that says nothing about its encoding
- * or carries no envelope at all is representable on the wire and meaningless here. Those are refused at
+ * or carries no message at all is representable on the wire and meaningless here. Those are refused at
  * this boundary rather than becoming states every later match has to remember to reject.
  */
 object Inbound:
@@ -55,19 +55,19 @@ object Inbound:
     case v1.Outcome.OUTCOME_FAILED => partial.Result.fromValue(Verdict.Failed)
     case other                     => partial.Result.fromErrorString(s"an outcome is required, got ${other.name}")
 
-  private given PartialTransformer[Option[v1.Envelope], Envelope] = PartialTransformer:
-    case Some(envelope) => envelope.transformIntoPartial[Envelope]
-    case None           => partial.Result.fromErrorString("an envelope is required")
+  private given PartialTransformer[Option[v1.Message], Message] = PartialTransformer:
+    case Some(message) => message.transformIntoPartial[Message]
+    case None          => partial.Result.fromErrorString("a message is required")
 
   /**
-   * Read an envelope on its own, which is what the storage codec needs.
+   * Read a message on its own, which is what the storage codec needs.
    *
-   * @param message the wire envelope
-   * @return the domain envelope, or why it could not be read
+   * @param message the wire message
+   * @return the domain message, or why it could not be read
    */
-  def envelope(message: v1.Envelope): Either[String, Envelope] =
+  def message(message: v1.Message): Either[String, Message] =
     message
-      .transformIntoPartial[Envelope]
+      .transformIntoPartial[Message]
       .asEitherErrorPathMessageStrings
       .left
       .map(_.map((path, reason) => s"$path: $reason").mkString("; "))

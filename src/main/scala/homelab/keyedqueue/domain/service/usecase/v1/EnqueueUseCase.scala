@@ -6,7 +6,6 @@ import homelab.keyedqueue.domain.request.v1.EnqueueRequest
 import homelab.keyedqueue.domain.response.v1.EnqueueResponse
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.domain.service.serialisation.EnvelopeCodec
 import zio.{ IO, ZIO }
 
 
@@ -14,10 +13,9 @@ import zio.{ IO, ZIO }
  * Accept a message for a key.
  *
  * @param store where the queue lives
- * @param codec how an envelope becomes the bytes the store holds
  * @param watchdog told about the queue, so its abandoned work is repaired
  */
-final class EnqueueUseCase(store: QueueStore, codec: EnvelopeCodec, watchdog: Watchdog):
+final class EnqueueUseCase(store: QueueStore, watchdog: Watchdog):
 
   /**
    * Validate and append.
@@ -31,9 +29,7 @@ final class EnqueueUseCase(store: QueueStore, codec: EnvelopeCodec, watchdog: Wa
    */
   def apply(request: EnqueueRequest): IO[QueueError, EnqueueResponse] =
     if request.queue.isEmpty then ZIO.fail(QueueError.Invalid("a queue name is required"))
-    else if request.envelope.key.isEmpty then ZIO.fail(QueueError.Invalid("a message key is required: it is what ordering is defined by"))
+    else if request.message.key.isEmpty then ZIO.fail(QueueError.Invalid("a message key is required: it is what ordering is defined by"))
     else
       watchdog.watch(request.queue)
-        *> store
-          .enqueue(request.queue, request.envelope.key, codec.encode(request.envelope))
-          .map(EnqueueResponse.apply)
+        *> store.enqueue(request.queue, request.message).map(EnqueueResponse.apply)

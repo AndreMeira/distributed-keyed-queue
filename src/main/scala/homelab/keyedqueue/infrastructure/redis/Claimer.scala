@@ -4,6 +4,7 @@ package homelab.keyedqueue.infrastructure.redis
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.{ ClaimRef, Claimed }
 import homelab.keyedqueue.domain.types.*
+import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import io.lettuce.core.api.sync.RedisCommands
 import io.lettuce.core.{ LMoveArgs, ScriptOutputType }
 import zio.*
@@ -122,9 +123,13 @@ final class Claimer(
   /**
    * Turn possession of a key into a claim: message in hand, lease running, token issued.
    *
+   * The stored bytes are read back here, so an unreadable message fails the claim rather than travelling one
+   * layer further as bytes nobody above this adapter should have to think about.
+   *
    * @param ns the queue
    * @param key the key taken by [[take]]
-   * @return the claim, or `None` when the key turned out to have nothing left
+   * @return the claim, or `None` when the key turned out to have nothing left; aborts with `MalformedReply`
+   *         when the reply, or the message in it, cannot be read
    */
   private def granted(ns: Namespace, key: MessageKey): IO[QueueError, Option[Claimed]] =
     Lua
@@ -144,9 +149,9 @@ final class Claimer(
             case _                  => Chunk.empty[Byte]
           List(1, 2, 3).map(values.get).collect { case number: java.lang.Long => number.longValue } match
             case List(token, attempt, deadline) =>
-              ZIO.some(
-                Claimed(ClaimRef(ns.queue, key, Token(token)), payload, attempt.toInt, Instant.ofEpochMilli(deadline))
-              )
+              StoredMessage
+                .fromBytes(payload)
+                .map(message => Some(Claimed(ClaimRef(ns.queue, key, Token(token)), message, attempt.toInt, Instant.ofEpochMilli(deadline))))
             case _                              => ZIO.fail(QueueError.MalformedReply(s"consume returned ${Lua.describe(values)}"))
         case other                                         => ZIO.fail(QueueError.MalformedReply(s"consume returned ${Lua.describe(other)}"))
 

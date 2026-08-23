@@ -44,8 +44,8 @@ filed, whichever way it went).
 
 ```proto
 message EnqueueRequest {
-  string   queue    = 1;   // the address, not part of the message — see redis-keyed-queue.md §3b
-  Envelope envelope = 2;
+  string  queue   = 1;   // the address, not part of the message — see redis-keyed-queue.md §3b
+  Message message = 2;
 }
 message EnqueueResponse {
   uint64 key_depth = 1;    // how many messages this key now has queued; a metric, not a decision
@@ -61,8 +61,8 @@ message DequeueResponse {
 }
 
 message Delivery {
-  string   receipt = 1;                 // opaque; hand it back to Settle and Heartbeat
-  Envelope envelope = 2;
+  string  receipt = 1;                  // opaque; hand it back to Settle and Heartbeat
+  Message message = 2;
   uint32   attempt  = 3;                // 1 on first delivery, 2+ after a reclaim
   google.protobuf.Timestamp lease_expires_at = 4;
 }
@@ -136,7 +136,7 @@ nothing, because the server validates the token against `fence` anyway.
 ## What the client does
 
 ```scala
-def consumer(client: KeyedQueue, queue: String)(handle: Envelope => Task[Unit]): RIO[Scope, Nothing] =
+def consumer(client: KeyedQueue, queue: String)(handle: Message => Task[Unit]): RIO[Scope, Nothing] =
   for
     held <- Ref.make(Set.empty[String])                       // receipts currently in hand
     _    <- beat(client, held).repeat(Schedule.fixed(interval)).forkScoped
@@ -152,13 +152,13 @@ def beat(client: KeyedQueue, held: Ref[Set[String]]): Task[Unit] =
   yield ()
 
 def workLoop(client: KeyedQueue, queue: String, held: Ref[Set[String]])(
-  handle: Envelope => Task[Unit]
+  handle: Message => Task[Unit]
 ): Task[Nothing] =
   (for
     reply <- client.dequeue(queue, maxWait = 20.seconds)
     _     <- ZIO.foreachDiscard(reply.delivery): delivery =>
                held.update(_ + delivery.receipt) *>
-                 handle(delivery.envelope).exit.flatMap: outcome =>
+                 handle(delivery.message).exit.flatMap: outcome =>
                    client.settle(delivery.receipt, if outcome.isSuccess then Done else Failed) *>
                      held.update(_ - delivery.receipt)
   yield ()).forever

@@ -37,7 +37,7 @@ enum Encoding {
 
 // The unit that travels and is stored. The queue name is NOT in here — it is the address a message was
 // sent to, not a property of the message (docs/research/redis-keyed-queue.md §3b).
-message Envelope {
+message Message {
   string                    key          = 1;  // per-key ordering; empty is a key of its own
   string                    message_id   = 2;  // idempotency + correlation in logs
   string                    payload_type = 3;  // stable schema name + version, never a class name
@@ -48,7 +48,7 @@ message Envelope {
 
 message EnqueueRequest {
   string   queue    = 1;
-  Envelope envelope = 2;
+  Message  message = 2;
 }
 message EnqueueResponse {
   uint64 key_depth = 1;  // how many messages this key now has queued; a metric, not a decision
@@ -65,7 +65,7 @@ message DequeueResponse {
 
 message Delivery {
   string                    receipt          = 1;  // opaque; hand it back to Settle and Heartbeat
-  Envelope                  envelope         = 2;
+  Message                   message          = 2;
   uint32                    attempt          = 3;  // 1 on first delivery, 2+ after a reclaim
   google.protobuf.Timestamp lease_expires_at = 4;
 }

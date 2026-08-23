@@ -3,7 +3,7 @@ package homelab.keyedqueue.infrastructure.codecs.grpc.v1
 
 import com.google.protobuf.ByteString
 import com.google.protobuf.timestamp.Timestamp
-import homelab.keyedqueue.domain.model.{ Delivery, Envelope }
+import homelab.keyedqueue.domain.model.{ Delivery, Message }
 import homelab.keyedqueue.domain.response.v1.*
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.v1
@@ -53,19 +53,19 @@ object Outbound:
     case Applied.Ok    => v1.Applied.APPLIED_OK
     case Applied.Stale => v1.Applied.APPLIED_STALE
 
-  private given Transformer[Envelope, Option[v1.Envelope]] =
-    envelope => Some(toProto(envelope))
+  private given Transformer[Message, Option[v1.Message]] =
+    message => Some(toProto(message))
 
   private given Transformer[Delivery, v1.Delivery] = Transformer.derive[Delivery, v1.Delivery]
 
   /**
-   * The wire form of an envelope, which is also how it is stored.
+   * The wire form of a message, which is also how it is stored.
    *
-   * @param envelope the message
-   * @return its wire message
+   * @param message the message
+   * @return its wire form
    */
-  def toProto(envelope: Envelope): v1.Envelope =
-    envelope.transformInto[v1.Envelope]
+  def toProto(message: Message): v1.Message =
+    message.transformInto[v1.Message]
 
   extension (response: EnqueueResponse)
     /** @return the wire response */
