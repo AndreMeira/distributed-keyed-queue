@@ -1,26 +1,27 @@
 -- Finish a claim that BLMOVE already started, and hand back the message to work on.
 --
--- Runs *after* `BLMOVE ready claiming LEFT RIGHT <timeout>` — the blocking part cannot live in a
--- script, so the key sits in `claiming` for the instant between the two. A worker that dies there
--- leaves the key in `claiming`, which the watchdog sweeps.
+-- Runs *after* `BLMOVE ready claiming:<worker> LEFT RIGHT <timeout>` — the blocking part cannot live in a
+-- script, so the key sits in the worker's claiming list for the instant between the two. A worker that dies
+-- there is recovered by the watchdog's worker-liveness sweep.
 --
--- KEYS[1] claiming   list  keys handed to a worker, mid-transition
--- KEYS[2] state      hash
+-- KEYS[1] claiming   list  this worker's in-transition keys
+-- KEYS[2] state      hash  key -> queued | processing (absent == idle)
 -- KEYS[3] claimed    zset  key -> deadline (unix millis); the lease
 -- KEYS[4] fence      hash  key -> monotonic claim counter
--- KEYS[5] msgs       list
+-- KEYS[5] msgs       list  this key's messages, oldest first
 -- KEYS[6] inflight   list  the one message being worked
+-- KEYS[7] attempts   hash  key -> how many times the CURRENT head message has been delivered
 -- ARGV[1] key
--- ARGV[2] now        unix millis
--- ARGV[3] ttl        millis
--- returns            {message, token}, or nil when the key had nothing left
-local claiming, state, claimed, fence, msgs, inflight = KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]
-local key, now, ttl = ARGV[1], tonumber(ARGV[2]), tonumber(ARGV[3])
+-- ARGV[2] ttl        millis
+-- returns            {message, token, attempt}, or nil when the key had nothing left
+local claiming, state, claimed, fence, msgs, inflight, attempts =
+  KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7]
+local key, ttl = ARGV[1], tonumber(ARGV[2])
 
 redis.call('LREM', claiming, 1, key)
 
--- LEFT: oldest first. RPUSH in produce.lua plus a LEFT pop here is FIFO; popping RIGHT would make
--- it a stack and silently reverse the per-key ordering this design exists to guarantee.
+-- LEFT: oldest first. RPUSH in produce.lua plus a LEFT pop here is FIFO; popping RIGHT would make it a
+-- stack and silently reverse the per-key ordering this design exists to guarantee.
 local message = redis.call('LMOVE', msgs, inflight, 'LEFT', 'RIGHT')
 
 if not message then
@@ -28,9 +29,17 @@ if not message then
   return nil
 end
 
+-- Server time, so deadlines do not depend on a caller's clock: a fast one would write leases that never
+-- expire, a slow one would have the watchdog reclaim live work.
+local now = redis.call('TIME')
+now = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+
 redis.call('HSET', state, key, 'processing')
 redis.call('ZADD', claimed, now + ttl, key)
 
--- The deadline exists from this instant, so a key is never in flight without one. The token is what
--- makes a later reclaim safe: a zombie worker's completion is rejected because its token is stale.
-return { message, redis.call('HINCRBY', fence, key, 1) }
+-- Counts deliveries of the message now at the head. Reset by a DONE settle, which is what moves the head;
+-- a FAILED settle leaves the head in place, so its count keeps climbing — that is what makes a poison
+-- message visible rather than silent.
+local attempt = redis.call('HINCRBY', attempts, key, 1)
+
+return { message, redis.call('HINCRBY', fence, key, 1), attempt, now + ttl }

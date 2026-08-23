@@ -7,9 +7,9 @@
 -- ARGV[2] payload
 -- returns            the key's queue depth after the append
 --
--- The state guard is the whole point: a key already `queued` is in `ready` once and must not be
--- pushed twice, and a key `processing` is re-queued by whoever finishes it (complete.lua) or by
--- the watchdog. Two workers on one key is the one thing this design must never allow.
+-- The state guard is the whole point: a key already `queued` is in `ready` (or held back in `delayed`) and
+-- must not be pushed twice, and a key `processing` is re-queued by whoever finishes it, or by the watchdog.
+-- Two workers on one key is the one thing this design must never allow.
 local ready, state, msgs = KEYS[1], KEYS[2], KEYS[3]
 local key, payload = ARGV[1], ARGV[2]
 

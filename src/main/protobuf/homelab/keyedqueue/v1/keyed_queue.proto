@@ -1,0 +1,101 @@
+// The phase 1 contract: four unary calls, a blocking Dequeue, leases renewed by Heartbeat.
+// Design and rationale: docs/research/phase-1-api.md
+syntax = "proto3";
+
+package homelab.keyedqueue.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "scalapb/scalapb.proto";
+
+// Generator options live here rather than in build.sbt so ScalaPB and zio-grpc agree on the package.
+option (scalapb.options) = {
+  flat_package: true
+};
+
+service KeyedQueue {
+  // Accept a message for a key. Returns once it is durably queued.
+  rpc Enqueue(EnqueueRequest) returns (EnqueueResponse);
+
+  // Block until work for this queue is available, or `wait` elapses.
+  rpc Dequeue(DequeueRequest) returns (DequeueResponse);
+
+  // Report the outcome. Until this lands, the message is still leased to the caller.
+  rpc Settle(SettleRequest) returns (SettleResponse);
+
+  // Renew every claim this consumer still holds. Sent on a fixed tick, not per message.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+// How `payload` is serialised. UNSPECIFIED is rejected rather than guessed: a receiver that assumes a
+// format will one day decode garbage successfully.
+enum Encoding {
+  ENCODING_UNSPECIFIED = 0;
+  ENCODING_JSON        = 1;
+  ENCODING_PROTOBUF    = 2;
+}
+
+// The unit that travels and is stored. The queue name is NOT in here — it is the address a message was
+// sent to, not a property of the message (docs/research/redis-keyed-queue.md §3b).
+message Message {
+  string                    key          = 1;  // per-key ordering; empty is a key of its own
+  string                    message_id   = 2;  // idempotency + correlation in logs
+  string                    payload_type = 3;  // stable schema name + version, never a class name
+  Encoding                  encoding     = 4;
+  google.protobuf.Timestamp sent_at      = 5;  // sender clock: metrics, not decisions
+  bytes                     payload      = 6;
+}
+
+message EnqueueRequest {
+  string   queue    = 1;
+  Message  message = 2;
+}
+message EnqueueResponse {
+  uint64 key_depth = 1;  // how many messages this key now has queued; a metric, not a decision
+}
+
+message DequeueRequest {
+  string                   queue    = 1;
+  // Named `max_wait` rather than `wait`: on the JVM a field called `wait` collides with Object.wait().
+  google.protobuf.Duration max_wait = 2;  // how long to block; the RPC deadline should exceed it
+}
+message DequeueResponse {
+  optional Delivery delivery = 1;  // absent = nothing became ready in time. NOT an error
+}
+
+message Delivery {
+  string                    receipt          = 1;  // opaque; hand it back to Settle and Heartbeat
+  Message                   message          = 2;
+  uint32                    attempt          = 3;  // 1 on first delivery, 2+ after a reclaim
+  google.protobuf.Timestamp lease_expires_at = 4;
+}
+
+enum Outcome {
+  OUTCOME_UNSPECIFIED = 0;
+  OUTCOME_DONE        = 1;
+  OUTCOME_FAILED      = 2;
+}
+
+// Whether a call applied, or found the caller's lease already revoked.
+enum Applied {
+  APPLIED_UNSPECIFIED = 0;
+  APPLIED_OK          = 1;
+  APPLIED_STALE       = 2;
+}
+
+message SettleRequest {
+  string                   receipt     = 1;
+  Outcome                  outcome     = 2;
+  google.protobuf.Duration retry_after = 3;  // OUTCOME_FAILED only; zero means immediately
+}
+message SettleResponse {
+  Applied applied = 1;
+}
+
+message HeartbeatRequest {
+  repeated string receipts = 1;  // everything this consumer currently holds; empty is legal
+}
+message HeartbeatResponse {
+  repeated string           stale         = 1;  // of those, the ones it no longer holds
+  google.protobuf.Timestamp renewed_until = 2;  // the new deadline for all the rest
+}

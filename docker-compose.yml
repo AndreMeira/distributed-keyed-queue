@@ -28,6 +28,7 @@ services:
       timeout: 3s
       retries: 10
 
-# No `app` service yet — dkq has no Dockerfile. When it gets one, it follows the shape in
-# ../registration-service/docker-compose.yml: image + command, the Redis host pointing at
-# `redis:6379`, and `depends_on: { redis: { condition: service_healthy } }`.
+# No `app` service here on purpose: this stack is the substrate for a dkq you run from sbt or your IDE.
+# For dkq *deployed* — the image, two instances, the whole thing driven over the wire — see
+# docker-compose.e2e.yml and docs/architecture/end-to-end-testing.md. The image itself comes from
+# `sbt Docker/publishLocal`; there is no hand-written Dockerfile.
