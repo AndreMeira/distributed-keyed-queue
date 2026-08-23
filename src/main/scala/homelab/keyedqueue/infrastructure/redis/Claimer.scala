@@ -76,9 +76,11 @@ final class Claimer(
    * @return noop; aborts with `QueueError` when the store fails
    */
   private def register(ns: Namespace): IO[QueueError, Unit] =
-    ZIO.unlessZIO(known.get.map(_.contains(ns.queue)))(
-      renew(ns, Chunk.empty) *> known.update(_ + ns.queue)
-    ).unit
+    ZIO
+      .unlessZIO(known.get.map(_.contains(ns.queue)))(
+        renew(ns, Chunk.empty) *> known.update(_ + ns.queue)
+      )
+      .unit
 
   /**
    * Write this claimer's liveness, and push forward any claims named.
@@ -99,7 +101,7 @@ final class Claimer(
       )
       .flatMap:
         case values: java.util.List[?] if values.size == 2 => ZIO.succeed(Lua.strings(values.get(1)))
-        case other => ZIO.fail(QueueError.MalformedReply(s"heartbeat returned ${Lua.describe(other)}"))
+        case other                                         => ZIO.fail(QueueError.MalformedReply(s"heartbeat returned ${Lua.describe(other)}"))
 
   /**
    * Take a claimable key into this connection's own claiming list.
@@ -112,8 +114,7 @@ final class Claimer(
     ZIO
       .attemptBlocking(
         Option(
-          redis.blmove(ns.ready, ns.claiming(worker), LMoveArgs.Builder.leftRight(),
-            timeout.toMillis.toDouble / 1000.0)
+          redis.blmove(ns.ready, ns.claiming(worker), LMoveArgs.Builder.leftRight(), timeout.toMillis.toDouble / 1000.0)
         )
       )
       .mapBoth(Lua.failure, _.map(Lua.text))
@@ -135,8 +136,8 @@ final class Claimer(
         Array(Lua.utf8(key), Lua.utf8(leaseTtl.toMillis.toString)),
       )
       .flatMap:
-        case null                                        => ZIO.none
-        case values: java.util.List[?] if values.isEmpty => ZIO.none
+        case null                                          => ZIO.none
+        case values: java.util.List[?] if values.isEmpty   => ZIO.none
         case values: java.util.List[?] if values.size == 4 =>
           val payload = values.get(0) match
             case bytes: Array[Byte] => Chunk.fromArray(bytes)
@@ -144,11 +145,10 @@ final class Claimer(
           List(1, 2, 3).map(values.get).collect { case number: java.lang.Long => number.longValue } match
             case List(token, attempt, deadline) =>
               ZIO.some(
-                Claimed(ClaimRef(ns.queue, key, Token(token)), payload, attempt.toInt,
-                  Instant.ofEpochMilli(deadline))
+                Claimed(ClaimRef(ns.queue, key, Token(token)), payload, attempt.toInt, Instant.ofEpochMilli(deadline))
               )
-            case _ => ZIO.fail(QueueError.MalformedReply(s"consume returned ${Lua.describe(values)}"))
-        case other => ZIO.fail(QueueError.MalformedReply(s"consume returned ${Lua.describe(other)}"))
+            case _                              => ZIO.fail(QueueError.MalformedReply(s"consume returned ${Lua.describe(values)}"))
+        case other                                         => ZIO.fail(QueueError.MalformedReply(s"consume returned ${Lua.describe(other)}"))
 
   /**
    * Hand back whatever this connection was holding mid-claim — at most one key, since it makes one `BLMOVE`

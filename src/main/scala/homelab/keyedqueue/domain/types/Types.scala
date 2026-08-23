@@ -1,8 +1,8 @@
 package homelab.keyedqueue.domain.types
 
-
 /** The queue a message was addressed to. It is the address, never part of the message. */
 type QueueName = QueueName.Type
+
 
 object QueueName:
   opaque type Type <: String = String
@@ -19,6 +19,7 @@ object QueueName:
 /** What a message is ordered by: one key is worked by one consumer at a time, keys run concurrently. */
 type MessageKey = MessageKey.Type
 
+
 object MessageKey:
   opaque type Type <: String = String
 
@@ -33,6 +34,7 @@ object MessageKey:
 
 /** A claim's generation. A token authorises exactly one transition: grant, revoke and settle all advance it. */
 type Token = Token.Type
+
 
 object Token:
   opaque type Type <: Long = Long
@@ -49,6 +51,7 @@ object Token:
 /** One blocking connection's identity. Registered before it claims anything, expires if it stops beating. */
 type WorkerId = WorkerId.Type
 
+
 object WorkerId:
   opaque type Type <: String = String
 
@@ -63,6 +66,7 @@ object WorkerId:
 
 /** The opaque handle a consumer holds while it works a message. */
 type Receipt = Receipt.Type
+
 
 object Receipt:
   opaque type Type <: String = String

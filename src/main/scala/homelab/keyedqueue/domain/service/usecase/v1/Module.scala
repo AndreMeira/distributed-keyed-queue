@@ -22,10 +22,9 @@ object Module:
    * @return the layer
    */
   val useCases: ZLayer[QueueStore & EnvelopeCodec & Watchdog & SyncUseCases.Config, Nothing, SyncUseCases] =
-    ZLayer.fromFunction:
-      (store: QueueStore, codec: EnvelopeCodec, watchdog: Watchdog, config: SyncUseCases.Config) =>
-        SyncUseCases(
-          enqueue = EnqueueUseCase(store, codec, watchdog),
+    ZLayer.fromFunction: (store: QueueStore, codec: EnvelopeCodec, watchdog: Watchdog, config: SyncUseCases.Config) =>
+      SyncUseCases(
+        enqueue = EnqueueUseCase(store, codec, watchdog),
         dequeue = DequeueUseCase(store, codec, watchdog, config.maxWait),
         settle = SettleUseCase(store),
         heartbeat = HeartbeatUseCase(store),

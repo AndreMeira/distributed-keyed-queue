@@ -35,11 +35,9 @@ object Inbound:
 
   private given Transformer[ByteString, Chunk[Byte]] = bytes => Chunk.fromArray(bytes.toByteArray)
 
-  private given Transformer[WireDuration, Duration] = duration =>
-    Duration.fromSeconds(duration.seconds) + Duration.fromNanos(duration.nanos.toLong)
+  private given Transformer[WireDuration, Duration] = duration => Duration.fromSeconds(duration.seconds) + Duration.fromNanos(duration.nanos.toLong)
 
-  private given Transformer[Timestamp, Instant] = stamp =>
-    Instant.ofEpochSecond(stamp.seconds, stamp.nanos.toLong)
+  private given Transformer[Timestamp, Instant] = stamp => Instant.ofEpochSecond(stamp.seconds, stamp.nanos.toLong)
 
   /** An absent duration means "do not wait", which is a legitimate request rather than a missing field. */
   private given Transformer[Option[WireDuration], Duration] =
@@ -49,13 +47,13 @@ object Inbound:
   private given PartialTransformer[v1.Encoding, Encoding] = PartialTransformer:
     case v1.Encoding.ENCODING_JSON     => partial.Result.fromValue(Encoding.Json)
     case v1.Encoding.ENCODING_PROTOBUF => partial.Result.fromValue(Encoding.Protobuf)
-    case other                           => partial.Result.fromErrorString(s"unsupported encoding: ${other.name}")
+    case other                         => partial.Result.fromErrorString(s"unsupported encoding: ${other.name}")
 
   /** Nor can one that does not say what the consumer decided. */
   private given PartialTransformer[v1.Outcome, Verdict] = PartialTransformer:
     case v1.Outcome.OUTCOME_DONE   => partial.Result.fromValue(Verdict.Done)
     case v1.Outcome.OUTCOME_FAILED => partial.Result.fromValue(Verdict.Failed)
-    case other                       => partial.Result.fromErrorString(s"an outcome is required, got ${other.name}")
+    case other                     => partial.Result.fromErrorString(s"an outcome is required, got ${other.name}")
 
   private given PartialTransformer[Option[v1.Envelope], Envelope] = PartialTransformer:
     case Some(envelope) => envelope.transformIntoPartial[Envelope]

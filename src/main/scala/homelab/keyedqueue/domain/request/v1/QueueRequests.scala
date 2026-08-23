@@ -16,7 +16,6 @@ import zio.{ Chunk, Duration }
  */
 object QueueRequests
 
-
 /**
  * Accept a message for a key.
  *
@@ -24,7 +23,6 @@ object QueueRequests
  * @param envelope the message
  */
 final case class EnqueueRequest(queue: QueueName, envelope: Envelope)
-
 
 /**
  * Wait for a message.
@@ -34,7 +32,6 @@ final case class EnqueueRequest(queue: QueueName, envelope: Envelope)
  */
 final case class DequeueRequest(queue: QueueName, maxWait: Duration)
 
-
 /**
  * Report what happened to a claimed message.
  *
@@ -43,7 +40,6 @@ final case class DequeueRequest(queue: QueueName, maxWait: Duration)
  * @param retryAfter how long to hold the key back before retrying; ignored for `Done`
  */
 final case class SettleRequest(receipt: Receipt, outcome: Verdict, retryAfter: Duration)
-
 
 /**
  * Renew everything a consumer still holds.

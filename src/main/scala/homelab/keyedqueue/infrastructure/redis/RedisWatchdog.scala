@@ -23,8 +23,7 @@ import zio.*
  * @param config how often, and how much per pass
  * @param queues the queues this instance has served
  */
-final class RedisWatchdog(store: QueueStore, config: QueueConfig, queues: Ref[Set[QueueName]])
-    extends Watchdog:
+final class RedisWatchdog(store: QueueStore, config: QueueConfig, queues: Ref[Set[QueueName]]) extends Watchdog:
 
   /**
    * Remembers the queue '''in memory''', which is the adapter's one real limitation.
@@ -79,7 +78,7 @@ final class RedisWatchdog(store: QueueStore, config: QueueConfig, queues: Ref[Se
             )
             .unless(swept.isEmpty)
             .unit
-            // A full pass means there is more waiting; do not make it wait for the next tick.
+          // A full pass means there is more waiting; do not make it wait for the next tick.
             *> sweep(queue).when(touched >= config.sweepLimit).unit,
       )
 
@@ -95,7 +94,7 @@ object RedisWatchdog:
    */
   def make(store: QueueStore, config: QueueConfig): ZIO[Scope, Nothing, RedisWatchdog] =
     for
-      queues   <- Ref.make(Set.empty[QueueName])
-      watchdog  = RedisWatchdog(store, config, queues)
-      _        <- watchdog.run.forkScoped
+      queues  <- Ref.make(Set.empty[QueueName])
+      watchdog = RedisWatchdog(store, config, queues)
+      _       <- watchdog.run.forkScoped
     yield watchdog

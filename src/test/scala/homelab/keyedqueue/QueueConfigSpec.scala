@@ -21,7 +21,7 @@ object QueueConfigSpec extends ZIOSpecDefault:
       yield assertTrue(
         config.redisUrl == "redis://localhost:6379",
         config.port == 9000,
-        config.leaseTtl == 30.seconds,       // "30 seconds" in HOCON, a zio.Duration here
+        config.leaseTtl == 30.seconds, // "30 seconds" in HOCON, a zio.Duration here
         config.sweepInterval == 5.seconds,
         config.sweepLimit == 100,
         config.claimers == 8,

@@ -49,7 +49,7 @@ object Scripts:
       .map:
         case List(produce, consume, complete, heartbeat, watchdog) =>
           Scripts(produce, consume, complete, heartbeat, watchdog)
-        case other =>
+        case other                                                 =>
           Scripts("", "", "", "", "") // unreachable: `names` is fixed and foreach preserves its length
 
   /**

@@ -1,6 +1,5 @@
 package homelab.keyedqueue.domain.error
 
-
 import homelab.common.error.ApplicationError
 
 
@@ -14,19 +13,16 @@ import homelab.common.error.ApplicationError
 enum QueueError extends ApplicationError:
 
   /** The substrate failed or could not be reached. Transient by nature: the lease is the backstop. */
-  case StoreUnavailable(reason: String) extends QueueError, ApplicationError.AdapterError,
-        ApplicationError.TransientError
+  case StoreUnavailable(reason: String) extends QueueError, ApplicationError.AdapterError, ApplicationError.TransientError
 
   /** A script returned something this code does not know how to read — a defect, not a runtime condition. */
-  case MalformedReply(reason: String) extends QueueError, ApplicationError.AdapterError,
-        ApplicationError.ImplementationError
+  case MalformedReply(reason: String) extends QueueError, ApplicationError.AdapterError, ApplicationError.ImplementationError
 
   /** The caller sent something the API cannot act on. */
   case Invalid(reason: String) extends QueueError, ApplicationError.DomainError
 
   /** The service could not start. Nothing is running, so there is nothing to retry against. */
-  case StartupFailed(reason: String) extends QueueError, ApplicationError.AdapterError,
-        ApplicationError.UnrecoverableError
+  case StartupFailed(reason: String) extends QueueError, ApplicationError.AdapterError, ApplicationError.UnrecoverableError
 
   /**
    * What to tell a human. Reasons are phrased in terms of the queue rather than of Redis, because this is

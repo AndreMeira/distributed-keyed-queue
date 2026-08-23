@@ -31,8 +31,7 @@ final class EnqueueUseCase(store: QueueStore, codec: EnvelopeCodec, watchdog: Wa
    */
   def apply(request: EnqueueRequest): IO[QueueError, EnqueueResponse] =
     if request.queue.isEmpty then ZIO.fail(QueueError.Invalid("a queue name is required"))
-    else if request.envelope.key.isEmpty then
-      ZIO.fail(QueueError.Invalid("a message key is required: it is what ordering is defined by"))
+    else if request.envelope.key.isEmpty then ZIO.fail(QueueError.Invalid("a message key is required: it is what ordering is defined by"))
     else
       watchdog.watch(request.queue)
         *> store

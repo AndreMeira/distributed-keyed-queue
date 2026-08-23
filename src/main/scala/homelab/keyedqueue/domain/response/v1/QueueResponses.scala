@@ -17,14 +17,12 @@ import java.time.Instant
  */
 object QueueResponses
 
-
 /**
  * A message was accepted.
  *
  * @param keyDepth how many messages its key now has queued — a metric, not a decision
  */
 final case class EnqueueResponse(keyDepth: Long)
-
 
 /**
  * The outcome of a wait.
@@ -33,14 +31,12 @@ final case class EnqueueResponse(keyDepth: Long)
  */
 final case class DequeueResponse(delivery: Option[Delivery])
 
-
 /**
  * The outcome of a settle.
  *
  * @param applied whether it landed, or the claim had already been revoked
  */
 final case class SettleResponse(applied: Applied)
-
 
 /**
  * The outcome of a heartbeat.

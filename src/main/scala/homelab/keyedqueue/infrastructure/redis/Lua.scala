@@ -58,7 +58,7 @@ object Lua:
   def strings(value: Any): Chunk[String] = value match
     case values: java.util.List[?] =>
       Chunk.fromIterable(values.asScala.toList).collect { case bytes: Array[Byte] => text(bytes) }
-    case _ => Chunk.empty
+    case _                         => Chunk.empty
 
   /** Encode text the way the scripts expect to read it. */
   def utf8(value: String): Array[Byte] = value.getBytes(StandardCharsets.UTF_8)

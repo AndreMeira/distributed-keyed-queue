@@ -29,7 +29,7 @@ object GrpcSpec extends ZIOSpecDefault:
       for
         container <- ZIO.acquireRelease(
                        ZIO.attemptBlocking:
-                         val _ = java.lang.System.setProperty("api.version", "1.40")
+                         val _                            = java.lang.System.setProperty("api.version", "1.40")
                          val started: GenericContainer[?] = GenericContainer("valkey/valkey:8.1-alpine")
                          started.setExposedPorts(java.util.List.of(Integer.valueOf(6379)))
                          started.start()
@@ -56,14 +56,12 @@ object GrpcSpec extends ZIOSpecDefault:
   def spec: Spec[TestEnvironment & Scope, Any] = suite("KeyedQueue over gRPC")(
     test("enqueue, dequeue, settle — the loop a consumer writes") {
       for
-        client   <- ZIO.service[KeyedQueueClient]
-        _        <- client.enqueue(EnqueueRequest("jobs", Some(envelope("k1", "hello"))))
-        reply    <- client.dequeue(DequeueRequest("jobs", Some(ProtoDuration(seconds = 2))))
-        delivery  = reply.delivery
-        settled  <- ZIO.foreach(delivery)(d =>
-                      client.settle(SettleRequest(d.receipt, Outcome.OUTCOME_DONE))
-                    )
-        empty    <- client.dequeue(DequeueRequest("jobs", Some(ProtoDuration(seconds = 1))))
+        client  <- ZIO.service[KeyedQueueClient]
+        _       <- client.enqueue(EnqueueRequest("jobs", Some(envelope("k1", "hello"))))
+        reply   <- client.dequeue(DequeueRequest("jobs", Some(ProtoDuration(seconds = 2))))
+        delivery = reply.delivery
+        settled <- ZIO.foreach(delivery)(d => client.settle(SettleRequest(d.receipt, Outcome.OUTCOME_DONE)))
+        empty   <- client.dequeue(DequeueRequest("jobs", Some(ProtoDuration(seconds = 1))))
       yield assertTrue(
         delivery.flatMap(_.envelope).map(_.payload.toStringUtf8).contains("hello"),
         delivery.map(_.attempt).contains(1),
@@ -76,21 +74,21 @@ object GrpcSpec extends ZIOSpecDefault:
       // What an at-least-once RPC does on a retry. The second must not apply, or the key would be queued
       // twice and two consumers could hold it.
       for
-        client   <- ZIO.service[KeyedQueueClient]
-        _        <- client.enqueue(EnqueueRequest("replay", Some(envelope("k1", "once"))))
-        reply    <- client.dequeue(DequeueRequest("replay", Some(ProtoDuration(seconds = 2))))
-        receipt   = reply.delivery.map(_.receipt).getOrElse("")
-        first    <- client.settle(SettleRequest(receipt, Outcome.OUTCOME_DONE))
-        second   <- client.settle(SettleRequest(receipt, Outcome.OUTCOME_DONE))
+        client <- ZIO.service[KeyedQueueClient]
+        _      <- client.enqueue(EnqueueRequest("replay", Some(envelope("k1", "once"))))
+        reply  <- client.dequeue(DequeueRequest("replay", Some(ProtoDuration(seconds = 2))))
+        receipt = reply.delivery.map(_.receipt).getOrElse("")
+        first  <- client.settle(SettleRequest(receipt, Outcome.OUTCOME_DONE))
+        second <- client.settle(SettleRequest(receipt, Outcome.OUTCOME_DONE))
       yield assertTrue(first.applied == Applied.APPLIED_OK, second.applied == Applied.APPLIED_STALE)
     },
     test("heartbeat renews what is held and names what is not") {
       for
-        client   <- ZIO.service[KeyedQueueClient]
-        _        <- client.enqueue(EnqueueRequest("beats", Some(envelope("k1", "work"))))
-        reply    <- client.dequeue(DequeueRequest("beats", Some(ProtoDuration(seconds = 2))))
-        receipt   = reply.delivery.map(_.receipt).getOrElse("")
-        beat     <- client.heartbeat(HeartbeatRequest(Seq(receipt, "not-a-receipt")))
+        client <- ZIO.service[KeyedQueueClient]
+        _      <- client.enqueue(EnqueueRequest("beats", Some(envelope("k1", "work"))))
+        reply  <- client.dequeue(DequeueRequest("beats", Some(ProtoDuration(seconds = 2))))
+        receipt = reply.delivery.map(_.receipt).getOrElse("")
+        beat   <- client.heartbeat(HeartbeatRequest(Seq(receipt, "not-a-receipt")))
       yield assertTrue(
         beat.stale == Seq("not-a-receipt"), // the real one was renewed; the nonsense one named
         beat.renewedUntil.isDefined,

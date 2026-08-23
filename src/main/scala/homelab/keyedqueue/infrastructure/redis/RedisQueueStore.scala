@@ -47,8 +47,7 @@ final class RedisQueueStore(
    */
   override def enqueue(queue: QueueName, key: MessageKey, payload: Chunk[Byte]): IO[QueueError, Long] =
     val ns = Namespace(queue)
-    call(scripts.produce, ScriptOutputType.INTEGER, Array(ns.ready, ns.state, ns.msgs(key)),
-      Array(Lua.utf8(key), payload.toArray))
+    call(scripts.produce, ScriptOutputType.INTEGER, Array(ns.ready, ns.state, ns.msgs(key)), Array(Lua.utf8(key), payload.toArray))
       .flatMap(Lua.number("produce"))
 
   /**
@@ -74,8 +73,7 @@ final class RedisQueueStore(
     call(
       scripts.complete,
       ScriptOutputType.INTEGER,
-      Array(ns.state, ns.claimed, ns.fence, ns.msgs(claim.key), ns.inflight(claim.key), ns.ready,
-        ns.attempts, ns.delayed),
+      Array(ns.state, ns.claimed, ns.fence, ns.msgs(claim.key), ns.inflight(claim.key), ns.ready, ns.attempts, ns.delayed),
       Array(
         Lua.utf8(claim.key),
         Lua.utf8(claim.token.toString),
@@ -118,7 +116,7 @@ final class RedisQueueStore(
             Lua.strings(values.get(2)).map(MessageKey.apply),
           )
         )
-      case other => ZIO.fail(QueueError.MalformedReply(s"watchdog returned ${Lua.describe(other)}"))
+      case other                                         => ZIO.fail(QueueError.MalformedReply(s"watchdog returned ${Lua.describe(other)}"))
 
   /**
    * Renew the claims a caller holds in one queue.
@@ -143,9 +141,9 @@ final class RedisQueueStore(
         val until = values.get(0) match
           case number: java.lang.Long => number.longValue
           case _                      => 0L
-        val lost = Lua.strings(values.get(1)).toSet
+        val lost  = Lua.strings(values.get(1)).toSet
         ZIO.succeed((Instant.ofEpochMilli(until), held.filter(claim => lost.contains(claim.key))))
-      case other => ZIO.fail(QueueError.MalformedReply(s"heartbeat returned ${Lua.describe(other)}"))
+      case other                                         => ZIO.fail(QueueError.MalformedReply(s"heartbeat returned ${Lua.describe(other)}"))
 
   /**
    * Run a script on the shared connection.

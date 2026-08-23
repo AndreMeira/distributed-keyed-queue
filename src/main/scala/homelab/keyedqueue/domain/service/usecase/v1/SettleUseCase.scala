@@ -29,7 +29,7 @@ final class SettleUseCase(store: QueueStore):
    */
   def apply(request: SettleRequest): IO[QueueError, SettleResponse] =
     ClaimRef.fromReceipt(request.receipt) match
-      case None => ZIO.succeed(SettleResponse(Applied.Stale))
+      case None        => ZIO.succeed(SettleResponse(Applied.Stale))
       case Some(claim) =>
         store
           .settle(claim, request.outcome, request.retryAfter)

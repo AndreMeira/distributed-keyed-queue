@@ -39,10 +39,10 @@ object Outbound:
   private given Transformer[Chunk[Byte], ByteString] =
     bytes => ByteString.copyFrom(bytes.toArray)
 
-  private given Transformer[Instant, Timestamp] = 
+  private given Transformer[Instant, Timestamp] =
     instant => Timestamp(seconds = instant.getEpochSecond, nanos = instant.getNano)
 
-  private given Transformer[Instant, Option[Timestamp]] = 
+  private given Transformer[Instant, Option[Timestamp]] =
     instant => Some(Timestamp(seconds = instant.getEpochSecond, nanos = instant.getNano))
 
   private given Transformer[Encoding, v1.Encoding] =
@@ -53,7 +53,7 @@ object Outbound:
     case Applied.Ok    => v1.Applied.APPLIED_OK
     case Applied.Stale => v1.Applied.APPLIED_STALE
 
-  private given Transformer[Envelope, Option[v1.Envelope]] = 
+  private given Transformer[Envelope, Option[v1.Envelope]] =
     envelope => Some(toProto(envelope))
 
   private given Transformer[Delivery, v1.Delivery] = Transformer.derive[Delivery, v1.Delivery]
@@ -64,12 +64,12 @@ object Outbound:
    * @param envelope the message
    * @return its wire message
    */
-  def toProto(envelope: Envelope): v1.Envelope = 
+  def toProto(envelope: Envelope): v1.Envelope =
     envelope.transformInto[v1.Envelope]
 
   extension (response: EnqueueResponse)
     /** @return the wire response */
-    def toProto: v1.EnqueueResponse = 
+    def toProto: v1.EnqueueResponse =
       response.transformInto[v1.EnqueueResponse]
 
   extension (response: DequeueResponse)

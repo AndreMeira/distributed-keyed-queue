@@ -39,9 +39,7 @@ object Module:
    */
   val shared: ZLayer[RedisClient & QueueConfig, QueueError, Commands] =
     ZLayer.scoped(
-      ZIO.serviceWithZIO[RedisClient](client =>
-        ZIO.serviceWithZIO[QueueConfig](config => Connection.open(client, config.maxWait))
-      )
+      ZIO.serviceWithZIO[RedisClient](client => ZIO.serviceWithZIO[QueueConfig](config => Connection.open(client, config.maxWait)))
     )
 
   /**
@@ -77,9 +75,8 @@ object Module:
    * @return the layer
    */
   val store: ZLayer[Commands & Scripts & ClaimerPool & QueueConfig, Nothing, QueueStore] =
-    ZLayer.fromFunction:
-      (redis: Commands, scripts: Scripts, claimers: ClaimerPool, config: QueueConfig) =>
-        RedisQueueStore(redis, scripts, claimers, WorkerId("shared"), config.leaseTtl)
+    ZLayer.fromFunction: (redis: Commands, scripts: Scripts, claimers: ClaimerPool, config: QueueConfig) =>
+      RedisQueueStore(redis, scripts, claimers, WorkerId("shared"), config.leaseTtl)
 
   /**
    * The repair loop, running for the life of the scope.
@@ -88,7 +85,5 @@ object Module:
    */
   val watchdog: ZLayer[QueueStore & QueueConfig, Nothing, Watchdog] =
     ZLayer.scoped(
-      ZIO.serviceWithZIO[QueueStore](store =>
-        ZIO.serviceWithZIO[QueueConfig](config => RedisWatchdog.make(store, config))
-      )
+      ZIO.serviceWithZIO[QueueStore](store => ZIO.serviceWithZIO[QueueConfig](config => RedisWatchdog.make(store, config)))
     )
