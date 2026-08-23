@@ -1,0 +1,33 @@
+# Local Redis for the POC, mirroring what the cluster will run (see docs/research/roadmap.md §1):
+# one instance, no persistence, eviction OFF.
+#
+# Valkey rather than Redis: same commands (BLMOVE, ZADD, Lua, ACLs), BSD-licensed under the
+# Linux Foundation, and — since Broadcom moved the free Bitnami images to an unmaintained
+# `bitnamilegacy` repo — the one with freely available images and charts.
+services:
+  redis:
+    image: valkey/valkey:8.1-alpine # pin the minor; keep aligned with whatever the cluster runs
+    container_name: dkq-redis
+    ports:
+      - "6379:6379"
+    command:
+      # noeviction is not a preference: any eviction policy silently deletes queued jobs when
+      # memory fills, which is the worst failure this system can have.
+      - valkey-server
+      - --maxmemory-policy
+      - noeviction
+      # `save ""` + `appendonly no`: nothing survives a restart, deliberately. The POC proves
+      # semantics, not durability — persistence is phase 3 (docs/research/roadmap.md).
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+# No `app` service yet — dkq has no Dockerfile. When it gets one, it follows the shape in
+# ../registration-service/docker-compose.yml: image + command, the Redis host pointing at
+# `redis:6379`, and `depends_on: { redis: { condition: service_healthy } }`.
