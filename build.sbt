@@ -10,6 +10,8 @@ val zioVersion            = "2.1.23"
 val toolkitVersion        = "0.0.1-alpha"
 val scalapbVersion        = "0.11.17" // keep in sync with compilerplugin in project/plugins.sbt
 val zioGrpcVersion        = "0.6.3"
+val grpcVersion           = "1.64.0" // must match the grpc-core zio-grpc pulls, not scalapb's
+val lettuceVersion        = "6.7.1.RELEASE"
 val testcontainersVersion = "1.20.6"
 
 ThisBuild / scalaVersion := scala3Version
@@ -47,15 +49,31 @@ lazy val root = project
       "com.andremeira.homelab"        %% "homelab-common"       % toolkitVersion,
       "com.andremeira.homelab"        %% "homelab-postgres"     % toolkitVersion,
       "dev.zio"                       %% "zio"                  % zioVersion,
+      // Redis: the substrate. Lettuce rather than zio-redis, which derives its Input/Output from a
+      // zio-schema BinaryCodec — that encodes keys and args, and this design needs them byte-exact
+      // (the Lua builds key names by concatenation) plus heterogeneous script replies.
+      "io.lettuce"                     % "lettuce-core"         % lettuceVersion,
       // gRPC: generated stubs need the runtime; the server needs a transport (schemas ships neither)
       "com.thesamet.scalapb"          %% "scalapb-runtime-grpc" % scalapbVersion,
       "com.thesamet.scalapb.zio-grpc" %% "zio-grpc-core"        % zioGrpcVersion,
-      "io.grpc"                        % "grpc-netty"           % scalapb.compiler.Version.grpcJavaVersion,
+      // NOT scalapb.compiler.Version.grpcJavaVersion: that is 1.62.2 here, while zio-grpc-core pulls
+      // grpc-core 1.64.0, and the pair fails at runtime with a NoSuchMethodError deep in the transport.
+      // The transport must match the core, so it is pinned to the same version and overridden below.
+      "io.grpc"                        % "grpc-netty"           % grpcVersion,
       "dev.zio"                       %% "zio-test"             % zioVersion            % Test,
       "dev.zio"                       %% "zio-test-sbt"         % zioVersion            % Test,
-      "org.testcontainers"             % "postgresql"           % testcontainersVersion % Test,
+      "org.testcontainers"             % "testcontainers"       % testcontainersVersion % Test,
     ),
     // unpacks scalapb.proto onto protoc's include path, for the package-remap option
     libraryDependencies += "com.thesamet.scalapb" %% "scalapb-runtime" % scalapbVersion % "protobuf",
+    // One gRPC version across the graph: a split between transport and core is only visible at runtime.
+    dependencyOverrides ++= Seq(
+      "io.grpc" % "grpc-netty"          % grpcVersion,
+      "io.grpc" % "grpc-core"           % grpcVersion,
+      "io.grpc" % "grpc-api"            % grpcVersion,
+      "io.grpc" % "grpc-stub"           % grpcVersion,
+      "io.grpc" % "grpc-protobuf"       % grpcVersion,
+      "io.grpc" % "grpc-util"           % grpcVersion,
+    ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
   )
