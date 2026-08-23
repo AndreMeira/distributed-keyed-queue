@@ -1,0 +1,53 @@
+# Unit and integration tests on every push.
+#
+# The end-to-end suite is deliberately NOT run here: it builds a Docker image and composes a two-instance
+# deployment, for a suite whose value is in being run before a release rather than on every commit. Its
+# sources are still compiled below, so it cannot rot unnoticed. See docs/architecture/end-to-end-testing.md.
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A second push to the same branch makes the first run's answer worthless.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read # the homelab toolkit resolves from GitHub Packages, which serves Maven only to authenticated callers
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # GitHubPackages.credentials (project/) reads these; the toolkit resolves from GitHub Packages, which
+      # serves Maven only to authenticated callers. The toolkit lives in another repository, so the default
+      # GITHUB_TOKEN can only read it if that package grants this repo Actions access — set
+      # HOMELAB_PACKAGES_PAT (a classic PAT with read:packages) to use one credential across every homelab
+      # consumer instead.
+      GITHUB_ACTOR: ${{ github.actor }}
+      GITHUB_TOKEN: ${{ secrets.HOMELAB_PACKAGES_PAT || secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 21 because that is what the service runs on in its image (see build.sbt, dockerBaseImage).
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: sbt
+
+      # sbt is no longer preinstalled on the runner images.
+      - uses: sbt/setup-sbt@v1
+
+      # `Testcontainers` starts a Valkey for the store and gRPC specs; ubuntu-latest ships a Docker daemon.
+      - name: Test
+        run: sbt -batch test
+
+      # Compiled, never run: it keeps the end-to-end suite honest without paying for it on every commit.
+      - name: Compile the end-to-end suite
+        run: sbt -batch e2e/Test/compile
