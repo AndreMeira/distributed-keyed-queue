@@ -2,7 +2,7 @@ package homelab.keyedqueue
 
 
 import com.google.protobuf.duration.Duration as ProtoDuration
-import homelab.keyedqueue.application.grpc.GrpcApplication
+import homelab.keyedqueue.application.grpc.v1.GrpcApplication
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.v1.*
 import homelab.keyedqueue.v1.ZioKeyedQueue.KeyedQueueClient
@@ -37,7 +37,7 @@ object GrpcSpec extends ZIOSpecDefault:
                      )(container => ZIO.attemptBlocking(container.stop()).ignore)
         url        = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
         config     = QueueConfig(url, port, 30.seconds, 1.second, 100, 2, 5.seconds)
-        _         <- GrpcApplication.serve(config).forkScoped
+        _         <- GrpcApplication.serve.provide(ZLayer.succeed(config)).forkScoped
         _         <- ZIO.sleep(1.second) // let the server bind before the client dials
         client    <- KeyedQueueClient.scoped(
                        ZManagedChannel(ManagedChannelBuilder.forAddress("localhost", port).usePlaintext())

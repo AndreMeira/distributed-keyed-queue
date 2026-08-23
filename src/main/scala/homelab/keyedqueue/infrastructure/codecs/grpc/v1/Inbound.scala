@@ -1,11 +1,11 @@
-package homelab.keyedqueue.infrastructure.codecs.grpc
+package homelab.keyedqueue.infrastructure.codecs.grpc.v1
 
 
 import com.google.protobuf.ByteString
 import com.google.protobuf.duration.Duration as WireDuration
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.domain.model.Envelope
-import homelab.keyedqueue.domain.request.queue.*
+import homelab.keyedqueue.domain.request.v1.*
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.v1
 import io.scalaland.chimney.dsl.*

@@ -1,9 +1,9 @@
-package homelab.keyedqueue.domain.service.usecase
+package homelab.keyedqueue.domain.service.usecase.v1
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.request.queue.EnqueueRequest
-import homelab.keyedqueue.domain.response.queue.EnqueueResponse
+import homelab.keyedqueue.domain.request.v1.EnqueueRequest
+import homelab.keyedqueue.domain.response.v1.EnqueueResponse
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.serialisation.EnvelopeCodec

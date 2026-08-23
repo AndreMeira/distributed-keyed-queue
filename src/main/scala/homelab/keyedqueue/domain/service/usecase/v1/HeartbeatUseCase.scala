@@ -1,10 +1,10 @@
-package homelab.keyedqueue.domain.service.usecase
+package homelab.keyedqueue.domain.service.usecase.v1
 
 
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.ClaimRef
-import homelab.keyedqueue.domain.request.queue.HeartbeatRequest
-import homelab.keyedqueue.domain.response.queue.HeartbeatResponse
+import homelab.keyedqueue.domain.request.v1.HeartbeatRequest
+import homelab.keyedqueue.domain.response.v1.HeartbeatResponse
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import zio.IO
 

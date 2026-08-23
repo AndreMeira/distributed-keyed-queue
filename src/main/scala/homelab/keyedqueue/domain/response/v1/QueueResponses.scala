@@ -1,4 +1,4 @@
-package homelab.keyedqueue.domain.response.queue
+package homelab.keyedqueue.domain.response.v1
 
 
 import homelab.keyedqueue.domain.model.Delivery

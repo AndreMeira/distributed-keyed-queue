@@ -24,6 +24,10 @@ enum QueueError extends ApplicationError:
   /** The caller sent something the API cannot act on. */
   case Invalid(reason: String) extends QueueError, ApplicationError.DomainError
 
+  /** The service could not start. Nothing is running, so there is nothing to retry against. */
+  case StartupFailed(reason: String) extends QueueError, ApplicationError.AdapterError,
+        ApplicationError.UnrecoverableError
+
   /**
    * What to tell a human. Reasons are phrased in terms of the queue rather than of Redis, because this is
    * what reaches a caller as a status description.
@@ -34,3 +38,4 @@ enum QueueError extends ApplicationError:
     case StoreUnavailable(reason) => s"The queue store is unavailable: $reason"
     case MalformedReply(reason)   => s"The queue store replied with something unreadable: $reason"
     case Invalid(reason)          => reason
+    case StartupFailed(reason)    => s"The service could not start: $reason"

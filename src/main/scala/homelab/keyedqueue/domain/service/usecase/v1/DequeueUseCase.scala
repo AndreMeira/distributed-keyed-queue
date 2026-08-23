@@ -1,10 +1,10 @@
-package homelab.keyedqueue.domain.service.usecase
+package homelab.keyedqueue.domain.service.usecase.v1
 
 
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.{ Claimed, Delivery }
-import homelab.keyedqueue.domain.request.queue.DequeueRequest
-import homelab.keyedqueue.domain.response.queue.DequeueResponse
+import homelab.keyedqueue.domain.request.v1.DequeueRequest
+import homelab.keyedqueue.domain.response.v1.DequeueResponse
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.serialisation.EnvelopeCodec

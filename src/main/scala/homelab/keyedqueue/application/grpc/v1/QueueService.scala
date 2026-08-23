@@ -1,12 +1,11 @@
-package homelab.keyedqueue.application.grpc
-
+package homelab.keyedqueue.application.grpc.v1
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.service.usecase.*
-import homelab.keyedqueue.infrastructure.codecs.grpc.Inbound.*
-import homelab.keyedqueue.infrastructure.codecs.grpc.Outbound.*
-import homelab.keyedqueue.v1.ZioKeyedQueue
+import homelab.keyedqueue.domain.service.usecase.v1.*
+import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Inbound.*
+import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Outbound.*
 import homelab.keyedqueue.v1
+import homelab.keyedqueue.v1.ZioKeyedQueue
 import io.grpc.{ Status, StatusException }
 import io.scalaland.chimney.partial
 import zio.*

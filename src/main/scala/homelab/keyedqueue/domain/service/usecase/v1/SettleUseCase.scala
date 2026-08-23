@@ -1,10 +1,10 @@
-package homelab.keyedqueue.domain.service.usecase
+package homelab.keyedqueue.domain.service.usecase.v1
 
 
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.ClaimRef
-import homelab.keyedqueue.domain.request.queue.SettleRequest
-import homelab.keyedqueue.domain.response.queue.SettleResponse
+import homelab.keyedqueue.domain.request.v1.SettleRequest
+import homelab.keyedqueue.domain.response.v1.SettleResponse
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.Applied
 import zio.{ IO, ZIO }

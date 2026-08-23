@@ -1,4 +1,4 @@
-package homelab.keyedqueue.domain.request.queue
+package homelab.keyedqueue.domain.request.v1
 
 
 import homelab.keyedqueue.domain.model.Envelope

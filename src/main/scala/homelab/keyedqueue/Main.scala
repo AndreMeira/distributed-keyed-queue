@@ -1,8 +1,8 @@
 package homelab.keyedqueue
 
 
-import homelab.keyedqueue.application.grpc.GrpcApplication
-import homelab.keyedqueue.infrastructure.configuration.QueueConfig
+import homelab.keyedqueue.application.grpc.v1.GrpcApplication
+import homelab.keyedqueue.infrastructure.configuration.Module as configuration
 import zio.*
 
 
@@ -17,15 +17,9 @@ object Main extends ZIOAppDefault:
   /**
    * Read the configuration and serve until interrupted.
    *
-   * The whole service lives in one scope, so a failure anywhere — a connection that will not open, a script
-   * the server rejects — closes the connections and the claimers on the way out rather than leaving a
-   * half-started process behind.
+   * Everything lives in one layer graph, so a failure anywhere — a connection that will not open, a script
+   * the server rejects — tears down whatever was already built rather than leaving a half-started process.
    *
    * @return never completes successfully; aborts with whatever prevented startup
    */
-  override def run: ZIO[Any, Any, Any] =
-    ZIO.scoped:
-      for
-        config <- QueueConfig.load
-        _      <- GrpcApplication.serve(config)
-      yield ()
+  override def run: ZIO[Any, Any, Any] = GrpcApplication.serve.provide(configuration.config)
