@@ -2,33 +2,39 @@ package homelab.keyedqueue.domain.service.usecase
 
 
 import homelab.keyedqueue.domain.error.QueueError
+import homelab.keyedqueue.domain.request.queue.EnqueueRequest
+import homelab.keyedqueue.domain.response.queue.EnqueueResponse
+import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.domain.types.*
-import zio.{ Chunk, IO }
+import homelab.keyedqueue.domain.service.serialisation.EnvelopeCodec
+import zio.{ IO, ZIO }
 
 
 /**
  * Accept a message for a key.
  *
  * @param store where the queue lives
+ * @param codec how an envelope becomes the bytes the store holds
+ * @param watchdog told about the queue, so its abandoned work is repaired
  */
-final class EnqueueUseCase(store: QueueStore):
+final class EnqueueUseCase(store: QueueStore, codec: EnvelopeCodec, watchdog: Watchdog):
 
   /**
    * Validate and append.
    *
-   * The key is rejected when empty rather than treated as "no ordering": every message sharing one empty key
-   * would be serialised behind the others, which is the opposite of what a caller leaving it blank expects.
+   * The key is rejected when empty rather than treated as "no ordering": every message sharing one empty
+   * key would be serialised behind the others, the opposite of what leaving it blank suggests.
    *
-   * @param queue the queue to append to
-   * @param key the key that orders this message
-   * @param payload the encoded message
-   * @return the key's queue depth after the append; aborts with `Invalid` when the key is empty, or with
-   *         `QueueError` when the store fails
+   * @param request the queue and the message
+   * @return the key's depth after the append; aborts with `Invalid` when the request cannot be acted on, or
+   *         with `QueueError` when the store fails
    */
-  def apply(queue: QueueName, key: MessageKey, payload: Chunk[Byte]): IO[QueueError, Long] =
-    if queue.isEmpty then fail("a queue name is required")
-    else if key.isEmpty then fail("a message key is required: it is what ordering is defined by")
-    else store.enqueue(queue, key, payload)
-
-  private def fail(reason: String): IO[QueueError, Nothing] = zio.ZIO.fail(QueueError.Invalid(reason))
+  def apply(request: EnqueueRequest): IO[QueueError, EnqueueResponse] =
+    if request.queue.isEmpty then ZIO.fail(QueueError.Invalid("a queue name is required"))
+    else if request.envelope.key.isEmpty then
+      ZIO.fail(QueueError.Invalid("a message key is required: it is what ordering is defined by"))
+    else
+      watchdog.watch(request.queue)
+        *> store
+          .enqueue(request.queue, request.envelope.key, codec.encode(request.envelope))
+          .map(EnqueueResponse.apply)

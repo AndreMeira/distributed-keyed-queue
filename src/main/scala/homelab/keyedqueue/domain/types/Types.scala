@@ -61,6 +61,37 @@ object WorkerId:
   def apply(value: String): Type = value
 
 
+/** The opaque handle a consumer holds while it works a message. */
+type Receipt = Receipt.Type
+
+object Receipt:
+  opaque type Type <: String = String
+
+  /**
+   * A receipt, trusted.
+   *
+   * @param value the encoded handle
+   * @return the receipt
+   */
+  def apply(value: String): Type = value
+
+
 /** What a consumer did with a message. */
 enum Verdict:
   case Done, Failed
+
+
+/**
+ * How a payload is serialised.
+ *
+ * There is no `Unspecified` here, unlike on the wire: a message that does not say how to read it cannot be
+ * acted on, so it is refused at the boundary rather than carried inwards as a state every later match has to
+ * remember to reject.
+ */
+enum Encoding:
+  case Json, Protobuf
+
+
+/** Whether a call applied, or found the caller's claim already revoked. */
+enum Applied:
+  case Ok, Stale

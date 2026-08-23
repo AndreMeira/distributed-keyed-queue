@@ -24,6 +24,12 @@ enum QueueError extends ApplicationError:
   /** The caller sent something the API cannot act on. */
   case Invalid(reason: String) extends QueueError, ApplicationError.DomainError
 
+  /**
+   * What to tell a human. Reasons are phrased in terms of the queue rather than of Redis, because this is
+   * what reaches a caller as a status description.
+   *
+   * @return the message
+   */
   override def message: String = this match
     case StoreUnavailable(reason) => s"The queue store is unavailable: $reason"
     case MalformedReply(reason)   => s"The queue store replied with something unreadable: $reason"

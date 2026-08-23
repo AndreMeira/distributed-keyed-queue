@@ -3,9 +3,11 @@ package homelab.keyedqueue.domain.service.usecase
 
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.ClaimRef
+import homelab.keyedqueue.domain.request.queue.SettleRequest
+import homelab.keyedqueue.domain.response.queue.SettleResponse
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.domain.types.Verdict
-import zio.{ Duration, IO, ZIO }
+import homelab.keyedqueue.domain.types.Applied
+import zio.{ IO, ZIO }
 
 
 /**
@@ -22,13 +24,13 @@ final class SettleUseCase(store: QueueStore):
    * would tell a caller whether it was confused or merely late, and neither changes what it must do next:
    * stop, and do not touch that key.
    *
-   * @param receipt the opaque handle from the delivery
-   * @param verdict what the consumer decided
-   * @param retryAfter how long to hold the key back before retrying; ignored for `Done`
-   * @return true when applied, false when the claim was already gone; aborts with `QueueError` when the
-   *         store fails
+   * @param request the receipt, the verdict, and any backoff
+   * @return whether it applied; aborts with `QueueError` when the store fails
    */
-  def apply(receipt: String, verdict: Verdict, retryAfter: Duration): IO[QueueError, Boolean] =
-    ClaimRef.fromReceipt(receipt) match
-      case None        => ZIO.succeed(false)
-      case Some(claim) => store.settle(claim, verdict, retryAfter)
+  def apply(request: SettleRequest): IO[QueueError, SettleResponse] =
+    ClaimRef.fromReceipt(request.receipt) match
+      case None => ZIO.succeed(SettleResponse(Applied.Stale))
+      case Some(claim) =>
+        store
+          .settle(claim, request.outcome, request.retryAfter)
+          .map(applied => SettleResponse(if applied then Applied.Ok else Applied.Stale))

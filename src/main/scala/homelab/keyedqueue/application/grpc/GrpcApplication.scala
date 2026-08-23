@@ -5,7 +5,10 @@ import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.usecase.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.{ ClaimerPool, Connection, Scripts, RedisQueueStore, Watchdog }
+import homelab.keyedqueue.domain.service.maintenance.Watchdog
+import homelab.keyedqueue.domain.service.serialisation.EnvelopeCodec
+import homelab.keyedqueue.infrastructure.codecs.storage.ProtobufEnvelopeCodec
+import homelab.keyedqueue.infrastructure.redis.{ ClaimerPool, Connection, RedisQueueStore, RedisWatchdog, Scripts }
 import homelab.keyedqueue.domain.types.WorkerId
 import io.grpc.ServerBuilder
 import scalapb.zio_grpc.{ Server, ServerLayer, ServiceList }
@@ -34,7 +37,7 @@ object GrpcApplication:
       scripts  <- Scripts.load(shared)
       claimers <- ClaimerPool.make(client, config)
       store     = RedisQueueStore(shared, scripts, claimers, WorkerId("shared"), config.leaseTtl)
-      watchdog <- Watchdog.make(store, config)
+      watchdog <- RedisWatchdog.make(store, config)
       // Claimers must stay registered even while idle: registration lapses on silence, and a claim made
       // after that would be born unrecoverable.
       _        <- claimers.beat.repeat(Schedule.fixed(Duration.fromMillis(config.leaseTtl.toMillis / 3))).forkScoped
@@ -59,12 +62,12 @@ object GrpcApplication:
    * @return the gRPC service
    */
   private def service(store: QueueStore, watchdog: Watchdog, config: QueueConfig): QueueService =
+    val codec: EnvelopeCodec = ProtobufEnvelopeCodec()
     QueueService(
-      EnqueueUseCase(store),
-      DequeueUseCase(store, config.maxWait),
+      EnqueueUseCase(store, codec, watchdog),
+      DequeueUseCase(store, codec, watchdog, config.maxWait),
       SettleUseCase(store),
       HeartbeatUseCase(store),
-      watchdog,
     )
 
   /**

@@ -2,9 +2,12 @@ package homelab.keyedqueue.domain.service.usecase
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.model.Claimed
+import homelab.keyedqueue.domain.model.{ Claimed, Delivery }
+import homelab.keyedqueue.domain.request.queue.DequeueRequest
+import homelab.keyedqueue.domain.response.queue.DequeueResponse
+import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.domain.types.QueueName
+import homelab.keyedqueue.domain.service.serialisation.EnvelopeCodec
 import zio.{ duration2DurationOps, Duration, IO, ZIO }
 
 
@@ -17,18 +20,33 @@ import zio.{ duration2DurationOps, Duration, IO, ZIO }
  * receives.
  *
  * @param store where the queue lives
+ * @param codec how the stored bytes become an envelope again
+ * @param watchdog told about the queue, so its abandoned work is repaired
  * @param maxWait the longest wait this service will honour
  */
-final class DequeueUseCase(store: QueueStore, maxWait: Duration):
+final class DequeueUseCase(store: QueueStore, codec: EnvelopeCodec, watchdog: Watchdog, maxWait: Duration):
 
   /**
-   * Wait up to `wait` for a message.
+   * Wait for a message.
    *
-   * @param queue the queue to take from
-   * @param wait how long the caller is prepared to wait; clamped to the service's ceiling
-   * @return the claim, or `None` when nothing became ready in time; aborts with `Invalid` when the queue is
+   * @param request the queue and how long the caller will wait, clamped to the service's ceiling
+   * @return the delivery, or nothing when none became ready in time; aborts with `Invalid` when the queue is
    *         unnamed, or with `QueueError` when the store fails
    */
-  def apply(queue: QueueName, wait: Duration): IO[QueueError, Option[Claimed]] =
-    if queue.isEmpty then ZIO.fail(QueueError.Invalid("a queue name is required"))
-    else store.claim(queue, if wait > maxWait then maxWait else wait)
+  def apply(request: DequeueRequest): IO[QueueError, DequeueResponse] =
+    if request.queue.isEmpty then ZIO.fail(QueueError.Invalid("a queue name is required"))
+    else
+      val patience = if request.maxWait > maxWait then maxWait else request.maxWait
+      watchdog.watch(request.queue)
+        *> store.claim(request.queue, patience).flatMap(ZIO.foreach(_)(delivery)).map(DequeueResponse.apply)
+
+  /**
+   * Present a claim as a delivery: the stored bytes read back, and the handle that settles them.
+   *
+   * @param claimed what the store handed over
+   * @return the delivery; aborts when the stored bytes are not an envelope this version can read
+   */
+  private def delivery(claimed: Claimed): IO[QueueError, Delivery] =
+    codec
+      .decode(claimed.payload)
+      .map(Delivery(claimed.claim.receipt, _, claimed.attempt, claimed.leaseExpiresAt))

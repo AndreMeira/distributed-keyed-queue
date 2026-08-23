@@ -14,6 +14,15 @@ import zio.*
  */
 object Main extends ZIOAppDefault:
 
+  /**
+   * Read the configuration and serve until interrupted.
+   *
+   * The whole service lives in one scope, so a failure anywhere — a connection that will not open, a script
+   * the server rejects — closes the connections and the claimers on the way out rather than leaving a
+   * half-started process behind.
+   *
+   * @return never completes successfully; aborts with whatever prevented startup
+   */
   override def run: ZIO[Any, Any, Any] =
     ZIO.scoped:
       for

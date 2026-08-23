@@ -34,6 +34,7 @@ final case class Scripts(
 
 object Scripts:
 
+  /** The scripts to load. '''Order matters''': [[load]] matches these against the fields of [[Scripts]]. */
   private val names = List("produce", "consume", "complete", "heartbeat", "watchdog")
 
   /**

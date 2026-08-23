@@ -1,6 +1,7 @@
 package homelab.keyedqueue.infrastructure.redis
 
 
+import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.QueueName
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
@@ -22,15 +23,21 @@ import zio.*
  * @param config how often, and how much per pass
  * @param queues the queues this instance has served
  */
-final class Watchdog(store: QueueStore, config: QueueConfig, queues: Ref[Set[QueueName]]):
+final class RedisWatchdog(store: QueueStore, config: QueueConfig, queues: Ref[Set[QueueName]])
+    extends Watchdog:
 
   /**
-   * Remember a queue, so it is swept from now on.
+   * Remembers the queue '''in memory''', which is the adapter's one real limitation.
    *
-   * @param queue the queue this instance just served
+   * A restarted instance therefore sweeps only the queues it has served since booting. That is tolerable
+   * rather than accidental: its peers keep sweeping the rest, a queue with no traffic anywhere has nothing
+   * to repair, and the alternative — a persisted registry of every queue ever seen — would need pruning
+   * logic of its own to stop growing for ever.
+   *
+   * @param queue the queue just served
    * @return noop
    */
-  def watch(queue: QueueName): UIO[Unit] = queues.update(_ + queue)
+  override def watch(queue: QueueName): UIO[Unit] = queues.update(_ + queue)
 
   /**
    * Sweep every known queue, for ever.
@@ -77,7 +84,7 @@ final class Watchdog(store: QueueStore, config: QueueConfig, queues: Ref[Set[Que
       )
 
 
-object Watchdog:
+object RedisWatchdog:
 
   /**
    * Start the repair loop for the life of the scope.
@@ -86,9 +93,9 @@ object Watchdog:
    * @param config the interval and the per-pass limit
    * @return the watchdog, so callers can tell it which queues exist
    */
-  def make(store: QueueStore, config: QueueConfig): ZIO[Scope, Nothing, Watchdog] =
+  def make(store: QueueStore, config: QueueConfig): ZIO[Scope, Nothing, RedisWatchdog] =
     for
       queues   <- Ref.make(Set.empty[QueueName])
-      watchdog  = Watchdog(store, config, queues)
+      watchdog  = RedisWatchdog(store, config, queues)
       _        <- watchdog.run.forkScoped
     yield watchdog

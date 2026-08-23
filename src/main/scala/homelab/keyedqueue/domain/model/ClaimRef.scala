@@ -28,9 +28,9 @@ final case class ClaimRef(queue: QueueName, key: MessageKey, token: Token):
    *
    * @return the receipt
    */
-  def receipt: String =
+  def receipt: Receipt =
     val raw = queue + " " + key + " " + token.toString
-    Base64.getUrlEncoder.withoutPadding.encodeToString(raw.getBytes(StandardCharsets.UTF_8))
+    Receipt(Base64.getUrlEncoder.withoutPadding.encodeToString(raw.getBytes(StandardCharsets.UTF_8)))
 
 
 object ClaimRef:
@@ -41,7 +41,7 @@ object ClaimRef:
    * @param receipt the opaque string from the consumer
    * @return the claim it names, or `None` when it is not one we issued
    */
-  def fromReceipt(receipt: String): Option[ClaimRef] =
+  def fromReceipt(receipt: Receipt): Option[ClaimRef] =
     scala.util
       .Try(String(Base64.getUrlDecoder.decode(receipt), StandardCharsets.UTF_8))
       .toOption

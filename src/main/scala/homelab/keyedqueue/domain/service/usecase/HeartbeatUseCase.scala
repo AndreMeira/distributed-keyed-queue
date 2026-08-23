@@ -3,10 +3,10 @@ package homelab.keyedqueue.domain.service.usecase
 
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.ClaimRef
+import homelab.keyedqueue.domain.request.queue.HeartbeatRequest
+import homelab.keyedqueue.domain.response.queue.HeartbeatResponse
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import zio.{ Chunk, IO }
-
-import java.time.Instant
+import zio.IO
 
 
 /**
@@ -22,12 +22,11 @@ final class HeartbeatUseCase(store: QueueStore):
    * A receipt that cannot be decoded is reported stale rather than rejected: the consumer's obligation is
    * the same either way, and failing the whole call would cost it the claims that *are* still good.
    *
-   * @param receipts everything the consumer believes it holds
-   * @return the new deadline, and the receipts it no longer holds; aborts with `QueueError` when the store
-   *         fails
+   * @param request everything the consumer believes it holds
+   * @return the new deadline and what it no longer holds; aborts with `QueueError` when the store fails
    */
-  def apply(receipts: Chunk[String]): IO[QueueError, (Instant, Chunk[String])] =
-    val decoded    = receipts.map(receipt => receipt -> ClaimRef.fromReceipt(receipt))
+  def apply(request: HeartbeatRequest): IO[QueueError, HeartbeatResponse] =
+    val decoded    = request.receipts.map(receipt => receipt -> ClaimRef.fromReceipt(receipt))
     val unreadable = decoded.collect { case (receipt, None) => receipt }
     val claims     = decoded.collect { case (_, Some(claim)) => claim }
-    store.renew(claims).map((until, lost) => (until, unreadable ++ lost.map(_.receipt)))
+    store.renew(claims).map((until, lost) => HeartbeatResponse(unreadable ++ lost.map(_.receipt), until))

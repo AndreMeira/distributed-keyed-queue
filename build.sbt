@@ -14,6 +14,7 @@ val grpcVersion           = "1.64.0" // must match the grpc-core zio-grpc pulls,
 val lettuceVersion        = "6.7.1.RELEASE"
 val typesafeConfigVersion = "1.4.9"
 val pureconfigVersion     = "0.17.10"
+val chimneyVersion        = "1.10.0"
 val testcontainersVersion = "1.20.6"
 
 ThisBuild / scalaVersion := scala3Version
@@ -59,6 +60,9 @@ lazy val root = project
       // one that lets a file carry both a working default and an env override for the same key.
       "com.typesafe"                   % "config"               % typesafeConfigVersion,
       "com.github.pureconfig"         %% "pureconfig-core"      % pureconfigVersion,
+      // Wire <-> domain mapping. The domain DTOs mirror the proto field for field precisely so these
+      // transformers stay derivable: anything Chimney cannot derive is a mismatch worth looking at.
+      "io.scalaland"                  %% "chimney"              % chimneyVersion,
       // gRPC: generated stubs need the runtime; the server needs a transport (schemas ships neither)
       "com.thesamet.scalapb"          %% "scalapb-runtime-grpc" % scalapbVersion,
       "com.thesamet.scalapb.zio-grpc" %% "zio-grpc-core"        % zioGrpcVersion,
