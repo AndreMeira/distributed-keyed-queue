@@ -51,7 +51,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
   private def store(client: io.lettuce.core.RedisClient, config: QueueConfig, id: String) =
     for
       redis    <- Connection.open(client, config.maxWait)
-      scripts  <- Scripts.load(redis)
+      scripts  <- Scripts.make(redis)
       claimers <- ClaimerPool.make(client, config)
     yield RedisQueueStore(redis, scripts, claimers, WorkerId(id), config.leaseTtl)
 

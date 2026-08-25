@@ -51,7 +51,7 @@ final class RedisWatchdog(store: QueueStore, config: QueueConfig, queues: Ref[Se
    *
    * @return never completes on its own; the schedule has no end
    */
-  def run: URIO[Any, Unit] = 
+  def run: URIO[Any, Unit] =
     sweepAll.repeat(Schedule.spaced(config.sweepInterval).unit)
 
   /**

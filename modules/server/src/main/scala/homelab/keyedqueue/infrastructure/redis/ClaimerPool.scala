@@ -70,7 +70,7 @@ object ClaimerPool:
       // The command timeout must exceed the longest blocking wait, or the client gives up on a BLMOVE that
       // is doing exactly what it was told to.
       redis   <- Connection.open(client, config.maxWait + 10.seconds)
-      scripts <- Scripts.load(redis)
+      scripts <- Scripts.make(redis)
       id      <- identity(index)
       claimer <- Claimer.make(redis, scripts, id, config.leaseTtl)
     yield claimer

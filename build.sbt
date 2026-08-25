@@ -31,8 +31,8 @@ ThisBuild / scalacOptions ++= Seq(
 
 
 // The toolkit lives in GitHub Packages; the resolver and the credential lookup are in
-// project/GitHubPackages.scala so this file stays declarative.
-resolvers += GitHubPackages.toolkit
+// project/GitHubPackages.scala so this file stays declarative. ThisBuild, so every module resolves it.
+ThisBuild / resolvers += GitHubPackages.toolkit
 
 ThisBuild / credentials ++= GitHubPackages.credentials
 
@@ -82,21 +82,21 @@ ThisBuild / dependencyOverrides ++= Seq(
 )
 
 
-lazy val root = project
-  .in(file("."))
-  // JavaAppPackaging + DockerPlugin so `sbt Docker/publishLocal` produces the image the end-to-end suite
-  // deploys. The service has no hand-written Dockerfile on purpose: the image a developer tests is then
-  // the image sbt built, with no second definition of the entry point to keep in step.
-  .enablePlugins(JavaAppPackaging, DockerPlugin)
+/**
+ * The contract: the `.proto` files and the stubs generated from them.
+ *
+ * Its own module because it is what a *consumer* needs and the service is only one implementation of it. A
+ * client should be able to depend on the wire format without dragging in Redis, lettuce, pureconfig and a
+ * repair loop — and the end-to-end suite proves that is true, since it drives the deployment with this
+ * module and a transport, nothing else.
+ *
+ * It carries no transport of its own for the same reason: whether a consumer dials over netty, in-process or
+ * something else is the consumer's decision.
+ */
+lazy val protocol = project
+  .in(file("modules/protocol"))
   .settings(
-    name := "distributed-keyed-queue",
-    Docker / packageName := "distributed-keyed-queue",
-    // Pinned to a JRE newer than any JDK likely to build this: class files travel forward, not back.
-    dockerBaseImage      := "eclipse-temurin:21-jre",
-    dockerExposedPorts   := Seq(9000),
-    // `:latest` as well as the version, so docker-compose.e2e.yml names an image that does not change
-    // every time the version does.
-    dockerUpdateLatest   := true,
+    name := "distributed-keyed-queue-protocol",
     Compile / PB.targets := Seq(
       // Generator options live in the .proto (`option (scalapb.options)`), not here: zio-grpc's generator
       // reads them from the file, so setting flatPackage build-side desynchronises the two and the ZIO
@@ -105,35 +105,76 @@ lazy val root = project
       scalapb.zio_grpc.ZioCodeGenerator -> (Compile / sourceManaged).value / "scalapb",
     ),
     libraryDependencies ++= Seq(
-      // the toolkit: ports + the Postgres adapter behind them (magnum, Hikari, Flyway come transitively)
-      "com.andremeira.homelab"        %% "homelab-common"       % toolkitVersion,
-      "com.andremeira.homelab"        %% "homelab-postgres"     % toolkitVersion,
       "dev.zio"                       %% "zio"                  % zioVersion,
+      "com.thesamet.scalapb"          %% "scalapb-runtime-grpc" % scalapbVersion,
+      "com.thesamet.scalapb.zio-grpc" %% "zio-grpc-core"        % zioGrpcVersion,
+      // unpacks scalapb.proto onto protoc's include path, for the package-remap option
+      "com.thesamet.scalapb"          %% "scalapb-runtime"      % scalapbVersion % "protobuf",
+    ),
+  )
+
+
+/**
+ * The service: the domain, the Redis adapter, and the gRPC server that fronts them.
+ *
+ * This is the deployable — `sbt server/Docker/publishLocal` builds the image the compose stacks run.
+ */
+lazy val server = project
+  .in(file("modules/server"))
+  .dependsOn(protocol)
+  // JavaAppPackaging + DockerPlugin so `sbt server/Docker/publishLocal` produces the image the end-to-end
+  // suite deploys. The service has no hand-written Dockerfile on purpose: the image a developer tests is
+  // then the image sbt built, with no second definition of the entry point to keep in step.
+  .enablePlugins(JavaAppPackaging, DockerPlugin)
+  .settings(
+    name                 := "distributed-keyed-queue-server",
+    // Pinned rather than derived from `name`: the compose files and the cluster manifests name this image,
+    // and they should not move because a module was renamed.
+    Docker / packageName := "distributed-keyed-queue",
+    // Pinned to a JRE newer than any JDK likely to build this: class files travel forward, not back.
+    dockerBaseImage      := "eclipse-temurin:21-jre",
+    dockerExposedPorts   := Seq(9000),
+    // `:latest` as well as the version, so docker-compose.e2e.yml names an image that does not change
+    // every time the version does.
+    dockerUpdateLatest   := true,
+    libraryDependencies ++= Seq(
+      // the toolkit: ports + the Postgres adapter behind them (magnum, Hikari, Flyway come transitively)
+      "com.andremeira.homelab" %% "homelab-common"   % toolkitVersion,
+      "com.andremeira.homelab" %% "homelab-postgres" % toolkitVersion,
+      "dev.zio"                %% "zio"              % zioVersion,
       // Redis: the substrate. Lettuce rather than zio-redis, which derives its Input/Output from a
       // zio-schema BinaryCodec — that encodes keys and args, and this design needs them byte-exact
       // (the Lua builds key names by concatenation) plus heterogeneous script replies.
-      "io.lettuce"                     % "lettuce-core"         % lettuceVersion,
+      "io.lettuce"              % "lettuce-core"     % lettuceVersion,
       // Config: HOCON under resources/config, read with pureconfig — the homelab's convention, and the
       // one that lets a file carry both a working default and an env override for the same key.
-      "com.typesafe"                   % "config"               % typesafeConfigVersion,
-      "com.github.pureconfig"         %% "pureconfig-core"      % pureconfigVersion,
+      "com.typesafe"            % "config"           % typesafeConfigVersion,
+      "com.github.pureconfig"  %% "pureconfig-core"  % pureconfigVersion,
       // Wire <-> domain mapping. The domain DTOs mirror the proto field for field precisely so these
       // transformers stay derivable: anything Chimney cannot derive is a mismatch worth looking at.
-      "io.scalaland"                  %% "chimney"              % chimneyVersion,
-      // gRPC: generated stubs need the runtime; the server needs a transport (schemas ships neither)
-      "com.thesamet.scalapb"          %% "scalapb-runtime-grpc" % scalapbVersion,
-      "com.thesamet.scalapb.zio-grpc" %% "zio-grpc-core"        % zioGrpcVersion,
-      // NOT scalapb.compiler.Version.grpcJavaVersion: that is 1.62.2 here, while zio-grpc-core pulls
-      // grpc-core 1.64.0, and the pair fails at runtime with a NoSuchMethodError deep in the transport.
-      // The transport must match the core, so it is pinned to the same version and overridden below.
-      "io.grpc"                        % "grpc-netty"           % grpcVersion,
-      "dev.zio"                       %% "zio-test"             % zioVersion            % Test,
-      "dev.zio"                       %% "zio-test-sbt"         % zioVersion            % Test,
-      "org.testcontainers"             % "testcontainers"       % testcontainersVersion % Test,
+      "io.scalaland"           %% "chimney"          % chimneyVersion,
+      // The transport the server listens on; the generated stubs and their runtime come from `protocol`.
+      "io.grpc"                 % "grpc-netty"       % grpcVersion,
+      "dev.zio"                %% "zio-test"         % zioVersion            % Test,
+      "dev.zio"                %% "zio-test-sbt"     % zioVersion            % Test,
+      "org.testcontainers"      % "testcontainers"   % testcontainersVersion % Test,
     ),
-    // unpacks scalapb.proto onto protoc's include path, for the package-remap option
-    libraryDependencies += "com.thesamet.scalapb" %% "scalapb-runtime" % scalapbVersion % "protobuf",
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
+  )
+
+
+/**
+ * The umbrella: builds nothing of its own, fans `compile` and `test` out to the modules.
+ *
+ * `e2e` is deliberately absent from the fan-out — it needs Docker and an image, and `sbt test` must stay
+ * something worth running on every save. Run it with `sbt e2e`.
+ */
+lazy val root = project
+  .in(file("."))
+  .aggregate(protocol, server)
+  .settings(
+    name           := "distributed-keyed-queue",
+    publish / skip := true,
   )
 
 
@@ -146,13 +187,17 @@ lazy val root = project
  */
 lazy val e2e = project
   .in(file("e2e"))
-  .dependsOn(root)
+  // `protocol`, not `server`: these tests are a *consumer*, and depending on the contract alone is the
+  // property worth keeping — nothing here can reach past the wire into the implementation it is testing.
+  .dependsOn(protocol)
   .settings(
     name           := "distributed-keyed-queue-e2e",
     publish / skip := true,
     libraryDependencies ++= Seq(
-      "dev.zio" %% "zio-test"     % zioVersion % Test,
-      "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
+      // A consumer picks its own transport; the contract does not ship one.
+      "io.grpc"  % "grpc-netty"    % grpcVersion,
+      "dev.zio" %% "zio-test"      % zioVersion % Test,
+      "dev.zio" %% "zio-test-sbt"  % zioVersion % Test,
     ),
     // The suite shells out to `docker compose`, and a forked JVM inherits the terminal's environment —
     // which is where DKQ_E2E_ENDPOINTS is read from when pointing the suite at an existing deployment.
@@ -161,4 +206,4 @@ lazy val e2e = project
   )
 
 // The whole thing: build the image, then run the suite against it.
-addCommandAlias("e2e", ";root/Docker/publishLocal;e2e/test")
+addCommandAlias("e2e", ";server/Docker/publishLocal;e2e/test")

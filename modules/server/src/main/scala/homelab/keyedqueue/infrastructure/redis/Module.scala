@@ -49,7 +49,7 @@ object Module:
    * @return the layer
    */
   val scripts: ZLayer[Commands, QueueError, Scripts] =
-    ZLayer(ZIO.serviceWithZIO[Commands](Scripts.load))
+    ZLayer(ZIO.serviceWithZIO[Commands](Scripts.make))
 
   /**
    * The blocking connections, kept registered for as long as they exist.

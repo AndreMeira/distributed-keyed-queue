@@ -34,23 +34,20 @@ final case class Scripts(
 
 object Scripts:
 
-  /** The scripts to load. '''Order matters''': [[load]] matches these against the fields of [[Scripts]]. */
-  private val names = List("produce", "consume", "complete", "heartbeat", "watchdog")
-
   /**
    * Read the scripts from the classpath and register them with the server.
    *
    * @param redis the connection to register on
    * @return their digests; aborts with `QueueError` if one is missing or rejected
    */
-  def load(redis: RedisCommands[String, Array[Byte]]): IO[QueueError, Scripts] =
-    ZIO
-      .foreach(names)(name => text(name).flatMap(register(redis, _)))
-      .map:
-        case List(produce, consume, complete, heartbeat, watchdog) =>
-          Scripts(produce, consume, complete, heartbeat, watchdog)
-        case other                                                 =>
-          Scripts("", "", "", "", "") // unreachable: `names` is fixed and foreach preserves its length
+  def make(redis: RedisCommands[String, Array[Byte]]): IO[QueueError, Scripts] =
+    for {
+      produce   <- register(redis, script = "produce")
+      consume   <- register(redis, script = "consume")
+      complete  <- register(redis, script = "complete")
+      heartbeat <- register(redis, script = "heartbeat")
+      watchdog  <- register(redis, script = "watchdog")
+    } yield Scripts(produce, consume, complete, heartbeat, watchdog)
 
   /**
    * Read one script from `resources/lua`.
@@ -58,7 +55,7 @@ object Scripts:
    * @param name the file name without its extension
    * @return the script text; aborts if it is missing from the jar
    */
-  private def text(name: String): IO[QueueError, String] =
+  private def read(name: String): IO[QueueError, String] =
     ZIO
       .attempt(Source.fromResource(s"lua/$name.lua").mkString)
       .mapError(error => QueueError.MalformedReply(s"lua/$name.lua is missing: ${error.getMessage}"))
@@ -71,6 +68,7 @@ object Scripts:
    * @return the digest to call it by; aborts with `QueueError` if the store rejects it
    */
   private def register(redis: RedisCommands[String, Array[Byte]], script: String): IO[QueueError, String] =
-    ZIO
-      .attemptBlocking(redis.scriptLoad(script.getBytes(StandardCharsets.UTF_8)))
-      .mapError(error => QueueError.StoreUnavailable(s"loading a script failed: ${error.getMessage}"))
+    read(script).flatMap: script =>
+      ZIO
+        .attemptBlocking(redis.scriptLoad(script.getBytes(StandardCharsets.UTF_8)))
+        .mapError(error => QueueError.StoreUnavailable(s"loading a script failed: ${error.getMessage}"))

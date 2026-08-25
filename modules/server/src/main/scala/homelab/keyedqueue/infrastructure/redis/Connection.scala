@@ -36,7 +36,11 @@ object Connection:
    */
   def client(url: String): ZIO[Scope, QueueError, RedisClient] =
     ZIO
-      .acquireRelease(ZIO.attempt(RedisClient.create(RedisURI.create(url))))(client => ZIO.attempt(client.shutdown()).ignore)
+      .acquireRelease {
+        ZIO.attempt:
+          val uri = RedisURI.create(url)
+          RedisClient.create(uri)
+      }(client => ZIO.attempt(client.shutdown()).ignore)
       .mapError(error => QueueError.StoreUnavailable(s"cannot reach $url: ${error.getMessage}"))
 
   /**
@@ -52,7 +56,9 @@ object Connection:
    */
   def open(client: RedisClient, commandTimeout: Duration): ZIO[Scope, QueueError, RedisCommands[String, Array[Byte]]] =
     ZIO
-      .acquireRelease(ZIO.attemptBlocking(client.connect(codec)))(connection => ZIO.attemptBlocking(connection.close()).ignore)
+      .acquireRelease(
+        ZIO.attemptBlocking(client.connect(codec))
+      )(connection => ZIO.attemptBlocking(connection.close()).ignore)
       .mapAttempt: connection =>
         connection.setTimeout(JavaDuration.ofMillis(commandTimeout.toMillis))
         connection.sync()
