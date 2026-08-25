@@ -5,7 +5,9 @@ import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.Message
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.{ Inbound, Outbound }
 import homelab.keyedqueue.v1
-import zio.{ Chunk, IO, ZIO }
+import zio.Chunk
+
+import scala.util.Try
 
 
 /**
@@ -41,13 +43,14 @@ object StoredMessage:
    * nothing.
    *
    * @param bytes what the store handed back
-   * @return the message; aborts with `MalformedReply` when the bytes cannot be read
+   * @return the message, or `MalformedReply` when the bytes cannot be read
    */
-  def fromBytes(bytes: Chunk[Byte]): IO[QueueError, Message] =
-    ZIO
-      .attempt(v1.Message.parseFrom(bytes.toArray))
-      .mapError(error => QueueError.MalformedReply(s"a stored message is not a message: ${error.getMessage}"))
+  def fromBytes(bytes: Chunk[Byte]): Either[QueueError, Message] =
+    Try(v1.Message.parseFrom(bytes.toArray)).toEither
+      .left
+      .map(error => QueueError.MalformedReply(s"a stored message is not a message: ${error.getMessage}"))
       .flatMap: parsed =>
-        ZIO
-          .fromEither(Inbound.message(parsed))
-          .mapError(reason => QueueError.MalformedReply(s"a stored message cannot be read: $reason"))
+        Inbound
+          .message(parsed)
+          .left
+          .map(reason => QueueError.MalformedReply(s"a stored message cannot be read: $reason"))

@@ -6,7 +6,7 @@ import homelab.keyedqueue.domain.types.*
 /**
  * Every Redis key one queue owns, derived from its name.
  *
- * The single `{q:<queue>}` hash tag is load-bearing: a Lua script may only touch keys in one cluster slot,
+ * The single `{q:<queue>}` hash tag is load-bearing: a LuaScript script may only touch keys in one cluster slot,
  * and the sweep builds some of its key names at runtime from `prefix`, so they all have to hash together.
  *
  * @param queue the queue these keys belong to

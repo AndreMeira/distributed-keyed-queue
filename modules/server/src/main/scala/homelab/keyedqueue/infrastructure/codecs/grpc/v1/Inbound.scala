@@ -33,9 +33,11 @@ object Inbound:
   private given Transformer[String, MessageKey] = MessageKey(_)
   private given Transformer[String, Receipt]    = Receipt(_)
 
-  private given Transformer[ByteString, Chunk[Byte]] = bytes => Chunk.fromArray(bytes.toByteArray)
+  private given Transformer[ByteString, Chunk[Byte]] =
+    bytes => Chunk.fromArray(bytes.toByteArray)
 
-  private given Transformer[WireDuration, Duration] = duration => Duration.fromSeconds(duration.seconds) + Duration.fromNanos(duration.nanos.toLong)
+  private given Transformer[WireDuration, Duration] =
+    duration => Duration.fromSeconds(duration.seconds) + Duration.fromNanos(duration.nanos.toLong)
 
   private given Transformer[Timestamp, Instant] = stamp => Instant.ofEpochSecond(stamp.seconds, stamp.nanos.toLong)
 

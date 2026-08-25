@@ -2,6 +2,8 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.keyedqueue.domain.error.QueueError
+import homelab.keyedqueue.domain.model.{ ClaimRef, Message }
+import homelab.keyedqueue.domain.types.*
 import io.lettuce.core.api.sync.RedisCommands
 import zio.*
 
@@ -17,19 +19,79 @@ import scala.io.Source
  * connection needs no reconnect logic here: a Redis restart takes the connection with it, and the process
  * re-registers when it reconnects.
  *
- * @param produce appends a message and makes its key claimable
- * @param consume turns possession of a key into a claim
- * @param complete settles the in-flight message and decides the key's next state
- * @param heartbeat renews worker liveness and the claims still held
- * @param watchdog the three repair sweeps
+ * '''It hands out calls, not digests.''' A digest on its own is a string the caller must then pair with the
+ * right keys and the right arguments, in the right order, from memory. Each method below pairs them once and
+ * returns a [[LuaScript]] that already knows which digest it is, so an adapter names an operation and its
+ * real parameters and never touches a position again.
+ *
+ * @param produceSha appends a message and makes its key claimable
+ * @param consumeSha turns possession of a key into a claim
+ * @param completeSha settles the in-flight message and decides the key's next state
+ * @param heartbeatSha renews worker liveness and the claims still held
+ * @param watchdogSha the three repair sweeps
  */
 final case class Scripts(
-  produce: String,
-  consume: String,
-  complete: String,
-  heartbeat: String,
-  watchdog: String,
-)
+  produceSha: String,
+  consumeSha: String,
+  completeSha: String,
+  heartbeatSha: String,
+  watchdogSha: String,
+):
+
+  /**
+   * Append a message and make its key claimable.
+   *
+   * @param ns the queue to append in
+   * @param message the message; the key it carries decides where it lands
+   * @return the call
+   */
+  def produce(ns: Namespace, message: Message): ProduceScript =
+    ProduceScript(produceSha, ns, message)
+
+  /**
+   * Finish a claim that `BLMOVE` already started.
+   *
+   * @param ns the queue being claimed from
+   * @param worker the identity whose claiming list holds the key
+   * @param key the key already taken
+   * @param leaseTtl how long the resulting claim survives without a heartbeat
+   * @return the call
+   */
+  def consume(ns: Namespace, worker: WorkerId, key: MessageKey, leaseTtl: Duration): ConsumeScript =
+    ConsumeScript(consumeSha, ns, worker, key, leaseTtl)
+
+  /**
+   * Settle the in-flight message and decide the key's next state.
+   *
+   * @param claim the claim being settled, and the token that authorises it
+   * @param verdict what became of the message
+   * @param retryAfter how long to hold a failed message back; ignored when the verdict is `Done`
+   * @return the call
+   */
+  def complete(claim: ClaimRef, verdict: Verdict, retryAfter: Duration): CompleteScript =
+    CompleteScript(completeSha, claim, verdict, retryAfter)
+
+  /**
+   * Write a worker's liveness, and push forward the claims it names.
+   *
+   * @param ns the queue whose worker set to write to, and whose claims to renew
+   * @param worker whose liveness is being written
+   * @param leaseTtl how long the registration, and each renewed claim, survive without another beat
+   * @param held the claims to renew alongside it, all in that queue; empty for a bare registration
+   * @return the call
+   */
+  def heartbeat(ns: Namespace, worker: WorkerId, leaseTtl: Duration, held: Chunk[ClaimRef]): HeartbeatScript =
+    HeartbeatScript(heartbeatSha, ns, worker, leaseTtl, held)
+
+  /**
+   * One repair pass over a queue.
+   *
+   * @param ns the queue to repair
+   * @param limit the most entries to handle in one pass
+   * @return the call
+   */
+  def watchdog(ns: Namespace, limit: Int): WatchdogScript =
+    WatchdogScript(watchdogSha, ns, limit)
 
 
 object Scripts:

@@ -4,12 +4,13 @@ package homelab.keyedqueue.infrastructure.redis
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.{ ClaimRef, Claimed }
 import homelab.keyedqueue.domain.types.*
-import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
+import homelab.keyedqueue.infrastructure.redis.LuaScript.syntax.*
 import io.lettuce.core.api.sync.RedisCommands
-import io.lettuce.core.{ LMoveArgs, ScriptOutputType }
+import io.lettuce.core.LMoveArgs
 import zio.*
 
 import java.time.Instant
+import scala.jdk.CollectionConverters.*
 
 
 /**
@@ -56,7 +57,7 @@ final class Claimer(
       .uninterruptibleMask: restore =>
         restore(take(ns, timeout)).flatMap:
           case None      => ZIO.none
-          case Some(key) => granted(ns, MessageKey(key))
+          case Some(key) => redis.execute(scripts.consume(ns, worker, MessageKey(key), leaseTtl))
       .onInterrupt(release(ns))
 
   /**
@@ -88,21 +89,10 @@ final class Claimer(
    *
    * @param ns the queue whose worker set to write to
    * @param held claims to renew alongside the registration
-   * @return the keys that could not be renewed; aborts with `QueueError` when the store fails
+   * @return the claims that could not be renewed; aborts with `QueueError` when the store fails
    */
-  private def renew(ns: Namespace, held: Chunk[ClaimRef]): IO[QueueError, Chunk[String]] =
-    val pairs = held.flatMap(claim => Chunk(Lua.utf8(claim.key), Lua.utf8(claim.token.toString)))
-    Lua
-      .call(
-        redis,
-        scripts.heartbeat,
-        ScriptOutputType.MULTI,
-        Array(ns.claimed, ns.fence, ns.workers),
-        (Chunk(Lua.utf8(leaseTtl.toMillis.toString), Lua.utf8(worker)) ++ pairs).toArray,
-      )
-      .flatMap:
-        case values: java.util.List[?] if values.size == 2 => ZIO.succeed(Lua.strings(values.get(1)))
-        case other                                         => ZIO.fail(QueueError.MalformedReply(s"heartbeat returned ${Lua.describe(other)}"))
+  private def renew(ns: Namespace, held: Chunk[ClaimRef]): IO[QueueError, Chunk[ClaimRef]] =
+    redis.execute(scripts.heartbeat(ns, worker, leaseTtl, held)).map((_, refs) => refs)
 
   /**
    * Take a claimable key into this connection's own claiming list.
@@ -118,42 +108,7 @@ final class Claimer(
           redis.blmove(ns.ready, ns.claiming(worker), LMoveArgs.Builder.leftRight(), timeout.toMillis.toDouble / 1000.0)
         )
       )
-      .mapBoth(Lua.failure, _.map(Lua.text))
-
-  /**
-   * Turn possession of a key into a claim: message in hand, lease running, token issued.
-   *
-   * The stored bytes are read back here, so an unreadable message fails the claim rather than travelling one
-   * layer further as bytes nobody above this adapter should have to think about.
-   *
-   * @param ns the queue
-   * @param key the key taken by [[take]]
-   * @return the claim, or `None` when the key turned out to have nothing left; aborts with `MalformedReply`
-   *         when the reply, or the message in it, cannot be read
-   */
-  private def granted(ns: Namespace, key: MessageKey): IO[QueueError, Option[Claimed]] =
-    Lua
-      .call(
-        redis,
-        scripts.consume,
-        ScriptOutputType.MULTI,
-        Array(ns.claiming(worker), ns.state, ns.claimed, ns.fence, ns.msgs(key), ns.inflight(key), ns.attempts),
-        Array(Lua.utf8(key), Lua.utf8(leaseTtl.toMillis.toString)),
-      )
-      .flatMap:
-        case null                                          => ZIO.none
-        case values: java.util.List[?] if values.isEmpty   => ZIO.none
-        case values: java.util.List[?] if values.size == 4 =>
-          val payload = values.get(0) match
-            case bytes: Array[Byte] => Chunk.fromArray(bytes)
-            case _                  => Chunk.empty[Byte]
-          List(1, 2, 3).map(values.get).collect { case number: java.lang.Long => number.longValue } match
-            case List(token, attempt, deadline) =>
-              StoredMessage
-                .fromBytes(payload)
-                .map(message => Some(Claimed(ClaimRef(ns.queue, key, Token(token)), message, attempt.toInt, Instant.ofEpochMilli(deadline))))
-            case _                              => ZIO.fail(QueueError.MalformedReply(s"consume returned ${Lua.describe(values)}"))
-        case other                                         => ZIO.fail(QueueError.MalformedReply(s"consume returned ${Lua.describe(other)}"))
+      .mapBoth(LuaScript.failure, _.map(LuaScript.text))
 
   /**
    * Hand back whatever this connection was holding mid-claim — at most one key, since it makes one `BLMOVE`
