@@ -1,4 +1,4 @@
-package homelab.keyedqueue.infrastructure.redis
+package homelab.keyedqueue.infrastructure.redis.script
 
 
 import homelab.keyedqueue.domain.error.QueueError

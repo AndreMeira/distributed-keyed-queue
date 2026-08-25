@@ -6,7 +6,7 @@ import homelab.keyedqueue.domain.model.{ ClaimRef, Claimed, Message }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.domain.types.*
-import homelab.keyedqueue.infrastructure.redis.LuaScript.syntax.*
+import homelab.keyedqueue.infrastructure.redis.script.LuaScript.syntax.*
 import io.lettuce.core.api.sync.RedisCommands
 import zio.*
 

@@ -1,15 +1,16 @@
-package homelab.keyedqueue.infrastructure.redis
+package homelab.keyedqueue.infrastructure.redis.script
 
 
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.{ ClaimRef, Claimed }
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
+import homelab.keyedqueue.infrastructure.redis.Namespace
 import io.lettuce.core.ScriptOutputType
 import zio.*
 
-import java.time.Instant
 import java.lang.Long as JLong
+import java.time.Instant
 import scala.jdk.CollectionConverters.*
 
 

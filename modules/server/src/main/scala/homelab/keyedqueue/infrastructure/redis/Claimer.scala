@@ -4,7 +4,8 @@ package homelab.keyedqueue.infrastructure.redis
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.{ ClaimRef, Claimed }
 import homelab.keyedqueue.domain.types.*
-import homelab.keyedqueue.infrastructure.redis.LuaScript.syntax.*
+import homelab.keyedqueue.infrastructure.redis.script.LuaScript
+import homelab.keyedqueue.infrastructure.redis.script.LuaScript.syntax.*
 import io.lettuce.core.api.sync.RedisCommands
 import io.lettuce.core.LMoveArgs
 import zio.*

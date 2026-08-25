@@ -8,9 +8,9 @@
 val scala3Version         = "3.8.3"
 val zioVersion            = "2.1.23"
 val toolkitVersion        = "0.0.1-alpha"
-val scalapbVersion        = "0.11.17" // keep in sync with compilerplugin in project/plugins.sbt
+val scalapbVersion        = "0.11.17"       // keep in sync with compilerplugin in project/plugins.sbt
 val zioGrpcVersion        = "0.6.3"
-val grpcVersion           = "1.64.0" // must match the grpc-core zio-grpc pulls, not scalapb's
+val grpcVersion           = "1.64.0"        // must match the grpc-core zio-grpc pulls, not scalapb's
 val nettyVersion          = "4.1.100.Final" // grpc-netty 1.64 is built against this; see the overrides below
 val lettuceVersion        = "6.7.1.RELEASE"
 val typesafeConfigVersion = "1.4.9"
@@ -21,6 +21,7 @@ val testcontainersVersion = "1.20.6"
 ThisBuild / scalaVersion := scala3Version
 ThisBuild / organization := "com.andremeira.homelab"
 ThisBuild / version      := "0.0.1-SNAPSHOT"
+
 
 ThisBuild / scalacOptions ++= Seq(
   "-Wvalue-discard",
@@ -60,24 +61,24 @@ ThisBuild / credentials ++= GitHubPackages.credentials
 //
 // ThisBuild, not per project: a second project resolving its own versions would reintroduce exactly this.
 ThisBuild / dependencyOverrides ++= Seq(
-  "io.grpc"  % "grpc-netty"          % grpcVersion,
-  "io.grpc"  % "grpc-core"           % grpcVersion,
-  "io.grpc"  % "grpc-api"            % grpcVersion,
-  "io.grpc"  % "grpc-stub"           % grpcVersion,
-  "io.grpc"  % "grpc-protobuf"       % grpcVersion,
-  "io.grpc"  % "grpc-util"           % grpcVersion,
-  "io.netty" % "netty-buffer"                     % nettyVersion,
-  "io.netty" % "netty-codec"                      % nettyVersion,
-  "io.netty" % "netty-codec-http"                 % nettyVersion,
-  "io.netty" % "netty-codec-http2"                % nettyVersion,
-  "io.netty" % "netty-codec-socks"                % nettyVersion,
-  "io.netty" % "netty-common"                     % nettyVersion,
-  "io.netty" % "netty-handler"                    % nettyVersion,
-  "io.netty" % "netty-handler-proxy"              % nettyVersion,
-  "io.netty" % "netty-resolver"                   % nettyVersion,
-  "io.netty" % "netty-codec-dns"                  % nettyVersion,
-  "io.netty" % "netty-resolver-dns"               % nettyVersion,
-  "io.netty" % "netty-transport"                  % nettyVersion,
+  "io.grpc"  % "grpc-netty"                         % grpcVersion,
+  "io.grpc"  % "grpc-core"                          % grpcVersion,
+  "io.grpc"  % "grpc-api"                           % grpcVersion,
+  "io.grpc"  % "grpc-stub"                          % grpcVersion,
+  "io.grpc"  % "grpc-protobuf"                      % grpcVersion,
+  "io.grpc"  % "grpc-util"                          % grpcVersion,
+  "io.netty" % "netty-buffer"                       % nettyVersion,
+  "io.netty" % "netty-codec"                        % nettyVersion,
+  "io.netty" % "netty-codec-http"                   % nettyVersion,
+  "io.netty" % "netty-codec-http2"                  % nettyVersion,
+  "io.netty" % "netty-codec-socks"                  % nettyVersion,
+  "io.netty" % "netty-common"                       % nettyVersion,
+  "io.netty" % "netty-handler"                      % nettyVersion,
+  "io.netty" % "netty-handler-proxy"                % nettyVersion,
+  "io.netty" % "netty-resolver"                     % nettyVersion,
+  "io.netty" % "netty-codec-dns"                    % nettyVersion,
+  "io.netty" % "netty-resolver-dns"                 % nettyVersion,
+  "io.netty" % "netty-transport"                    % nettyVersion,
   "io.netty" % "netty-transport-native-unix-common" % nettyVersion,
 )
 
@@ -96,7 +97,7 @@ ThisBuild / dependencyOverrides ++= Seq(
 lazy val protocol = project
   .in(file("modules/protocol"))
   .settings(
-    name := "distributed-keyed-queue-protocol",
+    name                 := "distributed-keyed-queue-protocol",
     Compile / PB.targets := Seq(
       // Generator options live in the .proto (`option (scalapb.options)`), not here: zio-grpc's generator
       // reads them from the file, so setting flatPackage build-side desynchronises the two and the ZIO
@@ -195,15 +196,16 @@ lazy val e2e = project
     publish / skip := true,
     libraryDependencies ++= Seq(
       // A consumer picks its own transport; the contract does not ship one.
-      "io.grpc"  % "grpc-netty"    % grpcVersion,
-      "dev.zio" %% "zio-test"      % zioVersion % Test,
-      "dev.zio" %% "zio-test-sbt"  % zioVersion % Test,
+      "io.grpc"  % "grpc-netty"   % grpcVersion,
+      "dev.zio" %% "zio-test"     % zioVersion % Test,
+      "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
     ),
     // The suite shells out to `docker compose`, and a forked JVM inherits the terminal's environment —
     // which is where DKQ_E2E_ENDPOINTS is read from when pointing the suite at an existing deployment.
-    Test / fork     := true,
+    Test / fork    := true,
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
   )
+
 
 // The whole thing: build the image, then run the suite against it.
 addCommandAlias("e2e", ";server/Docker/publishLocal;e2e/test")
