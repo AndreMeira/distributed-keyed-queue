@@ -46,8 +46,7 @@ object StoredMessage:
    * @return the message, or `MalformedReply` when the bytes cannot be read
    */
   def fromBytes(bytes: Chunk[Byte]): Either[QueueError, Message] =
-    Try(v1.Message.parseFrom(bytes.toArray)).toEither
-      .left
+    Try(v1.Message.parseFrom(bytes.toArray)).toEither.left
       .map(error => QueueError.MalformedReply(s"a stored message is not a message: ${error.getMessage}"))
       .flatMap: parsed =>
         Inbound
