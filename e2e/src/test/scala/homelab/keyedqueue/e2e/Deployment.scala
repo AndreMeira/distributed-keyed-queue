@@ -2,7 +2,7 @@ package homelab.keyedqueue.e2e
 
 
 import homelab.keyedqueue.v1.HeartbeatRequest
-import homelab.keyedqueue.v1.ZioKeyedQueue.KeyedQueueClient
+import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
 import io.grpc.ManagedChannelBuilder
 import scalapb.zio_grpc.ZManagedChannel
 import zio.*

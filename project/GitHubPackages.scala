@@ -1,14 +1,24 @@
 import sbt._
 
 /**
- * Resolving `com.andremeira.homelab` artifacts from GitHub Packages.
+ * This repo's two ends of GitHub Packages: what it resolves from, and where it publishes to.
  *
- * GitHub Packages serves Maven only to authenticated callers — public repo or not, and only to a *classic*
- * PAT. So a consumer needs two things, and this object is both of them in one place, out of `build.sbt`.
+ * Both halves are here because they share one credential and are asymmetric in a way that is easy to get
+ * wrong. **Publishing** from CI needs no secret of its own — Actions' built-in `GITHUB_TOKEN` can write to
+ * its own repo's registry. **Consuming** needs a *classic* PAT with `read:packages`, since GitHub Packages
+ * serves Maven only to authenticated callers, public repo or not.
+ *
+ * The catch for this repo in particular: it does both at once. A release resolves the toolkit from
+ * *another* repo's registry and publishes to its own, and sbt matches credentials by host — so one token
+ * has to carry `read:packages` and `write:packages` together.
  *
  * NOTE: this is Scala 2.12 sbt-DSL code (`import sbt._`, not `sbt.*`), like every file under `project/`.
  */
 object GitHubPackages {
+
+  /** This repo's own registry — where `publish` writes, and where a consumer of the contract resolves from. */
+  val registry: MavenRepository =
+    "GitHub Packages" at "https://maven.pkg.github.com/AndreMeira/distributed-keyed-queue"
 
   /** The registry holding the homelab toolkit's modules. */
   val toolkit: MavenRepository =

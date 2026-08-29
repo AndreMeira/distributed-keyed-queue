@@ -20,7 +20,9 @@ val testcontainersVersion = "1.20.6"
 
 ThisBuild / scalaVersion := scala3Version
 ThisBuild / organization := "com.andremeira.homelab"
-ThisBuild / version      := "0.0.1-SNAPSHOT"
+// Set by the release workflow from the tag, so a published version always corresponds to a commit CI built
+// and tested. The default is what a laptop builds with, and is never pushed.
+ThisBuild / version      := sys.env.getOrElse("RELEASE_VERSION", "0.0.1-SNAPSHOT")
 
 
 ThisBuild / scalacOptions ++= Seq(
@@ -36,6 +38,13 @@ ThisBuild / scalacOptions ++= Seq(
 ThisBuild / resolvers += GitHubPackages.toolkit
 
 ThisBuild / credentials ++= GitHubPackages.credentials
+
+
+// The two contract modules are the only ones worth publishing: they are what a consumer of this service
+// needs, and the modules that are not a contract opt out with `publish / skip` where they are defined.
+ThisBuild / publishMavenStyle := true
+
+ThisBuild / publishTo := Some(GitHubPackages.registry)
 
 
 // One gRPC version and one Netty version across the whole build, including the end-to-end project.
@@ -84,24 +93,49 @@ ThisBuild / dependencyOverrides ++= Seq(
 
 
 /**
- * The contract: the `.proto` files and the stubs generated from them.
+ * The message contract: the types that travel, and nothing that carries them.
  *
- * Its own module because it is what a *consumer* needs and the service is only one implementation of it. A
- * client should be able to depend on the wire format without dragging in Redis, lettuce, pureconfig and a
- * repair loop — and the end-to-end suite proves that is true, since it drives the deployment with this
- * module and a transport, nothing else.
- *
- * It carries no transport of its own for the same reason: whether a consumer dials over netty, in-process or
- * something else is the consumer's decision.
+ * Its own module so a consumer of the data does not inherit a transport or an effect system — this pulls
+ * `scalapb-runtime` and nothing else. A service handling messages off some other substrate, or a test
+ * building a request, needs only this.
  */
-lazy val protocol = project
-  .in(file("modules/protocol"))
+lazy val protocolWire = project
+  .in(file("modules/protocol-wire"))
   .settings(
-    name                 := "distributed-keyed-queue-protocol",
+    name                 := "distributed-keyed-queue-protocol-wire",
     Compile / PB.targets := Seq(
       // Generator options live in the .proto (`option (scalapb.options)`), not here: zio-grpc's generator
       // reads them from the file, so setting flatPackage build-side desynchronises the two and the ZIO
       // stub ends up referring to a package ScalaPB no longer generates.
+      scalapb.gen() -> (Compile / sourceManaged).value / "scalapb"
+    ),
+    libraryDependencies ++= Seq(
+      "com.thesamet.scalapb" %% "scalapb-runtime" % scalapbVersion,
+      // unpacks scalapb.proto onto protoc's include path, for the package-remap option
+      "com.thesamet.scalapb" %% "scalapb-runtime" % scalapbVersion % "protobuf",
+    ),
+  )
+
+
+/**
+ * The service contract: the RPC definitions, and the ZIO-native stubs generated from them.
+ *
+ * This is what an RPC consumer depends on, and the end-to-end suite proves it is enough on its own — it
+ * drives the deployment with this module and a transport, nothing else. It carries no transport itself,
+ * because whether a consumer dials over netty, in-process or something else is the consumer's decision.
+ *
+ * The message protos are put on protoc's include path rather than compiled here, so `import` resolves
+ * while the message classes stay in `protocolWire` — generating them in both would put two copies of every
+ * message on a consumer's classpath.
+ */
+lazy val protocolZioGrpc = project
+  .in(file("modules/protocol-zio-grpc"))
+  .dependsOn(protocolWire)
+  .settings(
+    name                       := "distributed-keyed-queue-protocol-zio-grpc",
+    Compile / PB.protocOptions += "--proto_path=" +
+      ((protocolWire / Compile / sourceDirectory).value / "protobuf").getAbsolutePath,
+    Compile / PB.targets       := Seq(
       scalapb.gen(grpc = true)          -> (Compile / sourceManaged).value / "scalapb",
       scalapb.zio_grpc.ZioCodeGenerator -> (Compile / sourceManaged).value / "scalapb",
     ),
@@ -122,13 +156,15 @@ lazy val protocol = project
  */
 lazy val server = project
   .in(file("modules/server"))
-  .dependsOn(protocol)
+  .dependsOn(protocolZioGrpc)
   // JavaAppPackaging + DockerPlugin so `sbt server/Docker/publishLocal` produces the image the end-to-end
   // suite deploys. The service has no hand-written Dockerfile on purpose: the image a developer tests is
   // then the image sbt built, with no second definition of the entry point to keep in step.
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(
     name                 := "distributed-keyed-queue-server",
+    // The deployable ships as an image, not a jar — nothing should depend on it.
+    publish / skip       := true,
     // Pinned rather than derived from `name`: the compose files and the cluster manifests name this image,
     // and they should not move because a module was renamed.
     Docker / packageName := "distributed-keyed-queue",
@@ -172,7 +208,7 @@ lazy val server = project
  */
 lazy val root = project
   .in(file("."))
-  .aggregate(protocol, server)
+  .aggregate(protocolWire, protocolZioGrpc, server)
   .settings(
     name           := "distributed-keyed-queue",
     publish / skip := true,
@@ -188,9 +224,9 @@ lazy val root = project
  */
 lazy val e2e = project
   .in(file("e2e"))
-  // `protocol`, not `server`: these tests are a *consumer*, and depending on the contract alone is the
+  // the contract, not `server`: these tests are a *consumer*, and depending on the contract alone is the
   // property worth keeping — nothing here can reach past the wire into the implementation it is testing.
-  .dependsOn(protocol)
+  .dependsOn(protocolZioGrpc)
   .settings(
     name           := "distributed-keyed-queue-e2e",
     publish / skip := true,

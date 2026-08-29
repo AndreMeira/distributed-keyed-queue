@@ -6,7 +6,7 @@ import homelab.keyedqueue.domain.service.usecase.v1.*
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Inbound.*
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Outbound.*
 import homelab.keyedqueue.v1
-import homelab.keyedqueue.v1.ZioKeyedQueue
+import homelab.keyedqueue.v1.ZioKeyedQueueService
 import io.grpc.{ Status, StatusException }
 import io.scalaland.chimney.partial
 import zio.*
@@ -33,7 +33,7 @@ final class QueueService(
   claimMessage: DequeueUseCase,
   settleMessage: SettleUseCase,
   renewClaims: HeartbeatUseCase,
-) extends ZioKeyedQueue.KeyedQueue:
+) extends ZioKeyedQueueService.KeyedQueue:
 
   /**
    * Refuses a message that does not say how to read itself: the encoding is decoded here, not validated in

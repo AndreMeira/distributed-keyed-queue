@@ -3,7 +3,7 @@ package homelab.keyedqueue.e2e
 
 import com.google.protobuf.ByteString
 import com.google.protobuf.duration.Duration as ProtoDuration
-import homelab.keyedqueue.v1.ZioKeyedQueue.KeyedQueueClient
+import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
 import homelab.keyedqueue.v1.*
 import zio.{ Duration, Task }
 
