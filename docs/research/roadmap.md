@@ -3,7 +3,7 @@ title: "From POC to implementation — a working order, and why it is in this or
 type: research
 status: draft
 updated: 2026-08-23
-tags: [roadmap, sequencing, redis, streaming, persistence, distributed, exploration]
+tags: [roadmap, sequencing, connection, streaming, persistence, distributed, exploration]
 ---
 
 # From POC to implementation

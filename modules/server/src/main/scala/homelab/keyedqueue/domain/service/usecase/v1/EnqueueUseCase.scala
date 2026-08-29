@@ -24,7 +24,7 @@ final class EnqueueUseCase(store: QueueStore, watchdog: Watchdog, validation: Qu
    * Validate, then append.
    *
    * `orFail` is where accumulation stops: the validator reports every problem it found, and this is the
-   * point at which the use case decides it will not proceed with any of them.
+   * point at which the apply case decides it will not proceed with any of them.
    *
    * @param request the queue and the message
    * @return the key's depth after the append; aborts with `InvalidRequest` naming everything wrong with the

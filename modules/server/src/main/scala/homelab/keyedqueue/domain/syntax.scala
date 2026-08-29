@@ -26,7 +26,7 @@ object syntax:
     /**
      * Stop accumulating: give the value, or fail with everything that was wrong.
      *
-     * The moment a validation becomes a refusal, and it belongs to the *caller* — a use case — rather than to
+     * The moment a validation becomes a refusal, and it belongs to the *caller* — a apply case — rather than to
      * the validators, which have to stay composable. An extension rather than a function because it reads at
      * the call site as the last step of a validation (`validation.enqueue(request).orFail`) instead of
      * wrapping it.

@@ -44,4 +44,4 @@ final case class SettleResponse(applied: Applied)
  * @param stale the receipts the caller no longer holds; it must stop working those
  * @param renewedUntil the new deadline for everything else, on the store's clock
  */
-final case class HeartbeatResponse(stale: Chunk[Receipt], renewedUntil: Instant)
+final case class HeartbeatResponse(stale: Chunk[ClaimRef], renewedUntil: Instant)

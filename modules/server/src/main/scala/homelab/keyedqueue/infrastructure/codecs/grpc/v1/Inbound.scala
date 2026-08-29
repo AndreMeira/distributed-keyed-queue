@@ -31,7 +31,7 @@ object Inbound:
 
   private given Transformer[String, QueueName]  = QueueName(_)
   private given Transformer[String, MessageKey] = MessageKey(_)
-  private given Transformer[String, Receipt]    = Receipt(_)
+  private given Transformer[String, ClaimRef]   = ClaimRef(_)
 
   private given Transformer[ByteString, Chunk[Byte]] =
     bytes => Chunk.fromArray(bytes.toByteArray)

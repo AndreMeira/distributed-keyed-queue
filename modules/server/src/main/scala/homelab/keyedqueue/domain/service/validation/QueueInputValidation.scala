@@ -12,13 +12,13 @@ import zio.ZIO
  * Format-level validation of what a caller sent: every problem with a request, in one pass.
  *
  * '''A class, though it holds nothing.''' It is wired as a dependency (see [[Module]]) rather than called as
- * an object, so a use case declares that it validates, a test can substitute a validator that refuses
+ * an object, so a apply case declares that it validates, a test can substitute a validator that refuses
  * everything, and the day a check needs the store — is this queue known? is this key parked? — that check
  * arrives as a constructor parameter instead of a rewrite of every call site.
  *
  * '''Only two of the four calls appear here.''' `Settle` and `Heartbeat` carry receipts, and an unreadable
  * receipt is deliberately *not* an input error: settle reports it stale, heartbeat lists it among what the
- * consumer has lost. Both are documented on their use cases. Validating them here would turn a result a
+ * consumer has lost. Both are documented on their apply cases. Validating them here would turn a result a
  * caller must handle into an error it must catch, which is the opposite of the API's shape.
  */
 final class QueueInputValidation:

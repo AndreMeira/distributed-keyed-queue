@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.persistence
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.model.{ ClaimRef, Claimed, Message }
+import homelab.keyedqueue.domain.model.{ Claim, Claimed, Message }
 import homelab.keyedqueue.domain.types.*
 import zio.{ Chunk, Duration, IO }
 
@@ -56,7 +56,7 @@ trait QueueStore:
    * @return true when applied, false when the claim had already been revoked; aborts with `QueueError` if
    *         the store fails
    */
-  def settle(claim: ClaimRef, verdict: Verdict, retryAfter: Duration): IO[QueueError, Boolean]
+  def settle(claim: Claim, verdict: Verdict, retryAfter: Duration): IO[QueueError, Boolean]
 
   /**
    * Push the deadline forward on the claims still held, and say which are gone.
@@ -65,7 +65,7 @@ trait QueueStore:
    * @return the new deadline, and the claims that were not renewed because they had been revoked; aborts
    *         with `QueueError` if the store fails
    */
-  def renew(claims: Chunk[ClaimRef]): IO[QueueError, (Instant, Chunk[ClaimRef])]
+  def renew(claims: Chunk[Claim]): IO[QueueError, (Instant, Chunk[Claim])]
 
   /**
    * Repair what a death or a backoff left behind: revoke lapsed claims, recover the keys of workers that

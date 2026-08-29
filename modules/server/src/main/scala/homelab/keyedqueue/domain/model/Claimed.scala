@@ -10,4 +10,4 @@ import java.time.Instant
  * @param attempt how many times this message has been delivered; 1 on the first
  * @param leaseExpiresAt when the claim lapses unless renewed, on the store's clock
  */
-final case class Claimed(claim: ClaimRef, message: Message, attempt: Int, leaseExpiresAt: Instant)
+final case class Claimed(claim: Claim, message: Message, attempt: Int, leaseExpiresAt: Instant)

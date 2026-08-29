@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.usecase.v1
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.model.ClaimRef
+import homelab.keyedqueue.domain.model.Claim
 import homelab.keyedqueue.domain.request.v1.HeartbeatRequest
 import homelab.keyedqueue.domain.response.v1.HeartbeatResponse
 import homelab.keyedqueue.domain.service.persistence.QueueStore
@@ -26,7 +26,7 @@ final class HeartbeatUseCase(store: QueueStore):
    * @return the new deadline and what it no longer holds; aborts with `QueueError` when the store fails
    */
   def apply(request: HeartbeatRequest): IO[QueueError, HeartbeatResponse] =
-    val decoded    = request.receipts.map(receipt => receipt -> ClaimRef.fromReceipt(receipt))
+    val decoded    = request.receipts.map(receipt => receipt -> Claim.fromReference(receipt))
     val unreadable = decoded.collect { case (receipt, None) => receipt }
     val claims     = decoded.collect { case (_, Some(claim)) => claim }
-    store.renew(claims).map((until, lost) => HeartbeatResponse(unreadable ++ lost.map(_.receipt), until))
+    store.renew(claims).map((until, lost) => HeartbeatResponse(unreadable ++ lost.map(_.reference), until))

@@ -2,8 +2,6 @@ package homelab.keyedqueue.infrastructure.redis.script
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import io.lettuce.core.ScriptOutputType
-import io.lettuce.core.api.sync.RedisCommands
 import zio.*
 
 import java.nio.charset.StandardCharsets
@@ -11,111 +9,29 @@ import scala.jdk.CollectionConverters.*
 
 
 /**
- * One call to one script: which digest, which keys, which arguments, and how to read the reply back.
- *
- * KEYS and ARGV are positional, and `evalsha` takes them as two flat arrays — so a call site that builds them
- * inline is a row of strings whose meaning is the order they are in, checked by nothing and readable only
- * against the `.lua` file. An implementation of this trait owns one script's positions and takes that
- * operation's real parameters instead, so the ordering is written down once, next to the script it belongs to.
- *
- * Implementations are built by [[Scripts]] rather than by hand: a script is called by a digest assigned when
- * it was loaded, so the one place holding those digests is the one place that can hand out a callable script.
- *
- * @tparam A what this script's reply means
- */
-trait LuaScript[+A]:
-
-  /**
-   * The digest to call this script by, handed over by [[Scripts]] when it built this.
-   *
-   * @return the digest the script was loaded under
-   */
-  def sha: String
-
-  /**
-   * What shape of reply to expect, so Lettuce knows how to decode it.
-   *
-   * @return the output type matching what the script returns
-   */
-  def output: ScriptOutputType
-
-  /**
-   * The KEYS the script touches.
-   *
-   * @return them in the order the script reads them; position is the only thing naming them
-   */
-  def keys: Array[String]
-
-  /**
-   * The ARGV the script reads.
-   *
-   * @return them in the order the script reads them, encoded as the script expects
-   */
-  def args: Array[Array[Byte]]
-
-  /**
-   * Read a reply into what it means.
-   *
-   * @param value the raw reply
-   * @return its meaning; aborts with `MalformedReply` when the reply is not what the script promised
-   */
-  def read(value: Any): IO[QueueError, A]
-
-
-/**
  * Calling the scripts, and reading what they return.
  *
- * Lettuce hands back `Any` for a script — `java.lang.Long`, `Array[Byte]`, or a `java.util.List` of those —
- * because a LuaScript reply has no static shape. The untyped edge is confined here so the store and the claimer
- * read as the operations they are rather than as pattern matches over Java collections.
+ * The untyped edge is confined here so the store reads as the operations it performs rather than as pattern
+ * matches over Java collections.
  */
 object LuaScript:
 
   /**
-   * Calling a script as something a connection does.
+   * The digest a loaded script is called by.
    *
-   * Which connection a call runs on is the one thing an adapter here has to keep straight — claiming parks in
-   * `BLMOVE` and must be on a borrowed connection, everything else must not be. As a method on the connection,
-   * that answer is the subject of every call site rather than an argument among others.
+   * Named rather than left as `String` because every script's KEYS and ARGV are strings too: a digest in the
+   * wrong position is the one mistake `evalsha` cannot catch, and it fails as the wrong script running
+   * against another one's keys.
    */
-  object syntax:
-    extension (redis: RedisCommands[String, Array[Byte]]) {
-
-      /**
-       * Call a script on this connection and read its reply.
-       *
-       * @param script what to call, built by [[Scripts]]
-       * @tparam A what the script's reply means
-       * @return the reply, read; aborts with `QueueError` when the store fails or the reply cannot be read
-       */
-      def execute[A](script: LuaScript[A]): IO[QueueError, A] =
-        ZIO
-          .attemptBlocking(redis.evalsha[Any](script.sha, script.output, script.keys, script.args*))
-          .mapError(failure)
-          .flatMap(script.read)
-    }
+  opaque type Sha <: String = String
 
   /**
-   * A single integer reply.
+   * A digest, trusted.
    *
-   * @param context what was called, for the error message
-   * @param value the reply
-   * @return the number, or `MalformedReply` when the reply was not an integer
+   * @param value what `SCRIPT LOAD` returned
+   * @return the digest
    */
-  def number(context: String)(value: Any): Either[QueueError, Long] = value match
-    case number: java.lang.Long => Right(number.longValue)
-    case other                  => Left(QueueError.MalformedReply(s"$context: expected an integer, got ${describe(other)}"))
-
-  /**
-   * The strings in a nested array reply, ignoring anything that is not one.
-   *
-   * @param value the reply element
-   * @return its strings, in order
-   */
-  def strings(value: Any): Chunk[String] = value match
-    case values: java.util.List[?] =>
-      Chunk.fromIterable(values.asScala.toList).collect { case bytes: Array[Byte] => text(bytes) }
-    case _                         => Chunk.empty
+  def Sha(value: String): Sha = value
 
   /**
    * Encode text the way the scripts expect to read it.
@@ -128,18 +44,14 @@ object LuaScript:
   /**
    * Decode a bulk string.
    *
+   * Total, and so not a [[Decode.Of]]: the codec types values as `Array[Byte]`, so wherever the bytes are
+   * already in hand there is nothing left that can fail. [[Decode.text]] is the version for a reply element
+   * that might not be bytes at all.
+   *
    * @param value the bytes a script returned
    * @return them as text
    */
   def text(value: Array[Byte]): String = String(value, StandardCharsets.UTF_8)
-
-  /**
-   * Name a reply that was not what a script promised, without printing a payload into a log.
-   *
-   * @param value the unexpected reply
-   * @return its type, or `nil`
-   */
-  def describe(value: Any): String = if value == null then "nil" else value.getClass.getName
 
   /**
    * Wrap what Lettuce threw.
@@ -150,3 +62,184 @@ object LuaScript:
    * @return it as a `StoreUnavailable`
    */
   def failure(error: Throwable): QueueError = QueueError.StoreUnavailable(error.getMessage)
+
+  /**
+   * Reading a reply into what it means.
+   *
+   * Lettuce hands back `Any` for a script — `java.lang.Long`, `Array[Byte]`, or a `java.util.List` of those
+   * — because a Lua reply has no static shape. A decoder is a description of the shape one script promised,
+   * built from the four primitives below and combined with `map`, `flatMap` and `at`.
+   *
+   * '''Failures name where they happened.''' Every decoder carries the path it is reading, and [[Of.at]]
+   * extends it — so a reply whose second element is the wrong type fails as `consume[1]: expected an
+   * integer, got java.lang.String` rather than as one opaque complaint about the reply as a whole. Nothing
+   * has to write those messages; they fall out of where the decoder was when it stopped.
+   *
+   * Decoders are pure. A reply that is not what the script promised is a value describing that, and lifting
+   * it is the caller's business, at the point where it knows what failing means.
+   */
+  object Decode:
+
+    /**
+     * A description of what one script's reply looks like, and how to read it.
+     *
+     * @tparam A what the reply means once read
+     */
+    opaque type Of[+A] = (String, Any) => Either[QueueError, A]
+
+    /**
+     * An integer reply.
+     *
+     * @return the decoder
+     */
+    def long: Of[Long] = (path, value) =>
+      value match
+        case number: java.lang.Long => Right(number.longValue)
+        case other                  => Left(malformed(path, "an integer", other))
+
+    /**
+     * A bulk string reply, as the bytes it carries.
+     *
+     * @return the decoder
+     */
+    def bytes: Of[Chunk[Byte]] = (path, value) =>
+      value match
+        case bytes: Array[Byte] => Right(Chunk.fromArray(bytes))
+        case other              => Left(malformed(path, "a bulk string", other))
+
+    /**
+     * A bulk string reply, as text.
+     *
+     * @return the decoder
+     */
+    def text: Of[String] = bytes.map(chunk => LuaScript.text(chunk.toArray))
+
+    /**
+     * An array reply, with its elements still untyped.
+     *
+     * Rarely wanted on its own — [[Of.at]] and [[Of.each]] are how an array is usually read.
+     *
+     * @return the decoder
+     */
+    def list: Of[List[Any]] = (path, value) =>
+      value match
+        case values: java.util.List[?] => Right(values.asScala.toList)
+        case other                     => Left(malformed(path, "an array", other))
+
+    /**
+     * An array reply of exactly `arity` elements.
+     *
+     * A script returning the wrong number of elements is a script and an adapter that disagree, and saying
+     * so once is better than the same disagreement surfacing as a missing element somewhere further in.
+     *
+     * @param arity how many elements the script promises
+     * @param decoder how to read the array once its size is known to be right
+     * @tparam A what the reply means once read
+     * @return the decoder
+     */
+    def sized[A](arity: Int)(decoder: Of[A]): Of[A] = (path, value) =>
+      list(path, value).flatMap: values =>
+        if values.size == arity then decoder(path, value)
+        else Left(QueueError.MalformedReply(s"$path: expected $arity elements, got ${values.size}"))
+
+    /**
+     * Name a reply that was not what a script promised, without printing a payload into a log.
+     *
+     * @param value the unexpected reply
+     * @return its type, or `nil`
+     */
+    def describe(value: Any): String = if value == null then "nil" else value.getClass.getName
+
+    extension [A](decoder: Of[A])
+
+      /**
+       * Read a reply.
+       *
+       * @param context what was called, which every failure is named from
+       * @param value the raw reply
+       * @tparam A what the reply means once read
+       * @return its meaning, or `MalformedReply` naming where reading stopped
+       */
+      def decode(context: String, value: Any): Either[QueueError, A] = decoder(context, value)
+
+      /**
+       * Turn what this reads into something else.
+       *
+       * @param f what to turn it into
+       * @tparam B the result
+       * @return the decoder
+       */
+      def map[B](f: A => B): Of[B] = (path, value) => decoder(path, value).map(f)
+
+      /**
+       * Turn what this reads into something else that can itself fail.
+       *
+       * The bridge to anything already returning `Either[QueueError, *]` — a stored message read back out of
+       * its bytes, say.
+       *
+       * @param f what to turn it into, or why it could not be
+       * @tparam B the result
+       * @return the decoder
+       */
+      def emap[B](f: A => Either[QueueError, B]): Of[B] = (path, value) => decoder(path, value).flatMap(f)
+
+      /**
+       * Read something else from the '''same''' reply, once this has been read.
+       *
+       * What makes a multi-element reply a `for` comprehension: each step reads its own position out of the
+       * one reply, and the yield sees them all.
+       *
+       * @param f what to read next
+       * @tparam B the result
+       * @return the decoder
+       */
+      def flatMap[B](f: A => Of[B]): Of[B] = (path, value) => decoder(path, value).flatMap(a => f(a)(path, value))
+
+      /**
+       * Read this out of one element of an array reply.
+       *
+       * @param index which element
+       * @return the decoder, reading at that position and naming its failures for it
+       */
+      def at(index: Int): Of[A] = (path, value) =>
+        list(path, value).flatMap: values =>
+          values.lift(index) match
+            case Some(element) => decoder(s"$path[$index]", element)
+            case None          =>
+              Left(QueueError.MalformedReply(s"$path: expected at least ${index + 1} elements, got ${values.size}"))
+
+      /**
+       * Read this out of every element of an array reply.
+       *
+       * @return the decoder, in the order the elements came back
+       */
+      def each: Of[Chunk[A]] = (path, value) =>
+        list(path, value).flatMap: values =>
+          values.zipWithIndex.foldLeft(Right(Chunk.empty): Either[QueueError, Chunk[A]]):
+            case (soFar, (element, index)) =>
+              soFar.flatMap(read => decoder(s"$path[$index]", element).map(read :+ _))
+
+      /**
+       * Allow the reply to say "nothing", which Lua spells two ways.
+       *
+       * A script that returns `nil` and one that returns an empty array both arrive as absence, and neither
+       * is a failure — it is the answer.
+       *
+       * @return the decoder
+       */
+      def orNone: Of[Option[A]] = (path, value) =>
+        value match
+          case null                                        => Right(None)
+          case values: java.util.List[?] if values.isEmpty => Right(None)
+          case other                                       => decoder(path, other).map(Some(_))
+
+    /**
+     * A reply element that was not what the script promised.
+     *
+     * @param path where the decoder was when it stopped
+     * @param expected what it was looking for
+     * @param value what it found
+     * @return the failure
+     */
+    private def malformed(path: String, expected: String, value: Any): QueueError =
+      QueueError.MalformedReply(s"$path: expected $expected, got ${describe(value)}")

@@ -10,7 +10,7 @@ import zio.ZLayer
  * Wiring for configuration.
  *
  * Two layers rather than one, because the domain must not see [[QueueConfig]]: this is where a file full of
- * infrastructure settings is narrowed to the handful of rules the use cases actually enforce.
+ * infrastructure settings is narrowed to the handful of rules the apply cases actually enforce.
  */
 object Module:
 

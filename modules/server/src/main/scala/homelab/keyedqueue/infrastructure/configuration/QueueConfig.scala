@@ -21,7 +21,7 @@ import zio.*
  * @param leaseTtl how long a claim survives without a heartbeat
  * @param sweepInterval how often each instance runs the repair sweeps
  * @param sweepLimit the most entries one sweep handles per kind, so a script cannot block the server
- * @param claimers how many connections may be parked in a blocking claim at once — the ceiling on
+ * @param claimers how many connections may be parked in a idle claim at once — the ceiling on
  *                 concurrent `Dequeue` calls this instance can serve
  * @param maxWait the longest a caller may ask to wait, and the connection's command timeout
  */

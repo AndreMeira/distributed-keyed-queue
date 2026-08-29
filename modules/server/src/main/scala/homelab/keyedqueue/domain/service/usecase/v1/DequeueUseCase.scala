@@ -70,4 +70,4 @@ final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, validation: Qu
    * @return the delivery
    */
   private def delivery(claimed: Claimed): Delivery =
-    Delivery(claimed.claim.receipt, claimed.message, claimed.attempt, claimed.leaseExpiresAt)
+    Delivery(claimed.claim.reference, claimed.message, claimed.attempt, claimed.leaseExpiresAt)

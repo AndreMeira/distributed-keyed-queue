@@ -2,16 +2,14 @@ package homelab.keyedqueue.infrastructure.redis.script
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.model.{ ClaimRef, Claimed }
+import homelab.keyedqueue.domain.model.{ Claim, Claimed }
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.infrastructure.redis.Namespace
 import io.lettuce.core.ScriptOutputType
 import zio.*
 
-import java.lang.Long as JLong
 import java.time.Instant
-import scala.jdk.CollectionConverters.*
 
 
 /**
@@ -20,74 +18,85 @@ import scala.jdk.CollectionConverters.*
  * Runs '''after''' the `BLMOVE` that put the key in this worker's claiming list, since the blocking part
  * cannot live in a script. The worker is therefore a parameter and not an incidental one: it names the
  * claiming list to finish from, and a wrong one would leave the key stranded where nothing looks for it.
- *
- * @param sha the digest this script was loaded under
- * @param ns the queue being claimed from
- * @param worker the identity whose claiming list holds the key
- * @param key the key already taken by `BLMOVE`
- * @param leaseTtl how long the resulting claim survives without a heartbeat
  */
-final case class ConsumeScript(sha: String, ns: Namespace, worker: WorkerId, key: MessageKey, leaseTtl: Duration) extends LuaScript[Option[Claimed]]:
+object ConsumeScript:
 
   /**
    * Multi, because a granted claim comes back as a message and three numbers.
    *
    * @return `MULTI`
    */
-  override def output: ScriptOutputType = ScriptOutputType.MULTI
+  def output: ScriptOutputType = ScriptOutputType.MULTI
 
   /**
    * The claiming list to finish from, and everything granting a claim writes: the key's state, its lease,
    * its fence, the message it moves between, and its attempt count.
    *
+   * @param ns the queue being claimed from
+   * @param worker the identity whose claiming list holds the key
+   * @param key the key already taken by `BLMOVE`
    * @return `claiming`, `state`, `claimed`, `fence`, `msgs`, `inflight`, `attempts`, in the order
    *         `lua/consume.lua` reads them
    */
-  override def keys: Array[String] =
+  def keys(ns: Namespace, worker: WorkerId, key: MessageKey): Array[String] =
     Array(ns.claiming(worker), ns.state, ns.claimed, ns.fence, ns.msgs(key), ns.inflight(key), ns.attempts)
 
   /**
    * The key being claimed, and how long its lease should run.
    *
+   * @param key the key already taken by `BLMOVE`
+   * @param leaseTtl how long the resulting claim survives without a heartbeat
    * @return `key`, `ttl`, in the order `lua/consume.lua` reads them
    */
-  override def args: Array[Array[Byte]] =
+  def args(key: MessageKey, leaseTtl: Duration): Array[Array[Byte]] =
     Array(LuaScript.utf8(key), LuaScript.utf8(leaseTtl.toMillis.toString))
 
   /**
    * Decide what the reply was: nothing left on the key, or a claim.
    *
    * The stored bytes are read back here, so an unreadable message fails the claim rather than travelling one
-   * layer further as bytes nobody above this adapter should have to think about.
+   * layer further as bytes nobody above this adapter should have to think about — and because reading them
+   * already yields an `Either`, it composes into the decoder rather than sitting after it.
    *
+   * The queue and the key are parameters because the reply does not carry them, and a [[Claim]] needs
+   * both to name what was claimed.
+   *
+   * @param ns the queue being claimed from
+   * @param key the key that was claimed
    * @param value the raw reply
-   * @return the claim, or `None` when the key turned out to have nothing left; aborts with `MalformedReply`
-   *         when the reply, or the message in it, cannot be read
+   * @return the claim, or `None` when the key turned out to have nothing left; `MalformedReply` when the
+   *         reply, or the message in it, cannot be read
    */
-  override def read(value: Any): IO[QueueError, Option[Claimed]] = value match
-    case null                                        => ZIO.none
-    case values: java.util.List[?] if values.isEmpty => ZIO.none
-    case values: java.util.List[?]                   => claimed(values)
-    case other                                       =>
-      ZIO.fail(QueueError.MalformedReply(s"consume returned ${LuaScript.describe(other)}"))
+  def read(ns: Namespace, key: MessageKey)(value: Any): Either[QueueError, Option[Claimed]] =
+    decoder(ns, key).decode("consume", value)
 
   /**
-   * Read a reply that carried something into the claim it describes.
+   * The shape the script promises: `{message, token, attempt, deadline}` when it granted a claim, and
+   * absence when the key had nothing left.
    *
-   * The script promises `{message, token, attempt, deadline}`, so arity and element types are matched in one
-   * pattern: anything else is a script and an adapter that disagree, which is one failure rather than four
-   * partial reads that each go wrong somewhere further down.
+   * Absence is the outermost layer rather than something the four-element shape allows, because those are
+   * two different replies: `nil` or an empty array is an answer, and anything else has to be all four.
    *
-   * @param values the reply, already known to be a non-empty list
-   * @return the claim; aborts with `MalformedReply` when the reply, or the message in it, cannot be read
+   * The queue and the key are closed over because the reply carries neither, and a [[Claim]] needs both
+   * to name what was claimed.
+   *
+   * @param ns the queue being claimed from
+   * @param key the key that was claimed
+   * @return the decoder
    */
-  private def claimed(values: java.util.List[?]): IO[QueueError, Option[Claimed]] =
-    values.asScala.toList match {
-      case (message: Array[Byte]) :: (token: JLong) :: (attempt: JLong) :: (deadline: JLong) :: Nil =>
-        ZIO.fromEither(StoredMessage.fromBytes(Chunk.fromArray(message)).map { stored =>
-          val ref = ClaimRef(ns.queue, key, Token(token.longValue))
-          Some(Claimed(ref, stored, attempt.intValue, Instant.ofEpochMilli(deadline.longValue)))
-        })
-
-      case _ => ZIO.fail(QueueError.MalformedReply(s"consume returned ${LuaScript.describe(values)}"))
-    }
+  private def decoder(ns: Namespace, key: MessageKey): LuaScript.Decode.Of[Option[Claimed]] =
+    LuaScript.Decode
+      .sized(4) {
+        for
+          message  <- LuaScript.Decode.bytes.at(0).emap(StoredMessage.fromBytes)
+          token    <- LuaScript.Decode.long.at(1)
+          attempt  <- LuaScript.Decode.long.at(2)
+          deadline <- LuaScript.Decode.long.at(3)
+        yield Claimed(
+          Claim(ns.queue, key, Token(token)),
+          message,
+          attempt.toInt,
+          Instant.ofEpochMilli(deadline),
+        )
+      }
+      .orNone

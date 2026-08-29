@@ -39,11 +39,11 @@ final case class DequeueRequest(queue: QueueName, maxWait: Duration)
  * @param outcome what the consumer decided
  * @param retryAfter how long to hold the key back before retrying; ignored for `Done`
  */
-final case class SettleRequest(receipt: Receipt, outcome: Verdict, retryAfter: Duration)
+final case class SettleRequest(receipt: ClaimRef, outcome: Verdict, retryAfter: Duration)
 
 /**
  * Renew everything a consumer still holds.
  *
  * @param receipts the handles it believes it holds; empty is legal and means "still here, holding nothing"
  */
-final case class HeartbeatRequest(receipts: Chunk[Receipt])
+final case class HeartbeatRequest(receipts: Chunk[ClaimRef])

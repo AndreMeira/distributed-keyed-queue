@@ -12,13 +12,13 @@ import zio.ZLayer
 /**
  * Wiring for the gRPC adapter.
  *
- * The service takes the use cases and nothing else — no store, no connection, no configuration — because a
+ * The service takes the apply cases and nothing else — no store, no connection, no configuration — because a
  * protocol adapter that reached past them could hide a decision where a second adapter would not find it.
  */
 object Module:
 
   /**
-   * The service, over the synchronous use cases.
+   * The service, over the synchronous apply cases.
    *
    * @return the layer
    */

@@ -32,9 +32,8 @@ object GrpcApplication:
   val serve: ZIO[QueueConfig, QueueError, Nothing] =
     (ZIO.service[Server] *> ZIO.never).provideSome[QueueConfig](
       redis.Module.client,
-      redis.Module.shared,
+      redis.Module.connection,
       redis.Module.scripts,
-      redis.Module.claimers,
       redis.Module.store,
       redis.Module.watchdog,
       homelab.keyedqueue.infrastructure.configuration.Module.syncUseCases,

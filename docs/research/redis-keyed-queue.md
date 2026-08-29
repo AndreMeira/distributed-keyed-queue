@@ -1,9 +1,9 @@
 ---
-title: "A keyed queue on Redis — blocking pops, per-key exclusivity, and what it costs"
+title: "A keyed queue on Redis — idle pops, per-key exclusivity, and what it costs"
 type: research
 status: draft
 updated: 2026-08-23
-tags: [redis, keyed-queue, blocking, lease, heartbeat, lua, postgres, exploration]
+tags: [connection, keyed-queue, idle, lease, heartbeat, lua, postgres, exploration]
 ---
 
 # A keyed queue on Redis
@@ -490,7 +490,7 @@ worker id is that connection's identity.
 
 ```scala
 /**
- * A registered blocking connection, bound to one queue. Stateful and single-use-at-a-time — it owns the
+ * A registered idle connection, bound to one queue. Stateful and single-apply-at-a-time — it owns the
  * connection `BLMOVE` parks on — which is why it is a handle rather than a set of functions taking a
  * worker id: a `Claimer` that exists is a worker already registered in `workers`.
  */

@@ -14,7 +14,7 @@ import java.time.Instant
  * decisions — a field that needs logic to cross that boundary is a sign the two have drifted apart.
  *
  * The queue name is deliberately absent: it is the address a message was sent to, not a property of the
- * message (`docs/research/redis-keyed-queue.md`).
+ * message (`docs/research/connection-keyed-queue.md`).
  *
  * @param key what ordering is defined by: one key is worked by one consumer at a time
  * @param messageId idempotency and correlation in logs

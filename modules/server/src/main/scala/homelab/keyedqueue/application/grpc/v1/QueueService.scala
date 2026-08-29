@@ -13,7 +13,7 @@ import zio.*
 
 
 /**
- * The gRPC surface: decode, run a use case, encode.
+ * The gRPC surface: decode, run a apply case, encode.
  *
  * There is no logic here on purpose. A handler that did more than translate would be a decision living in
  * the protocol adapter, where a second adapter — or a test — could not reach it.
@@ -37,23 +37,23 @@ final class QueueService(
 
   /**
    * Refuses a message that does not say how to read itself: the encoding is decoded here, not validated in
-   * the use case, because the domain has no `Unspecified` to carry inwards.
+   * the apply case, because the domain has no `Unspecified` to carry inwards.
    *
    * @param request the wire request
    * @return the wire response; aborts with `INVALID_ARGUMENT` when the message cannot be read
    */
   override def enqueue(request: v1.EnqueueRequest): IO[StatusException, v1.EnqueueResponse] =
-    decode(request.toDomain).flatMap(acceptMessage(_).mapError(status)).map(_.toProto)
+    decoded(request.toDomain).flatMap(acceptMessage(_).mapError(status)).map(_.toProto)
 
   /**
-   * Blocks for the caller's `max_wait`, clamped by the use case. A timeout comes back as an absent
+   * Blocks for the caller's `max_wait`, clamped by the apply case. A timeout comes back as an absent
    * `delivery` rather than a status, so a quiet queue is not an error.
    *
    * @param request the wire request
    * @return the wire response, whose delivery is absent when nothing became ready
    */
   override def dequeue(request: v1.DequeueRequest): IO[StatusException, v1.DequeueResponse] =
-    decode(request.toDomain).flatMap(claimMessage(_).mapError(status)).map(_.toProto)
+    decoded(request.toDomain).flatMap(claimMessage(_).mapError(status)).map(_.toProto)
 
   /**
    * A revoked claim answers `APPLIED_STALE` rather than failing: the caller must branch on it, and a status
@@ -63,7 +63,7 @@ final class QueueService(
    * @return the wire response; aborts with `INVALID_ARGUMENT` when the outcome is unspecified
    */
   override def settle(request: v1.SettleRequest): IO[StatusException, v1.SettleResponse] =
-    decode(request.toDomain).flatMap(settleMessage(_).mapError(status)).map(_.toProto)
+    decoded(request.toDomain).flatMap(settleMessage(_).mapError(status)).map(_.toProto)
 
   /**
    * Never fails on a receipt it cannot read — that one is reported stale alongside the genuinely revoked
@@ -73,7 +73,7 @@ final class QueueService(
    * @return the wire response, naming what the caller no longer holds
    */
   override def heartbeat(request: v1.HeartbeatRequest): IO[StatusException, v1.HeartbeatResponse] =
-    decode(request.toDomain).flatMap(renewClaims(_).mapError(status)).map(_.toProto)
+    decoded(request.toDomain).flatMap(renewClaims(_).mapError(status)).map(_.toProto)
 
   /**
    * Turn a partial decode into a call that either proceeds or is refused.
@@ -86,7 +86,7 @@ final class QueueService(
    * @tparam A the domain request
    * @return the request; aborts with `INVALID_ARGUMENT` describing everything wrong with the message
    */
-  private def decode[A](result: partial.Result[A]): IO[StatusException, A] =
+  private def decoded[A](result: partial.Result[A]): IO[StatusException, A] =
     ZIO.fromEither(
       result.asEitherErrorPathMessageStrings.left
         .map(errors => reject(errors.map((path, reason) => s"$path: $reason").mkString("; ")))

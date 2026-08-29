@@ -48,7 +48,7 @@ object Token:
   def apply(value: Long): Type = value
 
 
-/** One blocking connection's identity. Registered before it claims anything, expires if it stops beating. */
+/** One idle connection's identity. Registered before it claims anything, expires if it stops beating. */
 type WorkerId = WorkerId.Type
 
 
@@ -64,18 +64,18 @@ object WorkerId:
   def apply(value: String): Type = value
 
 
-/** The opaque handle a consumer holds while it works a message. */
-type Receipt = Receipt.Type
+/** The opaque handle a consumer holds while it works a message: a [[Claim]] it cannot read. */
+type ClaimRef = ClaimRef.Type
 
 
-object Receipt:
+object ClaimRef:
   opaque type Type <: String = String
 
   /**
-   * A receipt, trusted.
+   * A reference, trusted.
    *
    * @param value the encoded handle
-   * @return the receipt
+   * @return the reference
    */
   def apply(value: String): Type = value
 

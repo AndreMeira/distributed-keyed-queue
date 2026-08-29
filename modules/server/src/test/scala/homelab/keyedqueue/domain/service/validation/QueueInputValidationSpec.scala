@@ -50,7 +50,7 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
       )
     },
     test("a dequeue only needs a queue, however long the caller wants to wait") {
-      // Patience is clamped by the use case, not refused here — an hour is a preference, not a mistake.
+      // Patience is clamped by the apply case, not refused here — an hour is a preference, not a mistake.
       for
         patient <- validation.parse(DequeueRequest(QueueName("jobs"), 1.hour)).exit
         unnamed <- validation.parse(DequeueRequest(QueueName(""), 1.second)).orFail.flip

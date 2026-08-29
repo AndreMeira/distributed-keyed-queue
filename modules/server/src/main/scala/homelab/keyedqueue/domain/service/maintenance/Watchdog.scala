@@ -9,7 +9,7 @@ import zio.UIO
  * Whatever keeps a queue's abandoned work moving again, told which queues exist.
  *
  * A queue nobody has touched has nothing to repair, and a store cannot enumerate the queues it might one day
- * hold, so the use cases that serve a queue announce it here. What happens then is the implementation's
+ * hold, so the apply cases that serve a queue announce it here. What happens then is the implementation's
  * business: this substrate sweeps on a timer, because Redis leases are entries in a sorted set that somebody
  * has to look at.
  *

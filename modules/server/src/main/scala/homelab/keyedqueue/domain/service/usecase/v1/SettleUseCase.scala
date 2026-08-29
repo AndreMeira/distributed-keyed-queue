@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.usecase.v1
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.model.ClaimRef
+import homelab.keyedqueue.domain.model.Claim
 import homelab.keyedqueue.domain.request.v1.SettleRequest
 import homelab.keyedqueue.domain.response.v1.SettleResponse
 import homelab.keyedqueue.domain.service.persistence.QueueStore
@@ -28,7 +28,7 @@ final class SettleUseCase(store: QueueStore):
    * @return whether it applied; aborts with `QueueError` when the store fails
    */
   def apply(request: SettleRequest): IO[QueueError, SettleResponse] =
-    ClaimRef.fromReceipt(request.receipt) match
+    Claim.fromReference(request.receipt) match
       case None        => ZIO.succeed(SettleResponse(Applied.Stale))
       case Some(claim) =>
         store

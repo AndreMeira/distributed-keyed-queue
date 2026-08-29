@@ -1,11 +1,11 @@
 package homelab.keyedqueue
 
 
-import homelab.keyedqueue.domain.model.{ ClaimRef, Message }
+import homelab.keyedqueue.domain.model.{ Claim, Message }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.{ ClaimerPool, Connection, RedisQueueStore, Scripts }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisQueueStore, Scripts }
 import io.lettuce.core.api.sync.RedisCommands
 import org.testcontainers.containers.GenericContainer
 import zio.*
@@ -47,13 +47,13 @@ object QueueStoreSpec extends ZIOSpecDefault:
         inspect   <- Connection.open(client, config.maxWait) // to assert on what the adapter wrote
       yield (first: QueueStore, second: QueueStore, inspect)
 
-  /** A store with its own shared connection and its own single claimer, as the service builds one. */
+  /** A store with its own connections — one shared, one claiming — as the service builds one. */
   private def store(client: io.lettuce.core.RedisClient, config: QueueConfig, id: String) =
     for
-      redis    <- Connection.open(client, config.maxWait)
-      scripts  <- Scripts.make(redis)
-      claimers <- ClaimerPool.make(client, config)
-    yield RedisQueueStore(redis, scripts, claimers, WorkerId(id), config.leaseTtl)
+      connection <- Connection.pool(client, config.maxWait, config.maxWait + 10.seconds, config.claimers)
+      scripts    <- connection.provide(Scripts.make)
+      store      <- RedisQueueStore.make(connection, scripts, WorkerId(id), config.leaseTtl)
+    yield store
 
   /** A message whose cargo is `body`: these tests care about order and ownership, not about content. */
   private def message(key: MessageKey, body: String): Message =
@@ -150,7 +150,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
         queue                 = QueueName("beat")
         _                    <- worker.enqueue(queue, message(MessageKey("k1"), "work"))
         held                 <- worker.claim(queue, 2.seconds)
-        ghost                 = ClaimRef(queue, MessageKey("gone"), Token(7))
+        ghost                 = Claim(queue, MessageKey("gone"), Token(7))
         renewed              <- worker.renew(Chunk.fromIterable(held.map(_.claim)) :+ ghost)
         (until, stale)        = renewed
       yield assertTrue(

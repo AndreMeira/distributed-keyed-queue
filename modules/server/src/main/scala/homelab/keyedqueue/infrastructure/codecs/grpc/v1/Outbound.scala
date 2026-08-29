@@ -34,7 +34,7 @@ object Outbound:
 
   private given Transformer[QueueName, String]  = identity(_)
   private given Transformer[MessageKey, String] = identity(_)
-  private given Transformer[Receipt, String]    = identity(_)
+  private given Transformer[ClaimRef, String]   = identity(_)
 
   private given Transformer[Chunk[Byte], ByteString] =
     bytes => ByteString.copyFrom(bytes.toArray)
