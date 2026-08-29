@@ -1,0 +1,32 @@
+// The service contract: four unary calls, a blocking Dequeue, leases renewed by Heartbeat.
+//
+// Separate from keyed_queue.proto so the message types can be published without a transport: a consumer
+// that only handles the data pulls the wire jar, and only one doing RPC pulls this and the ZIO stubs with
+// it. The messages below are imported, not redefined — they are generated once, into the wire module.
+//
+// Design and rationale: docs/research/phase-1-api.md
+syntax = "proto3";
+
+package homelab.keyedqueue.v1;
+
+import "homelab/keyedqueue/v1/keyed_queue.proto";
+import "scalapb/scalapb.proto";
+
+// Generator options live here rather than in build.sbt so ScalaPB and zio-grpc agree on the package.
+option (scalapb.options) = {
+  flat_package: true
+};
+
+service KeyedQueue {
+  // Accept a message for a key. Returns once it is durably queued.
+  rpc Enqueue(EnqueueRequest) returns (EnqueueResponse);
+
+  // Block until work for this queue is available, or `wait` elapses.
+  rpc Dequeue(DequeueRequest) returns (DequeueResponse);
+
+  // Report the outcome. Until this lands, the message is still leased to the caller.
+  rpc Settle(SettleRequest) returns (SettleResponse);
+
+  // Renew every claim this consumer still holds. Sent on a fixed tick, not per message.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}

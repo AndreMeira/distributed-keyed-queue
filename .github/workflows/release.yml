@@ -1,0 +1,74 @@
+# Publishes the contract module to this repo's GitHub Packages Maven registry when a GitHub Release is
+# published.
+#
+# The trigger is `release`, not `push: tags`, because a release created in the GitHub UI creates its tag
+# internally and emits the release webhook only — a tag-filtered workflow never runs for it. So publishing
+# is driven by the Release, and `workflow_dispatch` is there to re-run one by hand if a publish fails after
+# the release already exists.
+#
+# Only `protocol` goes out: `server` ships as a Docker image and `root`/`e2e` build nothing a consumer
+# wants, so all three set `publish / skip` in build.sbt.
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish, e.g. v0.1.0'
+        required: true
+
+# Reading the toolkit and writing this repo's own packages both go through the same registry host.
+permissions:
+  contents: read
+  packages: write
+
+# Two releases published back to back are two different versions, so let them run rather than cancelling.
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # This job does both halves of GitHub Packages at once: it RESOLVES the homelab toolkit from another
+      # repo's registry and PUBLISHES to its own. sbt matches credentials by host, so both use this one
+      # token — which therefore needs `read:packages` AND `write:packages`. The built-in GITHUB_TOKEN can
+      # publish here but cannot read another repo's packages unless that package grants this repo access,
+      # so HOMELAB_PACKAGES_PAT (a classic PAT carrying both scopes) is the one to set.
+      GITHUB_ACTOR: ${{ github.actor }}
+      GITHUB_TOKEN: ${{ secrets.HOMELAB_PACKAGES_PAT || secrets.GITHUB_TOKEN }}
+    steps:
+      # Explicit ref: a manual run has no tag context of its own, and pinning it keeps both paths identical.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      # 21 because that is what the service runs on in its image (see build.sbt, dockerBaseImage) — same as
+      # tests.yml.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: sbt
+
+      # sbt is no longer preinstalled on the runner images.
+      - uses: sbt/setup-sbt@v1
+
+      # The suite runs here too rather than trusting the tagged commit's earlier run: a green `main` is not
+      # proof that *this* tree publishes, and a GitHub Packages version cannot be overwritten once pushed.
+      - name: Test
+        run: sbt -batch -no-colors test
+
+      # `v0.1.0` -> `0.1.0`: the tag carries the `v`, the artifact version must not. build.sbt reads this.
+      - name: Derive version from tag
+        run: echo "RELEASE_VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      - name: Publish
+        run: sbt -batch -no-colors publish
