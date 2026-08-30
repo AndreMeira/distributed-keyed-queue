@@ -4,7 +4,8 @@ package homelab.keyedqueue.infrastructure.redis.script
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.Claim
 import homelab.keyedqueue.domain.types.*
-import homelab.keyedqueue.infrastructure.redis.Namespace
+import homelab.keyedqueue.infrastructure.redis.Connection.Commands
+import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
 import io.lettuce.core.ScriptOutputType
 import zio.*
 
@@ -18,15 +19,28 @@ import zio.*
  * '''The namespace is derived, not passed.''' A [[Claim]] already names its queue, and a caller free to
  * supply a namespace alongside it is a caller free to supply the wrong one — which would settle a claim
  * against another queue's keys.
+ *
+ * @param ref the digest this script was loaded under, from [[Scripts]]
  */
-object CompleteScript:
+final class CompleteScript(ref: LuaScript.Sha):
+
+  /** Integer, because the script answers whether it applied and nothing more. */
+  private val output: ScriptOutputType = ScriptOutputType.INTEGER
 
   /**
-   * Integer, because the script answers whether it applied and nothing more.
+   * Settle the in-flight message and decide the key's next state.
    *
-   * @return `INTEGER`
+   * @param claim the claim being settled, and the token that authorises it
+   * @param verdict what became of the message
+   * @param retryAfter how long to hold a failed message back; ignored when the verdict is `Done`
+   * @return whether it applied; aborts with `QueueError` when the store fails or the reply cannot be read
    */
-  def output: ScriptOutputType = ScriptOutputType.INTEGER
+  def run(claim: Claim, verdict: Verdict, retryAfter: Duration): ZIO[Commands, QueueError, Boolean] =
+    Connection.use: redis =>
+      ZIO
+        .attemptBlocking(redis.evalsha[Any](ref, output, keys(claim), args(claim, verdict, retryAfter)*))
+        .mapError(LuaScript.failure)
+        .flatMap(reply => ZIO.fromEither(read(reply)))
 
   /**
    * Everything a settle can move: the key's state and lease, its fence, both of its message lists, the
@@ -36,7 +50,7 @@ object CompleteScript:
    * @return `state`, `claimed`, `fence`, `msgs`, `inflight`, `ready`, `attempts`, `delayed`, in the order
    *         `lua/complete.lua` reads them
    */
-  def keys(claim: Claim): Array[String] =
+  private def keys(claim: Claim): Array[String] =
     val ns = Namespace(claim.queue)
     Array(
       ns.state,
@@ -58,7 +72,7 @@ object CompleteScript:
    * @param retryAfter how long to hold a failed message back; ignored when the verdict is `Done`
    * @return `key`, `token`, `outcome`, `retryAfter`, in the order `lua/complete.lua` reads them
    */
-  def args(claim: Claim, verdict: Verdict, retryAfter: Duration): Array[Array[Byte]] =
+  private def args(claim: Claim, verdict: Verdict, retryAfter: Duration): Array[Array[Byte]] =
     Array(
       LuaScript.utf8(claim.key),
       LuaScript.utf8(claim.token.toString),
@@ -75,5 +89,16 @@ object CompleteScript:
    * @param value the raw reply
    * @return whether it applied, or `MalformedReply` when the reply is not an integer
    */
-  def read(value: Any): Either[QueueError, Boolean] =
+  private def read(value: Any): Either[QueueError, Boolean] =
     LuaScript.Decode.long.map(_ == 1L).decode("complete", value)
+
+
+object CompleteScript:
+
+  /**
+   * Register `lua/complete.lua` and hold the digest it was given.
+   *
+   * @return the script, ready to run; aborts with `QueueError` if it is missing or the server rejects it
+   */
+  def make: ZIO[Connection.Commands, QueueError, CompleteScript] =
+    LuaScript.register("lua/complete.lua").map(CompleteScript(_))

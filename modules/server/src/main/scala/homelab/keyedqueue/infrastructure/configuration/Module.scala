@@ -2,6 +2,7 @@ package homelab.keyedqueue.infrastructure.configuration
 
 
 import homelab.keyedqueue.domain.error.QueueError
+import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.usecase.v1.SyncUseCases
 import zio.ZLayer
 
@@ -9,8 +10,8 @@ import zio.ZLayer
 /**
  * Wiring for configuration.
  *
- * Two layers rather than one, because the domain must not see [[QueueConfig]]: this is where a file full of
- * infrastructure settings is narrowed to the handful of rules the apply cases actually enforce.
+ * Several layers rather than one, because the domain must not see [[QueueConfig]]: this is where a file full
+ * of infrastructure settings is narrowed to the handful of rules each domain service actually needs.
  */
 object Module:
 
@@ -28,3 +29,11 @@ object Module:
    */
   val syncUseCases: ZLayer[QueueConfig, Nothing, SyncUseCases.Config] =
     ZLayer.fromFunction((config: QueueConfig) => SyncUseCases.Config(config.maxWait))
+
+  /**
+   * The slice of it the repair loop is allowed to know.
+   *
+   * @return the layer
+   */
+  val watchdog: ZLayer[QueueConfig, Nothing, Watchdog.Config] =
+    ZLayer.fromFunction((config: QueueConfig) => Watchdog.Config(config.sweepInterval, config.sweepLimit))

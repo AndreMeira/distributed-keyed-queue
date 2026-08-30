@@ -43,7 +43,10 @@ final class QueueService(
    * @return the wire response; aborts with `INVALID_ARGUMENT` when the message cannot be read
    */
   override def enqueue(request: v1.EnqueueRequest): IO[StatusException, v1.EnqueueResponse] =
-    decoded(request.toDomain).flatMap(acceptMessage(_).mapError(status)).map(_.toProto)
+    for
+      safe     <- decoded(request.toDomain)
+      response <- acceptMessage(safe).mapError(status)
+    yield response.toProto
 
   /**
    * Blocks for the caller's `max_wait`, clamped by the apply case. A timeout comes back as an absent
@@ -53,7 +56,10 @@ final class QueueService(
    * @return the wire response, whose delivery is absent when nothing became ready
    */
   override def dequeue(request: v1.DequeueRequest): IO[StatusException, v1.DequeueResponse] =
-    decoded(request.toDomain).flatMap(claimMessage(_).mapError(status)).map(_.toProto)
+    for
+      safe     <- decoded(request.toDomain)
+      response <- claimMessage(safe).mapError(status)
+    yield response.toProto
 
   /**
    * A revoked claim answers `APPLIED_STALE` rather than failing: the caller must branch on it, and a status
@@ -63,7 +69,10 @@ final class QueueService(
    * @return the wire response; aborts with `INVALID_ARGUMENT` when the outcome is unspecified
    */
   override def settle(request: v1.SettleRequest): IO[StatusException, v1.SettleResponse] =
-    decoded(request.toDomain).flatMap(settleMessage(_).mapError(status)).map(_.toProto)
+    for
+      safe     <- decoded(request.toDomain)
+      response <- settleMessage(safe).mapError(status)
+    yield response.toProto
 
   /**
    * Never fails on a receipt it cannot read — that one is reported stale alongside the genuinely revoked
@@ -73,7 +82,10 @@ final class QueueService(
    * @return the wire response, naming what the caller no longer holds
    */
   override def heartbeat(request: v1.HeartbeatRequest): IO[StatusException, v1.HeartbeatResponse] =
-    decoded(request.toDomain).flatMap(renewClaims(_).mapError(status)).map(_.toProto)
+    for
+      safe     <- decoded(request.toDomain)
+      response <- renewClaims(safe).mapError(status)
+    yield response.toProto
 
   /**
    * Turn a partial decode into a call that either proceeds or is refused.

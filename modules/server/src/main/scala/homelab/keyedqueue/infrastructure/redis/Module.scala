@@ -2,7 +2,6 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.WorkerId
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
@@ -16,8 +15,8 @@ import zio.*
  *
  * '''The connection split is the thing to notice.''' One shared connection serves everything that must never
  * park, and a pool of connections serves the one operation that must — so a idle claim cannot stall an
- * enqueue. Both live behind the ports below, which is why the layers hand back `QueueStore` and `Watchdog`
- * rather than their implementations.
+ * enqueue. Both live behind the port below, which is why the layer hands back `QueueStore` rather than the
+ * implementation.
  */
 object Module:
 
@@ -63,15 +62,3 @@ object Module:
       store      <- RedisQueueStore.make(connection, scripts, WorkerId("shared"), config.leaseTtl)
     yield store
   }
-
-  /**
-   * The repair loop, running for the life of the scope.
-   *
-   * @return the layer
-   */
-  val watchdog: ZLayer[QueueStore & QueueConfig, Nothing, Watchdog] = ZLayer.scoped:
-    for
-      store    <- ZIO.service[QueueStore]
-      config   <- ZIO.service[QueueConfig]
-      watchdog <- RedisWatchdog.make(store, config)
-    yield watchdog

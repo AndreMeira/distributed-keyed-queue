@@ -5,7 +5,8 @@ import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.{ Claim, Claimed }
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
-import homelab.keyedqueue.infrastructure.redis.Namespace
+import homelab.keyedqueue.infrastructure.redis.Connection.Commands
+import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
 import io.lettuce.core.ScriptOutputType
 import zio.*
 
@@ -18,15 +19,35 @@ import java.time.Instant
  * Runs '''after''' the `BLMOVE` that put the key in this worker's claiming list, since the blocking part
  * cannot live in a script. The worker is therefore a parameter and not an incidental one: it names the
  * claiming list to finish from, and a wrong one would leave the key stranded where nothing looks for it.
+ *
+ * @param ref the digest this script was loaded under, from [[Scripts]]
  */
-object ConsumeScript:
+final class ConsumeScript(ref: LuaScript.Sha):
+
+  /** Multi, because a granted claim comes back as a message and three numbers. */
+  private val output: ScriptOutputType = ScriptOutputType.MULTI
 
   /**
-   * Multi, because a granted claim comes back as a message and three numbers.
+   * Finish a claim that `BLMOVE` already started.
    *
-   * @return `MULTI`
+   * @param ns the queue being claimed from
+   * @param worker the identity whose claiming list holds the key
+   * @param key the key already taken by `BLMOVE`
+   * @param leaseTtl how long the resulting claim survives without a heartbeat
+   * @return the claim, or `None` when the key had nothing left; aborts with `QueueError` when the store
+   *         fails or the reply cannot be read
    */
-  def output: ScriptOutputType = ScriptOutputType.MULTI
+  def run(
+    ns: Namespace,
+    worker: WorkerId,
+    key: MessageKey,
+    leaseTtl: Duration,
+  ): ZIO[Commands, QueueError, Option[Claimed]] =
+    Connection.use: redis =>
+      ZIO
+        .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns, worker, key), args(key, leaseTtl)*))
+        .mapError(LuaScript.failure)
+        .flatMap(reply => ZIO.fromEither(read(ns, key)(reply)))
 
   /**
    * The claiming list to finish from, and everything granting a claim writes: the key's state, its lease,
@@ -38,7 +59,7 @@ object ConsumeScript:
    * @return `claiming`, `state`, `claimed`, `fence`, `msgs`, `inflight`, `attempts`, in the order
    *         `lua/consume.lua` reads them
    */
-  def keys(ns: Namespace, worker: WorkerId, key: MessageKey): Array[String] =
+  private def keys(ns: Namespace, worker: WorkerId, key: MessageKey): Array[String] =
     Array(ns.claiming(worker), ns.state, ns.claimed, ns.fence, ns.msgs(key), ns.inflight(key), ns.attempts)
 
   /**
@@ -48,7 +69,7 @@ object ConsumeScript:
    * @param leaseTtl how long the resulting claim survives without a heartbeat
    * @return `key`, `ttl`, in the order `lua/consume.lua` reads them
    */
-  def args(key: MessageKey, leaseTtl: Duration): Array[Array[Byte]] =
+  private def args(key: MessageKey, leaseTtl: Duration): Array[Array[Byte]] =
     Array(LuaScript.utf8(key), LuaScript.utf8(leaseTtl.toMillis.toString))
 
   /**
@@ -58,16 +79,13 @@ object ConsumeScript:
    * layer further as bytes nobody above this adapter should have to think about — and because reading them
    * already yields an `Either`, it composes into the decoder rather than sitting after it.
    *
-   * The queue and the key are parameters because the reply does not carry them, and a [[Claim]] needs
-   * both to name what was claimed.
-   *
    * @param ns the queue being claimed from
    * @param key the key that was claimed
    * @param value the raw reply
    * @return the claim, or `None` when the key turned out to have nothing left; `MalformedReply` when the
    *         reply, or the message in it, cannot be read
    */
-  def read(ns: Namespace, key: MessageKey)(value: Any): Either[QueueError, Option[Claimed]] =
+  private def read(ns: Namespace, key: MessageKey)(value: Any): Either[QueueError, Option[Claimed]] =
     decoder(ns, key).decode("consume", value)
 
   /**
@@ -100,3 +118,14 @@ object ConsumeScript:
         )
       }
       .orNone
+
+
+object ConsumeScript:
+
+  /**
+   * Register `lua/consume.lua` and hold the digest it was given.
+   *
+   * @return the script, ready to run; aborts with `QueueError` if it is missing or the server rejects it
+   */
+  def make: ZIO[Connection.Commands, QueueError, ConsumeScript] =
+    LuaScript.register("lua/consume.lua").map(ConsumeScript(_))

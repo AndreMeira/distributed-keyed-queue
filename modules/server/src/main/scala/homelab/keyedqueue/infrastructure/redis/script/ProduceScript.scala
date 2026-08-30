@@ -4,7 +4,8 @@ package homelab.keyedqueue.infrastructure.redis.script
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.Message
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
-import homelab.keyedqueue.infrastructure.redis.Namespace
+import homelab.keyedqueue.infrastructure.redis.Connection.Commands
+import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
 import io.lettuce.core.ScriptOutputType
 import zio.*
 
@@ -17,15 +18,28 @@ import zio.*
  *
  * The message is serialised here rather than by the caller: what a message looks like at rest is this
  * adapter's choice — see [[StoredMessage]].
+ *
+ * @param ref the digest this script was loaded under, from [[Scripts]]
  */
-object ProduceScript:
+final class ProduceScript(ref: LuaScript.Sha):
+
+  /** Integer, because the script's last act is an `LLEN`. */
+  private val output: ScriptOutputType = ScriptOutputType.INTEGER
 
   /**
-   * Integer, because the script's last act is an `LLEN`.
+   * Append a message and make its key claimable.
    *
-   * @return `INTEGER`
+   * @param ns the queue to append in
+   * @param message the message; the key it carries decides where it lands
+   * @return the key's depth after the append; aborts with `QueueError` when the store fails or the reply
+   *         cannot be read
    */
-  def output: ScriptOutputType = ScriptOutputType.INTEGER
+  def run(ns: Namespace, message: Message): ZIO[Commands, QueueError, Long] =
+    Connection.use: redis =>
+      ZIO
+        .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns, message), args(message)*))
+        .mapError(LuaScript.failure)
+        .flatMap(reply => ZIO.fromEither(read(reply)))
 
   /**
    * The three lists and hashes an append touches: where claimable keys queue, where their state is kept,
@@ -35,7 +49,7 @@ object ProduceScript:
    * @param message the message; the key it carries decides where it lands
    * @return `ready`, `state`, `msgs`, in the order `lua/produce.lua` reads them
    */
-  def keys(ns: Namespace, message: Message): Array[String] =
+  private def keys(ns: Namespace, message: Message): Array[String] =
     Array(ns.ready, ns.state, ns.msgs(message.key))
 
   /**
@@ -44,7 +58,7 @@ object ProduceScript:
    * @param message the message to serialise
    * @return `key`, `payload`, in the order `lua/produce.lua` reads them
    */
-  def args(message: Message): Array[Array[Byte]] =
+  private def args(message: Message): Array[Array[Byte]] =
     Array(LuaScript.utf8(message.key), StoredMessage.toBytes(message).toArray)
 
   /**
@@ -53,5 +67,16 @@ object ProduceScript:
    * @param value the raw reply
    * @return how many messages that key now holds, or `MalformedReply` when the reply is not an integer
    */
-  def read(value: Any): Either[QueueError, Long] =
+  private def read(value: Any): Either[QueueError, Long] =
     LuaScript.Decode.long.decode("produce", value)
+
+
+object ProduceScript:
+
+  /**
+   * Register `lua/produce.lua` and hold the digest it was given.
+   *
+   * @return the script, ready to run; aborts with `QueueError` if it is missing or the server rejects it
+   */
+  def make: ZIO[Connection.Commands, QueueError, ProduceScript] =
+    LuaScript.register("lua/produce.lua").map(ProduceScript(_))

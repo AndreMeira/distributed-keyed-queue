@@ -58,7 +58,7 @@ final class RedisQueueStore(
    */
   override def enqueue(queue: QueueName, message: Message): IO[QueueError, Long] =
     connection.provide:
-      scripts.produce(Namespace(queue), message)
+      scripts.produce.run(Namespace(queue), message)
 
   /**
    * The only operation that can occupy a connection, so the only one that borrows.
@@ -78,7 +78,7 @@ final class RedisQueueStore(
         .uninterruptibleMask: restore =>
           restore(take(ns, claimer, timeout)).flatMap:
             case None      => ZIO.none
-            case Some(key) => scripts.consume(ns, claimer, MessageKey(key), leaseTtl)
+            case Some(key) => scripts.consume.run(ns, claimer, MessageKey(key), leaseTtl)
         .onInterrupt(release(ns, claimer))
 
   /**
@@ -92,7 +92,7 @@ final class RedisQueueStore(
    */
   override def settle(claim: Claim, verdict: Verdict, retryAfter: Duration): IO[QueueError, Boolean] =
     connection.provide:
-      scripts.complete(claim, verdict, retryAfter)
+      scripts.complete.run(claim, verdict, retryAfter)
 
   /**
    * One `heartbeat` call '''per queue''', because worker liveness and claims are namespaced by queue while a
@@ -108,7 +108,7 @@ final class RedisQueueStore(
     connection.provide:
       ZIO
         .foreach(claims.groupBy(_.queue).toList): (queue, held) =>
-          scripts.heartbeat(Namespace(queue), worker, leaseTtl, held)
+          scripts.heartbeat.run(Namespace(queue), worker, leaseTtl, held)
         .map: results =>
           val (when, chunk) = results.unzip
           when.maxOption.getOrElse(Instant.EPOCH) -> Chunk.fromIterable(chunk).flatten
@@ -123,7 +123,7 @@ final class RedisQueueStore(
    */
   override def sweep(queue: QueueName, limit: Int): IO[QueueError, QueueStore.Swept] =
     connection.provide:
-      scripts.watchdog(Namespace(queue), limit)
+      scripts.watchdog.run(Namespace(queue), limit)
 
   /**
    * Renew every registration this store is keeping alive.
@@ -137,7 +137,7 @@ final class RedisQueueStore(
   def beat: UIO[Unit] =
     known.get.flatMap: pairs =>
       ZIO.foreachDiscard(pairs): (claimer, queue) =>
-        connection.provide(scripts.heartbeat(Namespace(queue), claimer, leaseTtl, Chunk.empty)).ignore
+        connection.provide(scripts.heartbeat.run(Namespace(queue), claimer, leaseTtl, Chunk.empty)).ignore
 
   /**
    * Announce a claiming connection in a queue, once.
@@ -155,7 +155,7 @@ final class RedisQueueStore(
     known.get.map(_.contains((claimer, ns.queue))).flatMap {
       case true  => ZIO.unit
       case false =>
-        scripts.heartbeat(ns, claimer, leaseTtl, Chunk.empty)
+        scripts.heartbeat.run(ns, claimer, leaseTtl, Chunk.empty)
           *> known.update(_ + ((claimer, ns.queue))).unit
     }
 

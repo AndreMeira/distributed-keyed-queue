@@ -2,186 +2,57 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.model.{ Claim, Claimed, Message }
-import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands
-import homelab.keyedqueue.infrastructure.redis.script.LuaScript.failure
-import homelab.keyedqueue.infrastructure.redis.script.{ CompleteScript, ConsumeScript, HeartbeatScript, LuaScript, ProduceScript, WatchdogScript }
+import homelab.keyedqueue.infrastructure.redis.script.*
 import zio.*
-
-import java.time.Instant
-
-import java.nio.charset.StandardCharsets
-import scala.io.Source
 
 
 /**
- * The five Lua scripts, loaded once and called by digest.
+ * The five Lua scripts, loaded once and held as the calls they can make.
  *
- * Loading up front rather than on first apply keeps the failure at startup, where a missing or unparseable
+ * Loading up front rather than on first use keeps the failure at startup, where a missing or unparseable
  * script is obvious, instead of on the first message. There is no `NOSCRIPT` fallback for the same reason a
  * connection needs no reconnect logic here: a Redis restart takes the connection with it, and the process
  * re-registers when it reconnects.
  *
- * '''It hands out calls, not digests.''' A digest on its own is a string the caller must then pair with the
- * right keys and the right arguments, in the right order, from memory. Each method below pairs them once and
- * returns a [[LuaScript]] that already knows which digest it is, so an adapter names an operation and its
- * real parameters and never touches a position again.
+ * '''It holds the five, and nothing else.''' Each script registers itself and carries its own digest, so
+ * this is a place to reach them from rather than a layer they are called through.
  *
- * @param produceSha appends a message and makes its key claimable
- * @param consumeSha turns possession of a key into a claim
- * @param completeSha settles the in-flight message and decides the key's next state
- * @param heartbeatSha renews worker liveness and the claims still held
- * @param watchdogSha the three repair sweeps
+ * '''It hands out calls, not digests.''' A digest on its own is a string the caller must then pair with the
+ * right keys and the right arguments, in the right order, from memory. Each script below already carries
+ * its own digest and owns its own positions, so an adapter writes `scripts.produce.run(…)` with the
+ * operation's real parameters and never touches a position again.
+ *
+ * @param produce appends a message and makes its key claimable
+ * @param consume turns possession of a key into a claim
+ * @param complete settles the in-flight message and decides the key's next state
+ * @param heartbeat renews worker liveness and the claims still held
+ * @param watchdog the three repair sweeps
  */
 final case class Scripts(
-  produceSha: LuaScript.Sha,
-  consumeSha: LuaScript.Sha,
-  completeSha: LuaScript.Sha,
-  heartbeatSha: LuaScript.Sha,
-  watchdogSha: LuaScript.Sha,
-):
-
-  /**
-   * Append a message and make its key claimable.
-   *
-   * @param ns the queue to append in
-   * @param message the message; the key it carries decides where it lands
-   * @return the key's depth after the append; aborts with `QueueError` when the store fails or the reply
-   *         cannot be read
-   */
-  def produce(ns: Namespace, message: Message): ZIO[Commands, QueueError, Long] =
-    Connection.use { redis =>
-      val keys = ProduceScript.keys(ns, message)
-      val args = ProduceScript.args(message)
-      ZIO
-        .attemptBlocking(redis.evalsha[Any](produceSha, ProduceScript.output, keys, args*))
-        .mapError(failure)
-        .flatMap(reply => ZIO.fromEither(ProduceScript.read(reply)))
-    }
-
-  /**
-   * Finish a claim that `BLMOVE` already started.
-   *
-   * @param ns the queue being claimed from
-   * @param worker the identity whose claiming list holds the key
-   * @param key the key already taken
-   * @param leaseTtl how long the resulting claim survives without a heartbeat
-   * @return the claim, or `None` when the key had nothing left; aborts with `QueueError` when the store
-   *         fails or the reply cannot be read
-   */
-  def consume(ns: Namespace, worker: WorkerId, key: MessageKey, leaseTtl: Duration): ZIO[Commands, QueueError, Option[Claimed]] =
-    Connection.use { redis =>
-      val keys = ConsumeScript.keys(ns, worker, key)
-      val args = ConsumeScript.args(key, leaseTtl)
-      ZIO
-        .attemptBlocking(redis.evalsha[Any](consumeSha, ConsumeScript.output, keys, args*))
-        .mapError(failure)
-        .flatMap(reply => ZIO.fromEither(ConsumeScript.read(ns, key)(reply)))
-    }
-
-  /**
-   * Settle the in-flight message and decide the key's next state.
-   *
-   * @param claim the claim being settled, and the token that authorises it
-   * @param verdict what became of the message
-   * @param retryAfter how long to hold a failed message back; ignored when the verdict is `Done`
-   * @return whether it applied; aborts with `QueueError` when the store fails or the reply cannot be read
-   */
-  def complete(claim: Claim, verdict: Verdict, retryAfter: Duration): ZIO[Commands, QueueError, Boolean] =
-    Connection.use { redis =>
-      val keys = CompleteScript.keys(claim)
-      val args = CompleteScript.args(claim, verdict, retryAfter)
-      ZIO
-        .attemptBlocking(redis.evalsha[Any](completeSha, CompleteScript.output, keys, args*))
-        .mapError(failure)
-        .flatMap(reply => ZIO.fromEither(CompleteScript.read(reply)))
-    }
-
-  /**
-   * Write a worker's liveness, and push forward the claims it names.
-   *
-   * @param ns the queue whose worker set to write to, and whose claims to renew
-   * @param worker whose liveness is being written
-   * @param leaseTtl how long the registration, and each renewed claim, survive without another beat
-   * @param held the claims to renew alongside it, all in that queue; empty for a bare registration
-   * @return the new deadline and the claims already revoked; aborts with `QueueError` when the store fails
-   *         or the reply cannot be read
-   */
-  def heartbeat(
-    ns: Namespace,
-    worker: WorkerId,
-    leaseTtl: Duration,
-    held: Chunk[Claim],
-  ): ZIO[Commands, QueueError, (Instant, Chunk[Claim])] =
-    Connection.use { redis =>
-      val keys = HeartbeatScript.keys(ns)
-      val args = HeartbeatScript.args(worker, leaseTtl, held)
-      ZIO
-        .attemptBlocking(redis.evalsha[Any](heartbeatSha, HeartbeatScript.output, keys, args*))
-        .mapError(failure)
-        .flatMap(reply => ZIO.fromEither(HeartbeatScript.read(held)(reply)))
-    }
-
-  /**
-   * One repair pass over a queue.
-   *
-   * @param ns the queue to repair
-   * @param limit the most entries to handle in one pass
-   * @return what it repaired; aborts with `QueueError` when the store fails or the reply cannot be read
-   */
-  def watchdog(ns: Namespace, limit: Int): ZIO[Commands, QueueError, QueueStore.Swept] =
-    Connection.use { redis =>
-      val keys = WatchdogScript.keys(ns)
-      val args = WatchdogScript.args(ns, limit)
-      ZIO
-        .attemptBlocking(redis.evalsha[Any](watchdogSha, WatchdogScript.output, keys, args*))
-        .mapError(failure)
-        .flatMap(reply => ZIO.fromEither(WatchdogScript.read(reply)))
-    }
+  produce: ProduceScript,
+  consume: ConsumeScript,
+  complete: CompleteScript,
+  heartbeat: HeartbeatScript,
+  watchdog: WatchdogScript,
+)
 
 
 object Scripts:
 
   /**
-   * Read the scripts from the classpath and register them with the server.
+   * Register every script, so a missing or unparseable one fails at startup rather than on the first
+   * message.
    *
-   * Any connection will do: `SCRIPT LOAD` registers with the server, not with the caller, so the digests
-   * are good on every connection to it.
+   * Each script registers itself — it is the one place that knows which file it comes from.
    *
-   * @return their digests; aborts with `QueueError` if one is missing or rejected
+   * @return the calls they make; aborts with `QueueError` if one is missing or rejected
    */
   def make: ZIO[Commands, QueueError, Scripts] =
-    for {
-      produce   <- register(script = "produce")
-      consume   <- register(script = "consume")
-      complete  <- register(script = "complete")
-      heartbeat <- register(script = "heartbeat")
-      watchdog  <- register(script = "watchdog")
-    } yield Scripts(produce, consume, complete, heartbeat, watchdog)
-
-  /**
-   * Load one script from `resources/lua`.
-   *
-   * @param name the file name without its extension
-   * @return the script text; aborts if it is missing from the jar
-   */
-  private def load(name: String): IO[QueueError, String] =
-    ZIO
-      .attempt(Source.fromResource(s"lua/$name.lua").mkString)
-      .mapError(error => QueueError.MalformedReply(s"lua/$name.lua is missing: ${error.getMessage}"))
-
-  /**
-   * Register one script and keep its digest.
-   *
-   * @param script the name of the script to register
-   * @return the digest to call it by; aborts with `QueueError` if the store rejects it
-   */
-  private def register(script: String): ZIO[Commands, QueueError, LuaScript.Sha] =
-    load(script).flatMap: text =>
-      Connection.use: redis =>
-        ZIO
-          .attemptBlocking(redis.scriptLoad(text.getBytes(StandardCharsets.UTF_8)))
-          .mapError(error => QueueError.StoreUnavailable(s"loading a script failed: ${error.getMessage}"))
-          .map(LuaScript.Sha.apply)
+    for
+      produce   <- ProduceScript.make
+      consume   <- ConsumeScript.make
+      complete  <- CompleteScript.make
+      heartbeat <- HeartbeatScript.make
+      watchdog  <- WatchdogScript.make
+    yield Scripts(produce, consume, complete, heartbeat, watchdog)

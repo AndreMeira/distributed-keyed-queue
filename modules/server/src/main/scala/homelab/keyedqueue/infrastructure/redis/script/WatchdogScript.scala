@@ -4,7 +4,8 @@ package homelab.keyedqueue.infrastructure.redis.script
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
-import homelab.keyedqueue.infrastructure.redis.Namespace
+import homelab.keyedqueue.infrastructure.redis.Connection.Commands
+import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
 import io.lettuce.core.ScriptOutputType
 import zio.*
 
@@ -17,15 +18,27 @@ import zio.*
  *
  * `prefix` goes over as an argument because the sweep builds per-key names at runtime; it is the same tag
  * every key here shares, which is what keeps them in one cluster slot.
+ *
+ * @param ref the digest this script was loaded under, from [[Scripts]]
  */
-object WatchdogScript:
+final class WatchdogScript(ref: LuaScript.Sha):
+
+  /** Multi, because a pass reports three lists. */
+  private val output: ScriptOutputType = ScriptOutputType.MULTI
 
   /**
-   * Multi, because a pass reports three lists.
+   * Repair one queue.
    *
-   * @return `MULTI`
+   * @param ns the queue to repair
+   * @param limit the most entries to handle in one pass
+   * @return what it repaired; aborts with `QueueError` when the store fails or the reply cannot be read
    */
-  def output: ScriptOutputType = ScriptOutputType.MULTI
+  def run(ns: Namespace, limit: Int): ZIO[Commands, QueueError, QueueStore.Swept] =
+    Connection.use: redis =>
+      ZIO
+        .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns), args(ns, limit)*))
+        .mapError(LuaScript.failure)
+        .flatMap(reply => ZIO.fromEither(read(reply)))
 
   /**
    * Everything the three sweeps read or repair: leases, key state, the ready list they push back onto,
@@ -35,7 +48,7 @@ object WatchdogScript:
    * @return `claimed`, `state`, `ready`, `fence`, `workers`, `delayed`, in the order `lua/watchdog.lua`
    *         reads them
    */
-  def keys(ns: Namespace): Array[String] =
+  private def keys(ns: Namespace): Array[String] =
     Array(ns.claimed, ns.state, ns.ready, ns.fence, ns.workers, ns.delayed)
 
   /**
@@ -45,7 +58,7 @@ object WatchdogScript:
    * @param limit the most entries to handle in one pass
    * @return `limit`, `prefix`, in the order `lua/watchdog.lua` reads them
    */
-  def args(ns: Namespace, limit: Int): Array[Array[Byte]] =
+  private def args(ns: Namespace, limit: Int): Array[Array[Byte]] =
     Array(LuaScript.utf8(limit.toString), LuaScript.utf8(ns.prefix))
 
   /**
@@ -54,7 +67,7 @@ object WatchdogScript:
    * @param value the raw reply
    * @return what the pass repaired, or `MalformedReply` naming the element that could not be read
    */
-  def read(value: Any): Either[QueueError, QueueStore.Swept] =
+  private def read(value: Any): Either[QueueError, QueueStore.Swept] =
     decoder.decode("watchdog", value)
 
   /**
@@ -77,3 +90,14 @@ object WatchdogScript:
         released.map(MessageKey.apply),
       )
     }
+
+
+object WatchdogScript:
+
+  /**
+   * Register `lua/watchdog.lua` and hold the digest it was given.
+   *
+   * @return the script, ready to run; aborts with `QueueError` if it is missing or the server rejects it
+   */
+  def make: ZIO[Connection.Commands, QueueError, WatchdogScript] =
+    LuaScript.register("lua/watchdog.lua").map(WatchdogScript(_))

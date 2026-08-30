@@ -2,9 +2,11 @@ package homelab.keyedqueue.infrastructure.redis.script
 
 
 import homelab.keyedqueue.domain.error.QueueError
+import homelab.keyedqueue.infrastructure.redis.Connection
 import zio.*
 
 import java.nio.charset.StandardCharsets
+import scala.io.Source
 import scala.jdk.CollectionConverters.*
 
 
@@ -32,6 +34,38 @@ object LuaScript:
    * @return the digest
    */
   def Sha(value: String): Sha = value
+
+  /**
+   * Read a script from `resources/lua` and register it with the server.
+   *
+   * Shared rather than repeated in each script's `make`, because the two failures it distinguishes are the
+   * same for all of them: a file missing from the jar is a packaging fault, and a script the server rejects
+   * is a syntax fault. What each script does own is its own name.
+   *
+   * Any connection will do: `SCRIPT LOAD` registers with the server, not with the caller, so the digest is
+   * good on every connection to it.
+   *
+   * @param path the script's path on the classpath, e.g. `lua/produce.lua`
+   * @return the digest to call it by; aborts with `QueueError` if it is missing or rejected
+   */
+  def register(path: String): ZIO[Connection.Commands, QueueError, Sha] =
+    load(path).flatMap: text =>
+      Connection.use: redis =>
+        ZIO
+          .attemptBlocking(redis.scriptLoad(text.getBytes(StandardCharsets.UTF_8)))
+          .mapError(error => QueueError.StoreUnavailable(s"loading a script failed: ${error.getMessage}"))
+          .map(Sha.apply)
+
+  /**
+   * Read one script off the classpath.
+   *
+   * @param path the script's path on the classpath, e.g. `lua/produce.lua`
+   * @return the script text; aborts if it is missing from the jar
+   */
+  private def load(path: String): IO[QueueError, String] =
+    ZIO
+      .attempt(Source.fromResource(path).mkString)
+      .mapError(error => QueueError.MalformedReply(s"$path is missing: ${error.getMessage}"))
 
   /**
    * Encode text the way the scripts expect to read it.
