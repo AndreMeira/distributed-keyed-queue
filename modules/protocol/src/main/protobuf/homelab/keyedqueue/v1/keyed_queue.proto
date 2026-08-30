@@ -69,7 +69,15 @@ message DequeueResponse {
 }
 
 message Delivery {
-  string   message_id = 1;  // what a settle names this message by
+  // What a settle names this message by.
+  //
+  // Deliberately repeated from `message.message_id` rather than read through it. `message` is a message
+  // field, so it is optional in most generated code, and settling is the one path a consumer cannot skip —
+  // hoisting the id keeps that path total instead of making every consumer unwrap an optional to find the
+  // name it must echo back.
+  //
+  // The two are always the same value. Where a generated client makes it convenient, read either.
+  string   message_id = 1;
   Message  message    = 2;
   uint32   attempt    = 3;  // 1 on first delivery, 2+ after a reclaim
 }

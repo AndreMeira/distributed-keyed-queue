@@ -9,8 +9,10 @@ import sbt._
  * serves Maven only to authenticated callers, public repo or not.
  *
  * The catch for this repo in particular: it does both at once. A release resolves the toolkit from
- * *another* repo's registry and publishes to its own, and sbt matches credentials by host — so one token
- * has to carry `read:packages` and `write:packages` together.
+ * *another* repo's registry and publishes to its own, and sbt matches credentials by host — so a single sbt
+ * invocation cannot use a different token for each. Hence release.yml gives each half its own STEP: the
+ * tests run under the read PAT, `publish` under the built-in token. Were they one step, the PAT would have
+ * to carry `write:packages` as well.
  *
  * NOTE: this is Scala 2.12 sbt-DSL code (`import sbt._`, not `sbt.*`), like every file under `project/`.
  */

@@ -20,7 +20,8 @@ on:
         description: 'Tag to publish, e.g. v0.1.0'
         required: true
 
-# Reading the toolkit and writing this repo's own packages both go through the same registry host.
+# `packages: write` is what lets the built-in GITHUB_TOKEN publish to this repo's own registry, so the
+# publish half needs no secret of its own. Reading the toolkit is the half that does — see the Test step.
 permissions:
   contents: read
   packages: write
@@ -38,13 +39,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      # This job does both halves of GitHub Packages at once: it RESOLVES the homelab toolkit from another
-      # repo's registry and PUBLISHES to its own. sbt matches credentials by host, so both use this one
-      # token — which therefore needs `read:packages` AND `write:packages`. The built-in GITHUB_TOKEN can
-      # publish here but cannot read another repo's packages unless that package grants this repo access,
-      # so HOMELAB_PACKAGES_PAT (a classic PAT carrying both scopes) is the one to set.
+      # Supplied by Actions; the token is per-step below, because the two halves of GitHub Packages want
+      # different ones.
       GITHUB_ACTOR: ${{ github.actor }}
-      GITHUB_TOKEN: ${{ secrets.HOMELAB_PACKAGES_PAT || secrets.GITHUB_TOKEN }}
     steps:
       # Explicit ref: a manual run has no tag context of its own, and pinning it keeps both paths identical.
       - uses: actions/checkout@v4
@@ -65,6 +62,12 @@ jobs:
       # The suite runs here too rather than trusting the tagged commit's earlier run: a green `main` is not
       # proof that *this* tree publishes, and a GitHub Packages version cannot be overwritten once pushed.
       - name: Test
+        env:
+          # READING another repo's registry: `server` resolves the homelab toolkit, and GitHub Packages
+          # serves Maven only to authenticated callers. The built-in GITHUB_TOKEN cannot read a package
+          # belonging to another repo unless that package grants this one access, so this half — and only
+          # this half — needs HOMELAB_PACKAGES_PAT, a classic PAT with `read:packages`.
+          GITHUB_TOKEN: ${{ secrets.HOMELAB_PACKAGES_PAT || secrets.GITHUB_TOKEN }}
         run: sbt -batch -no-colors test
 
       # `v0.1.0` -> `0.1.0`: the tag carries the `v`, the artifact version must not. build.sbt reads this.
@@ -72,4 +75,13 @@ jobs:
         run: echo "RELEASE_VERSION=${TAG#v}" >> "$GITHUB_ENV"
 
       - name: Publish
+        env:
+          # WRITING this repo's own registry, which the built-in token may do given `packages: write`
+          # above — the same arrangement the toolkit publishes under. No PAT, so a leaked or over-scoped
+          # personal token is never what stands between this repo and its own artifacts.
+          #
+          # This step resolves nothing from the toolkit: only `server` depends on it and `server` sets
+          # `publish / skip`. Were that to change, the Test step above has already warmed the coursier
+          # cache on this runner.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: sbt -batch -no-colors publish

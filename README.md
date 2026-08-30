@@ -39,11 +39,19 @@ Full recipe: [`../homelab-toolkit-zio/docs/learning-material/using-modules-as-a-
 
 ## Layout
 
+Four modules, split along what is *published* and what is not:
+
 ```
-src/main/protobuf/homelab/keyedqueue/v1/   proto — ScalaPB + zio-grpc generate into target/src_managed
-src/main/scala/homelab/keyedqueue/         the code
-src/test/scala/homelab/keyedqueue/         zio-test
+modules/protocol/           the .proto files, and the messages generated from them   published
+modules/protocol-zio-grpc/  the client and server stubs, generated from the service  published
+modules/server/             the implementation                                       not published
+e2e/                        the deployment suite — depends on the contract only      not published
 ```
+
+Both `.proto` files live in `modules/protocol`; the split is in which of them each module *generates* from,
+so a consumer that only reads and writes messages does not drag in a gRPC runtime. How that is arranged, and
+what breaks if it is rearranged, is in
+[`docs/learning-material/proto-generation.md`](docs/learning-material/proto-generation.md).
 
 Generator options (`flat_package`, package remaps) belong **in the `.proto`**, not in `build.sbt`: zio-grpc's
 generator reads them from the file, so a build-side `flatPackage` desynchronises the two generators and the
@@ -52,14 +60,21 @@ ZIO stub ends up referring to a package ScalaPB no longer emits.
 ## What exists
 
 Phase 1 of [`docs/research/roadmap.md`](docs/research/roadmap.md): four unary gRPC calls over Redis, with
-per-key exclusivity, leases and repair. No streaming, no batching — those are phase 2.
+per-key exclusivity, leases and repair. A `Dequeue` may claim a **batch** of one key's messages and settle
+them individually; streaming is still phase 2.
+
+What the service promises — and what it deliberately does not — is
+[`docs/architecture/guarantees.md`](docs/architecture/guarantees.md). Read that before writing a consumer or
+a test.
 
 ```
-src/main/protobuf/homelab/keyedqueue/v1/queue.proto   the contract: Enqueue, Dequeue, Settle, Heartbeat
-src/main/resources/lua/                               the five atomic transitions
-src/main/scala/homelab/keyedqueue/
-  domain/          types, the QueueStore port, one class per use case
-  infrastructure/  the Redis adapter, the claimer pool, the repair loop, config
+modules/protocol/src/main/protobuf/homelab/keyedqueue/v1/
+  keyed_queue.proto          the messages
+  keyed_queue_service.proto  the service: Enqueue, Dequeue, Settle, Heartbeat
+modules/server/src/main/resources/lua/   the five atomic transitions
+modules/server/src/main/scala/homelab/keyedqueue/
+  domain/          types, the QueueStore port, one class per use case, the repair loop
+  infrastructure/  the Redis adapter, the Lua scripts, config
   application/grpc the service, and the composition root
 ```
 
@@ -90,10 +105,10 @@ Details: [`docs/architecture/end-to-end-testing.md`](docs/architecture/end-to-en
 
 ## Known gaps
 
-- **Poison messages.** `attempt` is delivered and counted, but nothing acts on it. Per-key ordering makes
-  this urgent: a message that always fails blocks every later message for its key, for ever. A
-  `max_attempts` plus a dead-letter or park policy is the next thing this needs — see
-  [`docs/research/phase-1-api.md`](docs/research/phase-1-api.md).
+- **Poison messages.** `attempt` is delivered and counted per message, but nothing acts on it. A message
+  that always fails no longer wedges its key — a nack leaves it in place and later messages are handed out
+  past it — so it cycles rather than blocks. What is missing is somewhere to put it once the count is too
+  high: `max_attempts` plus a dead-letter or park policy.
 - **One queue per `Dequeue`.** `BLMOVE` takes a single source; a consumer spanning queues needs a connection
   each.
 - **Claimers bound concurrency.** `DKQ_CLAIMERS` connections may block at once; further `Dequeue` calls wait
