@@ -35,7 +35,7 @@ final class CompleteScript(ref: LuaScript.Sha):
    * @param retryAfter how long to hold a failed message back; ignored when the verdict is `Done`
    * @return whether it applied; aborts with `QueueError` when the store fails or the reply cannot be read
    */
-  def run(claim: Claim, verdict: Verdict, retryAfter: Duration): ZIO[Commands, QueueError, Boolean] =
+  def run(claim: Claim, verdict: Verdict, retryAfter: Duration): ZIO[Connection.Commands, QueueError, Boolean] =
     Connection.use: redis =>
       ZIO
         .attemptBlocking(redis.evalsha[Any](ref, output, keys(claim), args(claim, verdict, retryAfter)*))

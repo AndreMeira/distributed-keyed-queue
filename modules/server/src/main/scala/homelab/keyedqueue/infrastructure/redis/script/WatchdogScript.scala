@@ -33,7 +33,7 @@ final class WatchdogScript(ref: LuaScript.Sha):
    * @param limit the most entries to handle in one pass
    * @return what it repaired; aborts with `QueueError` when the store fails or the reply cannot be read
    */
-  def run(ns: Namespace, limit: Int): ZIO[Commands, QueueError, QueueStore.Swept] =
+  def run(ns: Namespace, limit: Int): ZIO[Connection.Commands, QueueError, QueueStore.Swept] =
     Connection.use: redis =>
       ZIO
         .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns), args(ns, limit)*))

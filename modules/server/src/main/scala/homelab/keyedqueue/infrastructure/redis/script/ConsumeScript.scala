@@ -42,7 +42,7 @@ final class ConsumeScript(ref: LuaScript.Sha):
     worker: WorkerId,
     key: MessageKey,
     leaseTtl: Duration,
-  ): ZIO[Commands, QueueError, Option[Claimed]] =
+  ): ZIO[Connection.Commands, QueueError, Option[Claimed]] =
     Connection.use: redis =>
       ZIO
         .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns, worker, key), args(key, leaseTtl)*))

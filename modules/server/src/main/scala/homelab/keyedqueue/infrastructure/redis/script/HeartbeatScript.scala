@@ -44,7 +44,7 @@ final class HeartbeatScript(ref: LuaScript.Sha):
     worker: WorkerId,
     leaseTtl: Duration,
     held: Chunk[Claim],
-  ): ZIO[Commands, QueueError, (Instant, Chunk[Claim])] =
+  ): ZIO[Connection.Commands, QueueError, (Instant, Chunk[Claim])] =
     Connection.use: redis =>
       ZIO
         .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns), args(worker, leaseTtl, held)*))

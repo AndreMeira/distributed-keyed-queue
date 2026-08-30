@@ -34,7 +34,7 @@ final class ProduceScript(ref: LuaScript.Sha):
    * @return the key's depth after the append; aborts with `QueueError` when the store fails or the reply
    *         cannot be read
    */
-  def run(ns: Namespace, message: Message): ZIO[Commands, QueueError, Long] =
+  def run(ns: Namespace, message: Message): ZIO[Connection.Commands, QueueError, Long] =
     Connection.use: redis =>
       ZIO
         .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns, message), args(message)*))
