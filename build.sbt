@@ -93,16 +93,23 @@ ThisBuild / dependencyOverrides ++= Seq(
 
 
 /**
- * The message contract: the types that travel, and nothing that carries them.
+ * The contract itself: every `.proto` in the repo lives here, and this module publishes the message types.
  *
- * Its own module so a consumer of the data does not inherit a transport or an effect system — this pulls
- * `scalapb-runtime` and nothing else. A service handling messages off some other substrate, or a test
- * building a request, needs only this.
+ * '''One home for the protos, two artifacts generated from them.''' The service definition sits beside the
+ * messages it uses — they are one contract, and splitting the *files* across modules named after Scala
+ * concerns would hide that. What the module split is really about is what a consumer has to depend on: this
+ * artifact carries `scalapb-runtime` and nothing else, so handling the data never drags in a transport or
+ * an effect system.
+ *
+ * The service proto is excluded from generation here rather than moved away; it stays on protoc's include
+ * path, which is how `protocolZioGrpc` resolves its import of the messages.
  */
 lazy val protocolWire = project
   .in(file("modules/protocol-wire"))
   .settings(
-    name                 := "distributed-keyed-queue-protocol-wire",
+    name                                := "distributed-keyed-queue-protocol-wire",
+    // Everything under `protobuf` except the service: the messages are what this artifact is.
+    Compile / PB.generate / excludeFilter := "*_service.proto",
     Compile / PB.targets := Seq(
       // Generator options live in the .proto (`option (scalapb.options)`), not here: zio-grpc's generator
       // reads them from the file, so setting flatPackage build-side desynchronises the two and the ZIO
@@ -118,23 +125,24 @@ lazy val protocolWire = project
 
 
 /**
- * The service contract: the RPC definitions, and the ZIO-native stubs generated from them.
+ * The ZIO-native stubs for the service, and nothing else.
+ *
+ * '''No sources of its own.''' It generates from `protocolWire`'s protos, taking the service definition and
+ * leaving the messages — which stay on protoc's include path so the import resolves, and stay in
+ * `protocolWire`'s jar so a consumer never has two copies of a message class on its classpath.
  *
  * This is what an RPC consumer depends on, and the end-to-end suite proves it is enough on its own — it
  * drives the deployment with this module and a transport, nothing else. It carries no transport itself,
  * because whether a consumer dials over netty, in-process or something else is the consumer's decision.
- *
- * The message protos are put on protoc's include path rather than compiled here, so `import` resolves
- * while the message classes stay in `protocolWire` — generating them in both would put two copies of every
- * message on a consumer's classpath.
  */
 lazy val protocolZioGrpc = project
   .in(file("modules/protocol-zio-grpc"))
   .dependsOn(protocolWire)
   .settings(
-    name                       := "distributed-keyed-queue-protocol-zio-grpc",
-    Compile / PB.protocOptions += "--proto_path=" +
-      ((protocolWire / Compile / sourceDirectory).value / "protobuf").getAbsolutePath,
+    name                                := "distributed-keyed-queue-protocol-zio-grpc",
+    Compile / PB.protoSources           := Seq((protocolWire / Compile / sourceDirectory).value / "protobuf"),
+    // The mirror of the exclusion in `protocolWire`: between them, every proto is generated exactly once.
+    Compile / PB.generate / includeFilter := "*_service.proto",
     Compile / PB.targets       := Seq(
       scalapb.gen(grpc = true)          -> (Compile / sourceManaged).value / "scalapb",
       scalapb.zio_grpc.ZioCodeGenerator -> (Compile / sourceManaged).value / "scalapb",
