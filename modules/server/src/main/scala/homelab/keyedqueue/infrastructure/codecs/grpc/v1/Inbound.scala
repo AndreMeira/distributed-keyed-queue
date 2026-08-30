@@ -31,6 +31,7 @@ object Inbound:
 
   private given Transformer[String, QueueName]  = QueueName(_)
   private given Transformer[String, MessageKey] = MessageKey(_)
+  private given Transformer[String, MessageId]  = MessageId(_)
   private given Transformer[String, ClaimRef]   = ClaimRef(_)
 
   private given Transformer[ByteString, Chunk[Byte]] =

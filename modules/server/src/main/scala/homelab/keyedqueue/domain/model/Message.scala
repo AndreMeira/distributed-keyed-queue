@@ -17,7 +17,8 @@ import java.time.Instant
  * message (`docs/research/connection-keyed-queue.md`).
  *
  * @param key what ordering is defined by: one key is worked by one consumer at a time
- * @param messageId idempotency and correlation in logs
+ * @param messageId this message's own name: unique among those queued for its key, and what a discard or
+ *                  a repeated enqueue is matched on
  * @param payloadType the payload's schema identity — a stable name and version, never a class name
  * @param encoding how `payload` is serialised
  * @param sentAt the sender's clock: good for lag metrics, not for decisions
@@ -25,7 +26,7 @@ import java.time.Instant
  */
 final case class Message(
   key: MessageKey,
-  messageId: String,
+  messageId: MessageId,
   payloadType: String,
   encoding: Encoding,
   sentAt: Option[Instant],

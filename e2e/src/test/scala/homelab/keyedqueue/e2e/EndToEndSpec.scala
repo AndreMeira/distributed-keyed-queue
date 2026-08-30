@@ -1,7 +1,7 @@
 package homelab.keyedqueue.e2e
 
 
-import homelab.keyedqueue.v1.Applied
+import homelab.keyedqueue.v1.{ Applied, MessageOutcome, Outcome }
 import zio.*
 import zio.test.*
 
@@ -35,13 +35,13 @@ object EndToEndSpec extends ZIOSpecDefault:
         dkq      <- ZIO.service[Deployment]
         _        <- dkq.a.enqueue(dkq.queue("roundtrip"), "k1", "hello")
         delivery <- dkq.b.dequeue(dkq.queue("roundtrip"), 5.seconds)
-        applied  <- ZIO.foreach(delivery)(held => dkq.b.settle(held.receipt))
+        applied  <- dkq.b.settle(delivery)
         drained  <- dkq.a.dequeue(dkq.queue("roundtrip"), 1.second)
       yield assertTrue(
-        delivery.flatMap(_.message).map(_.payload.toStringUtf8).contains("hello"),
-        delivery.map(_.attempt).contains(1),
-        applied.contains(Applied.APPLIED_OK),
-        drained.isEmpty, // and settling on b really removed it, as seen from a
+        delivery.deliveries.flatMap(_.message).map(_.payload.toStringUtf8).contains("hello"),
+        delivery.deliveries.map(_.attempt).contains(1),
+        applied == Applied.APPLIED_OK,
+        drained.deliveries.isEmpty, // and settling on b really removed it, as seen from a
       )
     },
     test("a dequeue parked on one instance is woken by an enqueue on the other") {
@@ -53,9 +53,9 @@ object EndToEndSpec extends ZIOSpecDefault:
         _                   <- ZIO.sleep(2.seconds) // long enough that the dequeue is certainly parked
         _                   <- dkq.b.enqueue(dkq.queue("wake"), "k1", "wake up")
         (elapsed, delivery) <- parked.join
-        _                   <- ZIO.foreachDiscard(delivery)(held => dkq.a.settle(held.receipt))
+        _                   <- dkq.a.settle(delivery)
       yield assertTrue(
-        delivery.flatMap(_.message).map(_.payload.toStringUtf8).contains("wake up"),
+        delivery.deliveries.flatMap(_.message).map(_.payload.toStringUtf8).contains("wake up"),
         elapsed >= 1900.millis, // it really blocked, rather than finding the message already there
         elapsed <= 10.seconds,  // and it was woken, rather than waiting out its 20
       )
@@ -101,12 +101,12 @@ object EndToEndSpec extends ZIOSpecDefault:
         held    <- dkq.b.dequeue(dkq.queue("death"), 5.seconds)
         _       <- Compose.kill(dkq.b.name) // no settle, no goodbye: the holder simply vanishes
         again   <- dkq.a.dequeue(dkq.queue("death"), 25.seconds)
-        applied <- ZIO.foreach(again)(delivery => dkq.a.settle(delivery.receipt))
+        applied <- dkq.a.settle(again)
       yield assertTrue(
-        held.map(_.attempt).contains(1),
-        again.flatMap(_.message).map(_.payload.toStringUtf8).contains("survive me"),
-        again.map(_.attempt).contains(2), // counted, which is what a poison-message policy will read
-        applied.contains(Applied.APPLIED_OK),
+        held.deliveries.map(_.attempt).contains(1),
+        again.deliveries.flatMap(_.message).map(_.payload.toStringUtf8).contains("survive me"),
+        again.deliveries.map(_.attempt).contains(2), // counted, which is what a poison-message policy will read
+        applied == Applied.APPLIED_OK,
       )
     } @@ TestAspect.after(Compose.revive("dkq-b").orDie) @@ TestAspect.ifEnvNotSet("DKQ_E2E_ENDPOINTS"),
     test("a heartbeat keeps a claim past its lease") {
@@ -116,11 +116,11 @@ object EndToEndSpec extends ZIOSpecDefault:
         dkq     <- ZIO.service[Deployment]
         _       <- dkq.a.enqueue(dkq.queue("beats"), "k1", "slow work")
         held    <- dkq.a.dequeue(dkq.queue("beats"), 5.seconds)
-        receipt  = held.map(_.receipt).getOrElse("")
+        receipt  = held.receipt
         beating <- dkq.a.heartbeat(Seq(receipt)).repeat(Schedule.spaced(lease.dividedBy(3))).fork
         _       <- ZIO.sleep(lease.multipliedBy(3))
         _       <- beating.interrupt
-        applied <- dkq.a.settle(receipt)
+        applied <- dkq.a.settleEach(receipt, held.deliveries.map(one => MessageOutcome(one.messageId, Outcome.OUTCOME_DONE)))
       yield assertTrue(applied == Applied.APPLIED_OK)
     },
     test("a claim held in silence is reclaimed, and its settle refused") {
@@ -131,35 +131,36 @@ object EndToEndSpec extends ZIOSpecDefault:
         _       <- dkq.a.enqueue(dkq.queue("silence"), "k1", "abandoned")
         held    <- dkq.a.dequeue(dkq.queue("silence"), 5.seconds)
         _       <- ZIO.sleep(lease + 5.seconds) // the lease, plus room for the sweep to notice
-        applied <- dkq.a.settle(held.map(_.receipt).getOrElse(""))
+        applied <- dkq.a.settle(held)
         again   <- dkq.b.dequeue(dkq.queue("silence"), 10.seconds)
-        _       <- ZIO.foreachDiscard(again)(delivery => dkq.b.settle(delivery.receipt))
+        _       <- dkq.b.settle(again)
       yield assertTrue(
         applied == Applied.APPLIED_STALE, // the fence moved on: this outcome is discarded, not applied
-        again.map(_.attempt).contains(2), // and the message is somebody else's now
+        again.deliveries.map(_.attempt).contains(2), // and the message is somebody else's now
       )
     },
-    test("a discard drops what was reported, and not a message produced while the claim was held") {
-      // `backlog_depth` is a lower bound: holding a claim keeps other consumers off the key, but producers
-      // may still append to it. This is the case that says a discard counted from the head cannot swallow a
-      // message that arrived afterwards — enqueued through the *other* instance, so it is a real race
-      // across the deployment rather than one connection talking to itself.
+    test("a batch claimed on one instance is settled message by message, and its key waits for the last") {
+      // What batching is for: the consumer sees several of a key's messages at once, decides which are
+      // superseded, and says so one at a time. The key is nobody else's until nothing is owed — which is
+      // what keeps per-key exclusivity while more than one message is out.
       for
         dkq     <- ZIO.service[Deployment]
-        queue    = dkq.queue("conflate")
+        queue    = dkq.queue("batch")
         _       <- ZIO.foreachDiscard(1 to 3)(n => dkq(0).enqueue(queue, "k1", s"v$n"))
-        held    <- dkq(0).dequeue(queue, 2.seconds)
-        receipt  = held.map(_.receipt).getOrElse("")
-        // While v1 is held: the other instance appends v4, which the depth above never saw.
-        _       <- dkq(1).enqueue(queue, "k1", "v4")
-        // The consumer conflates on what it was told: v1 handled, v2 and v3 superseded.
-        _       <- dkq(0).settle(receipt, discardAhead = 2)
-        next    <- dkq(1).dequeue(queue, 2.seconds)
-        body     = next.flatMap(_.message).map(m => String(m.payload.toByteArray, "UTF-8"))
+        held    <- dkq(0).dequeue(queue, 2.seconds, maxBatch = 3)
+        ids      = held.deliveries.map(_.messageId)
+        bodies   = held.deliveries.map(one => one.message.map(_.payload.toStringUtf8))
+        // v1 and v2 are superseded by v3; acknowledged without being worked.
+        _       <- dkq(0).settleEach(held.receipt, ids.take(2).map(MessageOutcome(_, Outcome.OUTCOME_DONE)))
+        // Still owed v3, so the other instance cannot have the key.
+        blocked <- dkq(1).dequeue(queue, 1.second)
+        _       <- dkq(0).settleEach(held.receipt, ids.drop(2).map(MessageOutcome(_, Outcome.OUTCOME_DONE)))
+        drained <- dkq(1).dequeue(queue, 1.second)
       yield assertTrue(
-        held.map(_.backlogDepth) == Some(2), // v2 and v3; v4 did not exist yet
-        body == Some("v4"),                  // v2 and v3 discarded, v4 survived the trim
-        next.map(_.backlogDepth) == Some(0),
+        bodies == Seq(Some("v1"), Some("v2"), Some("v3")), // producer order, across the deployment
+        held.backlogDepth == 0,
+        blocked.deliveries.isEmpty, // the claim was still alive on the other instance
+        drained.deliveries.isEmpty, // and by then the key was empty
       )
     },
     test("under load nothing is lost, nothing is delivered twice, and every key keeps its order") {

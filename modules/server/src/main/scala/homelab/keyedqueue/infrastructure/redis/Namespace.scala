@@ -28,7 +28,7 @@ final case class Namespace(queue: QueueName):
   /** key -> claim generation. A token authorises exactly one transition. */
   val fence: String = s"$prefix:fence"
 
-  /** key -> how many times the current head message has been delivered. */
+  /** message id -> how many times it has been delivered. Per message, since a claim may own several. */
   val attempts: String = s"$prefix:attempts"
 
   /** worker -> liveness deadline. What makes a claiming list recoverable. */
@@ -38,7 +38,10 @@ final case class Namespace(queue: QueueName):
   val delayed: String = s"$prefix:delayed"
 
   /**
-   * That key's messages, oldest first.
+   * That key's message ids, in producer order, until they are acknowledged.
+   *
+   * The list carries order and nothing else — [[payloads]] carries the messages. A claim marks ids as
+   * [[owned]] without taking them out of here, which is why a nack has nothing to put back.
    *
    * @param key the key
    * @return the list name
@@ -46,12 +49,28 @@ final case class Namespace(queue: QueueName):
   def msgs(key: MessageKey): String = s"$prefix:msgs:$key"
 
   /**
-   * The one message a key is currently working.
+   * That key's messages themselves, by id.
+   *
+   * Separate from [[msgs]] because the two answer different questions: the list carries order, this carries
+   * cargo. Keeping them apart is what lets a script address a message by name without reading inside a
+   * payload it cannot parse.
    *
    * @param key the key
-   * @return the list name
+   * @return the hash name
    */
-  def inflight(key: MessageKey): String = s"$prefix:inflight:$key"
+  def payloads(key: MessageKey): String = s"$prefix:payloads:$key"
+
+  /**
+   * The ids this key's live claim owns and has not yet settled.
+   *
+   * A claim is over when this is empty. Ownership is the only thing it records — the messages themselves
+   * stay in [[msgs]] in producer order for as long as they are unacknowledged, so a nack has nothing to put
+   * back and a crash has nothing to recover.
+   *
+   * @param key the key
+   * @return the set name
+   */
+  def owned(key: MessageKey): String = s"$prefix:owned:$key"
 
   /**
    * One worker's in-transition keys: what a `BLMOVE` lands in, and what its death leaves behind.

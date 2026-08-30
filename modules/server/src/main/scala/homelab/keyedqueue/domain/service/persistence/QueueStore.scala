@@ -45,7 +45,7 @@ trait QueueStore:
    * @return the claim, or `None` when nothing became claimable in time; aborts with `QueueError` if the
    *         store fails
    */
-  def claim(queue: QueueName, timeout: Duration): IO[QueueError, Option[Claimed]]
+  def claim(queue: QueueName, timeout: Duration, maxBatch: Int): IO[QueueError, Option[Claimed]]
 
   /**
    * Report what happened to a claimed message.
@@ -53,13 +53,18 @@ trait QueueStore:
    * @param claim the claim being settled
    * @param verdict what the consumer decided
    * @param retryAfter how long to hold the key back before retrying; ignored for `Verdict.Done`
-   * @param discardAhead how many messages behind the settled one to drop as superseded; `Verdict.Done`
-   *                     only. Asking for more than remain empties the key rather than failing — a caller
-   *                     acting on a depth it was told cannot be wrong about what has since been drained
+   * @param outcomes what became of each message named, by id. A claim may be settled piece by piece: what
+   *                 is not named stays owed, and the claim ends — releasing the key — once nothing is. An
+   *                 id this claim does not own is ignored rather than refused, which is what makes a
+   *                 retried settle harmless
    * @return true when applied, false when the claim had already been revoked; aborts with `QueueError` if
    *         the store fails
    */
-  def settle(claim: Claim, verdict: Verdict, retryAfter: Duration, discardAhead: Int): IO[QueueError, Boolean]
+  def settle(
+    claim: Claim,
+    outcomes: Chunk[(MessageId, Verdict)],
+    retryAfter: Duration,
+  ): IO[QueueError, Boolean]
 
   /**
    * Push the deadline forward on the claims still held, and say which are gone.

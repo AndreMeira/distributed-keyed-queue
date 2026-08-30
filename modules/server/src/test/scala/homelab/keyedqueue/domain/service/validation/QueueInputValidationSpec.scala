@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.service.validation
 
 import homelab.keyedqueue.domain.error.{ InvalidInput, QueueError }
 import homelab.keyedqueue.domain.model.Message
-import homelab.keyedqueue.domain.request.v1.{ DequeueRequest, EnqueueRequest, SettleRequest }
+import homelab.keyedqueue.domain.request.v1.{ DequeueRequest, EnqueueRequest, MessageOutcome, SettleRequest }
 import homelab.keyedqueue.domain.syntax.*
 import homelab.keyedqueue.domain.types.*
 import zio.*
@@ -22,29 +22,44 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
 
   /** A message with whatever key the test is about; nothing else here is under test. */
   private def message(key: String): Message =
-    Message(MessageKey(key), messageId = "m1", payloadType = "test.Text/v1", Encoding.Json, None, Chunk.empty)
+    Message(MessageKey(key), messageId = MessageId("m1"), payloadType = "test.Text/v1", Encoding.Json, None, Chunk.empty)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueInputValidation")(
-    test("a settle asking to discard a negative number of messages is refused") {
-      // Reachable because proto's uint32 decodes to a signed Int: anything at or above 2^31 arrives here
-      // negative. It must not reach LTRIM, which reads a negative start as an offset from the end and would
-      // keep the last N messages while discarding everything before them.
-      val request = SettleRequest(ClaimRef("anything"), Verdict.Done, Duration.Zero, discardAhead = -1)
-      for problems <- validation.parse(request).flip
-      yield assertTrue(problems == InvalidInput.NegativeDiscardAhead)
+    test("a settle naming an empty id, or the same id twice, is refused") {
+      val empty = SettleRequest(ClaimRef("anything"), Chunk(MessageOutcome(MessageId(""), Verdict.Done)), Duration.Zero)
+      val twice =
+        SettleRequest(
+          ClaimRef("anything"),
+          Chunk(MessageOutcome(MessageId("m1"), Verdict.Done), MessageOutcome(MessageId("m1"), Verdict.Done)),
+          Duration.Zero,
+        )
+      for
+        first  <- validation.parse(empty).flip
+        second <- validation.parse(twice).flip
+      yield assertTrue(first == InvalidInput.EmptyDiscardId, second == InvalidInput.DuplicateDiscardId)
     },
-    test("a settle discarding nothing, or something, passes") {
-      val none = SettleRequest(ClaimRef("anything"), Verdict.Done, Duration.Zero, discardAhead = 0)
-      val some = SettleRequest(ClaimRef("anything"), Verdict.Done, Duration.Zero, discardAhead = 7)
+    test("a settle naming nothing, or some distinct ids, passes") {
+      val none = SettleRequest(ClaimRef("anything"), Chunk.empty, Duration.Zero)
+      val some =
+        SettleRequest(
+          ClaimRef("anything"),
+          Chunk(MessageOutcome(MessageId("m1"), Verdict.Done), MessageOutcome(MessageId("m2"), Verdict.Done)),
+          Duration.Zero,
+        )
       for
         first  <- validation.parse(none).either
         second <- validation.parse(some).either
       yield assertTrue(first.isRight, second.isRight)
     },
+    test("a message without an id is refused: it is what the store addresses it by") {
+      val nameless = Message(MessageKey("k1"), MessageId(""), "test.Text/v1", Encoding.Json, None, Chunk.empty)
+      for problems <- validation.parse(EnqueueRequest(QueueName("jobs"), nameless)).flip
+      yield assertTrue(problems == InvalidInput.EmptyMessageId)
+    },
     test("a request with nothing wrong passes") {
       for
         enqueue <- validation.parse(EnqueueRequest(QueueName("jobs"), message("k1"))).exit
-        dequeue <- validation.parse(DequeueRequest(QueueName("jobs"), 1.second)).exit
+        dequeue <- validation.parse(DequeueRequest(QueueName("jobs"), 1.second, maxBatch = 1)).exit
       yield assertTrue(enqueue.isSuccess, dequeue.isSuccess)
     },
     test("two problems in one request are both reported") {
@@ -68,8 +83,8 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
     test("a dequeue only needs a queue, however long the caller wants to wait") {
       // Patience is clamped by the apply case, not refused here — an hour is a preference, not a mistake.
       for
-        patient <- validation.parse(DequeueRequest(QueueName("jobs"), 1.hour)).exit
-        unnamed <- validation.parse(DequeueRequest(QueueName(""), 1.second)).orFail.flip
+        patient <- validation.parse(DequeueRequest(QueueName("jobs"), 1.hour, maxBatch = 1)).exit
+        unnamed <- validation.parse(DequeueRequest(QueueName(""), 1.second, maxBatch = 1)).orFail.flip
       yield assertTrue(
         patient.isSuccess,
         unnamed == QueueError.InvalidRequest(NonEmptyChunk(InvalidInput.EmptyQueueName)),

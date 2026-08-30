@@ -27,14 +27,34 @@ enum InvalidInput:
   case EmptyMessageKey
 
   /**
-   * A settle asked to discard a negative number of messages behind it.
+   * A message arrived without an id.
    *
-   * Reachable despite the field being `uint32` on the wire, because that decodes to a *signed* `Int`: a
-   * value at or above 2^31 arrives here negative. Refused rather than clamped, because `LTRIM` reads a
-   * negative start as an offset from the end — a discard of -2 would keep the last two messages and drop
-   * everything before them, which is the opposite of what was asked.
+   * Required because the store keys a key's queued messages by id: two under one id are one message, so an
+   * empty id would collapse every unnamed message on that key into a single entry.
    */
-  case NegativeDiscardAhead
+  case EmptyMessageId
+
+  /**
+   * A settle named an empty id among the messages it wanted discarded.
+   */
+  case EmptyDiscardId
+
+  /**
+   * A settle named the same id twice among the messages it wanted discarded.
+   *
+   * Harmless to act on — dropping an id already gone finds nothing — but a caller that sent one has
+   * miscounted something, and hearing so is cheaper than wondering later why its numbers disagree.
+   */
+  case DuplicateDiscardId
+
+  /**
+   * A dequeue asked for a negative batch size.
+   *
+   * Reachable because `uint32` on the wire decodes to a signed `Int`: a value at or above 2^31 arrives here
+   * negative. Harmless further down — the use case clamps to at least one — but a caller that asked for
+   * something impossible should hear so rather than silently receive one message.
+   */
+  case NegativeMaxBatch
 
   /**
    * What to tell the caller.
@@ -42,6 +62,9 @@ enum InvalidInput:
    * @return the problem, phrased in terms of the request
    */
   def message: String = this match
-    case EmptyQueueName       => "a queue name is required"
-    case EmptyMessageKey      => "a message key is required: it is what ordering is defined by"
-    case NegativeDiscardAhead => "discard_ahead cannot be negative; zero means discard nothing"
+    case EmptyQueueName     => "a queue name is required"
+    case EmptyMessageKey    => "a message key is required: it is what ordering is defined by"
+    case EmptyMessageId     => "a message id is required: it is what a message is addressed by"
+    case EmptyDiscardId     => "a discarded message must be named"
+    case DuplicateDiscardId => "the same message was named twice to discard"
+    case NegativeMaxBatch   => "max_batch cannot be negative; zero or one means one message"

@@ -36,7 +36,7 @@ object GrpcSpec extends ZIOSpecDefault:
                          started
                      )(container => ZIO.attemptBlocking(container.stop()).ignore)
         url        = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-        config     = QueueConfig(url, cluster = false, port, 30.seconds, 1.second, 100, 2, 5.seconds)
+        config     = QueueConfig(url, cluster = false, port, 30.seconds, 1.second, 100, 2, 5.seconds, maxBatchLimit = 32)
         _         <- GrpcApplication.serve.provide(ZLayer.succeed(config)).forkScoped
         _         <- ZIO.sleep(1.second) // let the server bind before the client dials
         client    <- KeyedQueueClient.scoped(
@@ -53,51 +53,73 @@ object GrpcSpec extends ZIOSpecDefault:
       payload = com.google.protobuf.ByteString.copyFromUtf8(body),
     )
 
+  /** One message's outcome, by id. */
+  private def done(id: String): MessageOutcome = MessageOutcome(id, Outcome.OUTCOME_DONE)
+
+  /** Settle every message a claim handed over, with the same verdict. */
+  private def settle(reply: DequeueResponse, outcome: Outcome): SettleRequest =
+    SettleRequest(reply.receipt, outcomes = reply.deliveries.map(d => MessageOutcome(d.messageId, outcome)))
+
   def spec: Spec[TestEnvironment & Scope, Any] = suite("KeyedQueue over gRPC")(
     test("enqueue, dequeue, settle — the loop a consumer writes") {
       for
         client  <- ZIO.service[KeyedQueueClient]
         _       <- client.enqueue(EnqueueRequest("jobs", Some(message("k1", "hello"))))
         reply   <- client.dequeue(DequeueRequest("jobs", Some(ProtoDuration(seconds = 2))))
-        delivery = reply.delivery
-        settled <- ZIO.foreach(delivery)(d => client.settle(SettleRequest(d.receipt, Outcome.OUTCOME_DONE)))
+        settled <- client.settle(settle(reply, Outcome.OUTCOME_DONE))
         empty   <- client.dequeue(DequeueRequest("jobs", Some(ProtoDuration(seconds = 1))))
       yield assertTrue(
-        delivery.flatMap(_.message).map(_.payload.toStringUtf8).contains("hello"),
-        delivery.map(_.attempt).contains(1),
-        delivery.exists(_.receipt.nonEmpty),
-        settled.map(_.applied).contains(Applied.APPLIED_OK),
-        empty.delivery.isEmpty, // the queue is drained, and a timeout is an empty response, not an error
+        reply.deliveries.map(_.message.map(_.payload.toStringUtf8)) == Seq(Some("hello")),
+        reply.deliveries.map(_.attempt) == Seq(1),
+        reply.receipt.nonEmpty,
+        reply.leaseExpiresAt.isDefined,
+        settled.applied == Applied.APPLIED_OK,
+        empty.deliveries.isEmpty, // the queue is drained, and a timeout is an empty response, not an error
       )
     },
-    test("a delivery reports the backlog, and a settle can discard it") {
-      // The conflation loop a latest-wins consumer writes: see something newer behind this one, skip the
-      // work, and drop the rest in the settle that was going out anyway.
+    test("a claim hands over a batch, and each message is settled by name") {
       for
         client  <- ZIO.service[KeyedQueueClient]
-        _       <- ZIO.foreachDiscard(1 to 4)(n => client.enqueue(EnqueueRequest("conflate", Some(message("k1", s"v$n")))))
-        first   <- client.dequeue(DequeueRequest("conflate", Some(ProtoDuration(seconds = 2))))
-        receipt  = first.delivery.map(_.receipt).getOrElse("")
-        settled <- client.settle(SettleRequest(receipt, Outcome.OUTCOME_DONE, discardAhead = 2))
-        next    <- client.dequeue(DequeueRequest("conflate", Some(ProtoDuration(seconds = 2))))
+        _       <- ZIO.foreachDiscard(1 to 4)(n => client.enqueue(EnqueueRequest("batch", Some(message("k1", s"v$n")))))
+        reply   <- client.dequeue(DequeueRequest("batch", Some(ProtoDuration(seconds = 2)), maxBatch = 3))
+        settled <- client.settle(settle(reply, Outcome.OUTCOME_DONE))
+        next    <- client.dequeue(DequeueRequest("batch", Some(ProtoDuration(seconds = 2))))
       yield assertTrue(
-        first.delivery.map(_.backlogDepth) == Some(3),
+        reply.deliveries.map(_.message.map(_.payload.toStringUtf8)) == Seq(Some("v1"), Some("v2"), Some("v3")),
+        reply.backlogDepth == 3 - 3 + 1, // v4, still queued behind the batch
         settled.applied == Applied.APPLIED_OK,
-        // v1 was settled and v2/v3 discarded, so the next delivery is v4 with nothing behind it.
-        next.delivery.flatMap(_.message).map(d => String(d.payload.toByteArray, "UTF-8")) == Some("v4"),
-        next.delivery.map(_.backlogDepth) == Some(0),
+        next.deliveries.map(_.message.map(_.payload.toStringUtf8)) == Seq(Some("v4")),
       )
     },
-    test("a settle replayed with the same receipt is reported stale") {
-      // What an at-least-once RPC does on a retry. The second must not apply, or the key would be queued
-      // twice and two consumers could hold it.
+    test("a consumer can settle part of its batch and keep the rest") {
+      // Conflation, and the shape that makes it possible: the consumer sees the whole batch, decides which
+      // are superseded, and says so message by message. The key stays its own until nothing is owed.
+      for
+        client  <- ZIO.service[KeyedQueueClient]
+        _       <- ZIO.foreachDiscard(1 to 3)(n => client.enqueue(EnqueueRequest("partial", Some(message("k1", s"v$n")))))
+        reply   <- client.dequeue(DequeueRequest("partial", Some(ProtoDuration(seconds = 2)), maxBatch = 3))
+        ids      = reply.deliveries.map(_.messageId)
+        // v1 and v2 are superseded by v3, so they are acknowledged without being worked.
+        partial <- client.settle(SettleRequest(reply.receipt, outcomes = ids.take(2).map(done)))
+        // Still owed v3, so nobody else may have the key.
+        blocked <- client.dequeue(DequeueRequest("partial", Some(ProtoDuration(seconds = 1))))
+        _       <- client.settle(SettleRequest(reply.receipt, outcomes = ids.drop(2).map(done)))
+        drained <- client.dequeue(DequeueRequest("partial", Some(ProtoDuration(seconds = 1))))
+      yield assertTrue(
+        partial.applied == Applied.APPLIED_OK,
+        blocked.deliveries.isEmpty, // the claim was still alive
+        drained.deliveries.isEmpty, // and by then there was nothing left
+      )
+    },
+    test("a settle replayed with the same receipt is harmless, and one after the claim ends is stale") {
+      // What an at-least-once RPC does on a retry. Naming a message the claim no longer owns changes
+      // nothing; using a token the claim has finished with is refused.
       for
         client <- ZIO.service[KeyedQueueClient]
         _      <- client.enqueue(EnqueueRequest("replay", Some(message("k1", "once"))))
         reply  <- client.dequeue(DequeueRequest("replay", Some(ProtoDuration(seconds = 2))))
-        receipt = reply.delivery.map(_.receipt).getOrElse("")
-        first  <- client.settle(SettleRequest(receipt, Outcome.OUTCOME_DONE))
-        second <- client.settle(SettleRequest(receipt, Outcome.OUTCOME_DONE))
+        first  <- client.settle(settle(reply, Outcome.OUTCOME_DONE))
+        second <- client.settle(settle(reply, Outcome.OUTCOME_DONE))
       yield assertTrue(first.applied == Applied.APPLIED_OK, second.applied == Applied.APPLIED_STALE)
     },
     test("heartbeat renews what is held and names what is not") {
@@ -105,8 +127,7 @@ object GrpcSpec extends ZIOSpecDefault:
         client <- ZIO.service[KeyedQueueClient]
         _      <- client.enqueue(EnqueueRequest("beats", Some(message("k1", "work"))))
         reply  <- client.dequeue(DequeueRequest("beats", Some(ProtoDuration(seconds = 2))))
-        receipt = reply.delivery.map(_.receipt).getOrElse("")
-        beat   <- client.heartbeat(HeartbeatRequest(Seq(receipt, "not-a-receipt")))
+        beat   <- client.heartbeat(HeartbeatRequest(Seq(reply.receipt, "not-a-receipt")))
       yield assertTrue(
         beat.stale == Seq("not-a-receipt"), // the real one was renewed; the nonsense one named
         beat.renewedUntil.isDefined,

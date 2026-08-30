@@ -34,4 +34,4 @@ object SyncUseCases:
    *
    * @param maxWait the longest a caller may ask to wait for a message
    */
-  final case class Config(maxWait: Duration)
+  final case class Config(maxWait: Duration, maxBatchLimit: Int)

@@ -26,7 +26,9 @@ enum Encoding {
 // sent to, not a property of the message (docs/research/redis-keyed-queue.md §3b).
 message Message {
   string                    key          = 1;  // per-key ordering; empty is a key of its own
-  string                    message_id   = 2;  // idempotency + correlation in logs
+  // Unique among the messages queued for this key: it is what a discard names, and what makes a repeated
+  // enqueue idempotent rather than a second copy. Required.
+  string                    message_id   = 2;
   string                    payload_type = 3;  // stable schema name + version, never a class name
   Encoding                  encoding     = 4;
   google.protobuf.Timestamp sent_at      = 5;  // sender clock: metrics, not decisions
@@ -42,27 +44,30 @@ message EnqueueResponse {
 }
 
 message DequeueRequest {
-  string                   queue    = 1;
+  string                   queue     = 1;
   // Named `max_wait` rather than `wait`: on the JVM a field called `wait` collides with Object.wait().
-  google.protobuf.Duration max_wait = 2;  // how long to block; the RPC deadline should exceed it
+  google.protobuf.Duration max_wait  = 2;  // how long to block; the RPC deadline should exceed it
+  // The most messages to claim at once, clamped to the service's ceiling. One is the default and the
+  // minimum. A batch is one claim over several of a key's messages, settled individually — not several
+  // claims, and not a licence to work them concurrently: the key is what is owned, and its order still
+  // holds.
+  uint32                   max_batch = 3;
 }
 message DequeueResponse {
-  optional Delivery delivery = 1;  // absent = nothing became ready in time. NOT an error
+  // The claim, and the handle every settle for these messages names. Empty when nothing became ready in
+  // time, which is NOT an error.
+  string                    receipt          = 1;
+  repeated Delivery         deliveries       = 2;  // producer order; empty when there was no claim
+  google.protobuf.Timestamp lease_expires_at = 3;  // when the whole claim lapses unless renewed
+  // How many more were queued for this key behind the batch. A lower bound: producers may append while the
+  // claim is held, and nothing else may take from it.
+  uint32                    backlog_depth    = 4;
 }
 
 message Delivery {
-  string                    receipt          = 1;  // opaque; hand it back to Settle and Heartbeat
-  Message                   message          = 2;
-  uint32                    attempt          = 3;  // 1 on first delivery, 2+ after a reclaim
-  google.protobuf.Timestamp lease_expires_at = 4;
-  // How many messages were still queued for this key when this one was claimed. Non-zero means something
-  // newer exists, which for a latest-wins consumer is enough to know this one is superseded — see
-  // `discard_ahead` on SettleRequest.
-  //
-  // A LOWER BOUND, not a promise: holding a claim keeps other consumers off the key, but producers may
-  // still append while it is held, so the backlog can grow between this number and the settle. It never
-  // shrinks, because nothing else may take from a held key.
-  uint32                    backlog_depth    = 5;
+  string   message_id = 1;  // what a settle names this message by
+  Message  message    = 2;
+  uint32   attempt    = 3;  // 1 on first delivery, 2+ after a reclaim
 }
 
 enum Outcome {
@@ -79,19 +84,21 @@ enum Applied {
 }
 
 message SettleRequest {
-  string                   receipt       = 1;
-  Outcome                  outcome       = 2;
-  google.protobuf.Duration retry_after   = 3;  // OUTCOME_FAILED only; zero means immediately
-  // Drop this many messages from the head of the key after settling. OUTCOME_DONE only. More than remain
-  // simply empties the key.
+  string                   receipt     = 1;
+  reserved 2, 4;                             // was a single `outcome`, and a `discard_ahead` count
+  google.protobuf.Duration retry_after = 3;  // a nack asking the KEY to wait; zero means immediately
+  // What became of each message named. A claim may be settled piece by piece: naming some leaves the rest
+  // owed, and the claim ends — releasing the key — once nothing is.
   //
-  // Counted from the head, which is what makes it safe against a producer appending while the claim was
-  // held: appends land at the tail, so dropping N from the head drops exactly the N `backlog_depth`
-  // reported and never something that arrived afterwards.
-  //
-  // The queue never conflates on its own — it reports `backlog_depth` and drops what it is told to. What
-  // makes a message superseded is the consumer's business.
-  uint32                   discard_ahead = 4;
+  // An id this claim does not own is ignored rather than refused, which is also what makes a retried settle
+  // harmless.
+  repeated MessageOutcome  outcomes    = 5;
+}
+
+// What a consumer did with one message of its batch.
+message MessageOutcome {
+  string  message_id = 1;
+  Outcome outcome    = 2;
 }
 message SettleResponse {
   Applied applied = 1;

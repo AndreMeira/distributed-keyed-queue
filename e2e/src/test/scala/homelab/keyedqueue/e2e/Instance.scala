@@ -54,31 +54,41 @@ final case class Instance(name: String, address: String, client: KeyedQueueClien
       .map(_.keyDepth)
 
   /**
-   * Wait for work.
+   * Claim a batch of one key's messages.
    *
-   * @param queue the queue to claim from
+   * @param queue the queue to take from
    * @param patience how long to block
-   * @return the delivery, or nothing when the wait elapsed first; fails when the call does
+   * @param maxBatch the most messages to claim at once
+   * @return the response, empty when the wait elapsed first; fails when the call does
    */
-  def dequeue(queue: String, patience: Duration): Task[Option[Delivery]] =
-    client
-      .dequeue(DequeueRequest(queue, Some(ProtoDuration(seconds = patience.getSeconds, nanos = patience.getNano))))
-      .map(_.delivery)
+  def dequeue(queue: String, patience: Duration, maxBatch: Int = 1): Task[DequeueResponse] =
+    client.dequeue(
+      DequeueRequest(
+        queue,
+        Some(ProtoDuration(seconds = patience.getSeconds, nanos = patience.getNano)),
+        maxBatch = maxBatch,
+      )
+    )
 
   /**
-   * Report an outcome.
+   * Report what became of some of a claim's messages.
    *
-   * @param receipt what the delivery carried
-   * @param outcome what the consumer decided
-   * @param discardAhead how many messages behind this one to drop as superseded; `OUTCOME_DONE` only
+   * @param receipt the claim, as the response carried it
+   * @param outcomes what became of each message named, by id
    * @return whether it applied, or was refused as stale; fails when the call does
    */
-  def settle(
-    receipt: String,
-    outcome: Outcome = Outcome.OUTCOME_DONE,
-    discardAhead: Int = 0,
-  ): Task[Applied] =
-    client.settle(SettleRequest(receipt, outcome, discardAhead = discardAhead)).map(_.applied)
+  def settleEach(receipt: String, outcomes: Seq[MessageOutcome]): Task[Applied] =
+    client.settle(SettleRequest(receipt, outcomes = outcomes)).map(_.applied)
+
+  /**
+   * Report the same outcome for everything a claim handed over.
+   *
+   * @param reply what the dequeue returned
+   * @param outcome what became of every message in it
+   * @return whether it applied, or was refused as stale; fails when the call does
+   */
+  def settle(reply: DequeueResponse, outcome: Outcome = Outcome.OUTCOME_DONE): Task[Applied] =
+    settleEach(reply.receipt, reply.deliveries.map(one => MessageOutcome(one.messageId, outcome)))
 
   /**
    * Renew everything named.

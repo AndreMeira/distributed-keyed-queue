@@ -4,7 +4,8 @@ package homelab.keyedqueue.domain.service.validation
 import homelab.keyedqueue.domain.error.InvalidInput
 import homelab.keyedqueue.domain.request.v1.{ DequeueRequest, EnqueueRequest, SettleRequest }
 import homelab.keyedqueue.domain.syntax.Validated
-import homelab.keyedqueue.domain.types.{ MessageKey, QueueName }
+import homelab.keyedqueue.domain.types.{ MessageId, MessageKey, QueueName }
+import zio.Chunk
 import zio.ZIO
 
 
@@ -29,38 +30,55 @@ final class QueueInputValidation:
   /**
    * Everything `Enqueue` needs to be actionable.
    *
-   * The two checks run with `validate` rather than `zipRight`, so a request that names no queue *and* no key
-   * comes back naming both. That is the only reason this is not a pair of `if`s.
+   * The checks run with `validate` rather than `zipRight`, so a request that names no queue *and* no key
+   * comes back naming both. That is the only reason this is not a row of `if`s.
+   *
+   * The id is required because the store keys messages by it: two queued under one id for one key are one
+   * message, and an empty id would collapse every unnamed message on that key into a single entry.
    *
    * @param request what the caller sent
-   * @return noop; accumulates `EmptyQueueName` and `EmptyMessageKey`
+   * @return noop; accumulates `EmptyQueueName`, `EmptyMessageKey` and `EmptyMessageId`
    */
   def parse(request: EnqueueRequest): Validated[Unit] =
-    queue(request.queue).validate(key(request.message.key)).unit
+    queue(request.queue)
+      .validate(key(request.message.key))
+      .validate(CommonValidation.nonEmpty(request.message.messageId, InvalidInput.EmptyMessageId))
+      .unit
 
   /**
    * Everything `Dequeue` needs to be actionable.
    *
-   * Only the queue: how long a caller is willing to wait is clamped rather than refused, because a caller
-   * asking for more patience than the service offers has not made a mistake — see `SyncUseCases.Config`.
+   * The queue, and that the batch size is not negative. How *much* a caller asks for — of patience or of
+   * messages — is clamped rather than refused, because asking for more than the service offers is not a
+   * mistake (see `SyncUseCases.Config`). Asking for a negative amount is.
    *
    * @param request what the caller sent
-   * @return noop; fails with `EmptyQueueName` when no queue is named
+   * @return noop; accumulates `EmptyQueueName` and `NegativeMaxBatch`
    */
   def parse(request: DequeueRequest): Validated[Unit] =
-    queue(request.queue).unit
+    queue(request.queue)
+      .validate(CommonValidation.nonNegative(request.maxBatch, InvalidInput.NegativeMaxBatch))
+      .unit
 
   /**
    * Everything `Settle` needs to be actionable.
    *
-   * Only the discard count. The receipt is not checked here — see the note on this class — and the outcome
-   * is an enum the wire layer has already refused if unspecified.
+   * Only the ids named. The receipt is not checked here — see the note on this class — and each verdict is
+   * an enum the wire layer has already refused if unspecified.
+   *
+   * Whether those ids are actually owned by the claim is deliberately *not* checked: the script looks them
+   * up under the claim, where the answer cannot go stale between the check and the act, and an id it does
+   * not own is simply ignored.
    *
    * @param request what the caller sent
-   * @return noop; fails with `NegativeDiscardAhead` when the count is below zero
+   * @return noop; accumulates `EmptyDiscardId` and `DuplicateDiscardId`
    */
   def parse(request: SettleRequest): Validated[Unit] =
-    CommonValidation.nonNegative(request.discardAhead, InvalidInput.NegativeDiscardAhead).unit
+    val named = request.outcomes.map(_.messageId)
+    ZIO
+      .foreach(named)(id => CommonValidation.nonEmpty(id, InvalidInput.EmptyDiscardId))
+      .validate(distinct(named))
+      .unit
 
   /**
    * A queue must be named.
@@ -79,3 +97,15 @@ final class QueueInputValidation:
    */
   private def key(value: MessageKey): Validated[MessageKey] =
     CommonValidation.nonEmpty(value, InvalidInput.EmptyMessageKey)
+
+  /**
+   * The same id must not be named twice in one discard.
+   *
+   * Harmless to the script — a second `LREM` for an id already gone finds nothing — but a caller that sent
+   * one has miscounted something, and saying so is cheaper than letting it wonder why its numbers disagree.
+   *
+   * @param ids the ids the caller wants dropped
+   * @return them; fails with `DuplicateDiscardId` when one repeats
+   */
+  private def distinct(ids: Chunk[MessageId]): Validated[Chunk[MessageId]] =
+    if ids.distinct.size == ids.size then ZIO.succeed(ids) else ZIO.fail(InvalidInput.DuplicateDiscardId)

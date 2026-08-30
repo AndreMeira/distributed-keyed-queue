@@ -47,19 +47,23 @@ final class ProduceScript(ref: LuaScript.Sha):
    *
    * @param ns the queue to append in
    * @param message the message; the key it carries decides where it lands
-   * @return `ready`, `state`, `msgs`, in the order `lua/produce.lua` reads them
+   * @return `ready`, `state`, `msgs`, `payloads`, in the order `lua/produce.lua` reads them
    */
   private def keys(ns: Namespace, message: Message): Array[String] =
-    Array(ns.ready, ns.state, ns.msgs(message.key))
+    Array(ns.ready, ns.state, ns.msgs(message.key), ns.payloads(message.key))
 
   /**
    * The key to append under, and the message as it will be stored.
    *
    * @param message the message to serialise
-   * @return `key`, `payload`, in the order `lua/produce.lua` reads them
+   * @return `key`, `id`, `payload`, in the order `lua/produce.lua` reads them
    */
   private def args(message: Message): Array[Array[Byte]] =
-    Array(LuaScript.utf8(message.key), StoredMessage.toBytes(message).toArray)
+    Array(
+      LuaScript.utf8(message.key),
+      LuaScript.utf8(message.messageId),
+      StoredMessage.toBytes(message).toArray,
+    )
 
   /**
    * Read the key's depth after the append.

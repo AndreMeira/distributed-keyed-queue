@@ -4,21 +4,21 @@ package homelab.keyedqueue.infrastructure.redis.script
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.Claim
 import homelab.keyedqueue.domain.types.*
-import homelab.keyedqueue.infrastructure.redis.Connection.Commands
 import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
 import io.lettuce.core.ScriptOutputType
 import zio.*
 
 
 /**
- * Settle the in-flight message and decide the key's next state — `lua/complete.lua`.
+ * Settle some of what a claim owns, and release its key when nothing is left owed — `lua/complete.lua`.
  *
- * The script advances the key's fence as well as applying the verdict, so a replayed settle finds its token
- * spent and reports stale rather than acting twice.
+ * '''A claim may be settled piece by piece.''' The token is checked on every call and advanced only when
+ * the claim ends, so it stays good across several settles; what stops one applying twice is that settling
+ * removes the id from the owned set, and removing it again finds nothing.
  *
  * '''The namespace is derived, not passed.''' A [[Claim]] already names its queue, and a caller free to
- * supply a namespace alongside it is a caller free to supply the wrong one — which would settle a claim
- * against another queue's keys.
+ * supply a namespace alongside it is a caller free to supply the wrong one — which would settle against
+ * another queue's keys.
  *
  * @param ref the digest this script was loaded under, from [[Scripts]]
  */
@@ -28,35 +28,33 @@ final class CompleteScript(ref: LuaScript.Sha):
   private val output: ScriptOutputType = ScriptOutputType.INTEGER
 
   /**
-   * Settle the in-flight message and decide the key's next state.
+   * Report what became of some of the claim's messages.
    *
-   * @param claim the claim being settled, and the token that authorises it
-   * @param verdict what became of the message
-   * @param retryAfter how long to hold a failed message back; ignored when the verdict is `Done`
-   * @param discardAhead how many messages behind this one to drop as superseded; `Done` only
+   * @param claim the claim being settled against, and the token that authorises it
+   * @param outcomes what became of each message named, by id
+   * @param retryAfter how long the key should wait before anyone works it again, asked for by a nack;
+   *                   several nacks in one claim leave the longest wait standing
    * @return whether it applied; aborts with `QueueError` when the store fails or the reply cannot be read
    */
   def run(
     claim: Claim,
-    verdict: Verdict,
+    outcomes: Chunk[(MessageId, Verdict)],
     retryAfter: Duration,
-    discardAhead: Int,
   ): ZIO[Connection.Commands, QueueError, Boolean] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking(
-          redis.evalsha[Any](ref, output, keys(claim), args(claim, verdict, retryAfter, discardAhead)*)
-        )
+        .attemptBlocking(redis.evalsha[Any](ref, output, keys(claim), args(claim, outcomes, retryAfter)*))
         .mapError(LuaScript.failure)
         .flatMap(reply => ZIO.fromEither(read(reply)))
 
   /**
-   * Everything a settle can move: the key's state and lease, its fence, both of its message lists, the
-   * ready list a `Done` may put it back on, its attempt count, and the backoff a `Failed` may park it in.
+   * Everything a settle can move: the key's state and lease, its fence, its messages and their payloads,
+   * what the claim still owns, the delivery counts, the ready list it may return to, and the backoff a nack
+   * may park it in.
    *
-   * @param claim the claim being settled, which names the queue these keys belong to
-   * @return `state`, `claimed`, `fence`, `msgs`, `inflight`, `ready`, `attempts`, `delayed`, in the order
-   *         `lua/complete.lua` reads them
+   * @param claim the claim being settled against, which names the queue these keys belong to
+   * @return `state`, `claimed`, `fence`, `msgs`, `payloads`, `owned`, `attempts`, `ready`, `delayed`, in the
+   *         order `lua/complete.lua` reads them
    */
   private def keys(claim: Claim): Array[String] =
     val ns = Namespace(claim.queue)
@@ -65,43 +63,44 @@ final class CompleteScript(ref: LuaScript.Sha):
       ns.claimed,
       ns.fence,
       ns.msgs(claim.key),
-      ns.inflight(claim.key),
-      ns.ready,
+      ns.payloads(claim.key),
+      ns.owned(claim.key),
       ns.attempts,
+      ns.ready,
       ns.delayed,
     )
 
   /**
-   * The key, the token that authorises this transition, the verdict as the script spells it, and the
-   * backoff — which the script ignores unless the verdict is `failed`.
+   * The key, the token that authorises this settle, the backoff, then each message and what became of it.
    *
-   * @param claim the claim being settled, and the token that authorises it
-   * @param verdict what became of the message
-   * @param retryAfter how long to hold a failed message back; ignored when the verdict is `Done`
-   * @param discardAhead how many messages behind this one to drop, counted from the head so a producer's
-   *                     concurrent append cannot be caught by it; the script ignores it unless the verdict
-   *                     is `done`
-   * @return `key`, `token`, `outcome`, `retryAfter`, `discard`, in the order `lua/complete.lua` reads them
+   * Flattened into pairs rather than sent as a structure, because a script's arguments are a flat array —
+   * the script reads them two at a time from position four.
+   *
+   * @param claim the claim being settled against, and the token that authorises it
+   * @param outcomes what became of each message named, by id
+   * @param retryAfter how long the key should wait, asked for by a nack
+   * @return `key`, `token`, `retryAfter`, then `id`, `verdict` repeated, in the order `lua/complete.lua`
+   *         reads them
    */
   private def args(
     claim: Claim,
-    verdict: Verdict,
+    outcomes: Chunk[(MessageId, Verdict)],
     retryAfter: Duration,
-    discardAhead: Int,
   ): Array[Array[Byte]] =
-    Array(
+    val settle = Chunk(
       LuaScript.utf8(claim.key),
       LuaScript.utf8(claim.token.toString),
-      LuaScript.utf8(if verdict == Verdict.Done then "done" else "failed"),
       LuaScript.utf8(retryAfter.toMillis.toString),
-      LuaScript.utf8(discardAhead.toString),
     )
+    val each   = outcomes.flatMap: (id, verdict) =>
+      Chunk(LuaScript.utf8(id), LuaScript.utf8(if verdict == Verdict.Done then "ack" else "nack"))
+    (settle ++ each).toArray
 
   /**
    * Read whether the settle applied.
    *
-   * `0` is not a failure: it means the token was already spent, so the claim had been revoked or settled
-   * before this call arrived. The caller is told, and decides.
+   * `0` is not a failure: it means the token was spent, so the claim had been revoked before this call
+   * arrived. The caller is told, and decides.
    *
    * @param value the raw reply
    * @return whether it applied, or `MalformedReply` when the reply is not an integer

@@ -45,5 +45,5 @@ final class SettleUseCase(store: QueueStore, validation: QueueInputValidation):
       case None        => ZIO.succeed(SettleResponse(Applied.Stale))
       case Some(claim) =>
         store
-          .settle(claim, request.outcome, request.retryAfter, request.discardAhead)
+          .settle(claim, request.outcomes.map(one => one.messageId -> one.outcome), request.retryAfter)
           .map(applied => SettleResponse(if applied then Applied.Ok else Applied.Stale))

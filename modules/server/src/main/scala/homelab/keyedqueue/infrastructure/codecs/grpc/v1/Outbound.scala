@@ -34,7 +34,16 @@ object Outbound:
 
   private given Transformer[QueueName, String]  = identity(_)
   private given Transformer[MessageKey, String] = identity(_)
-  private given Transformer[ClaimRef, String]   = identity(_)
+  private given Transformer[MessageId, String]  = identity(_)
+
+  // proto3 has no presence for a scalar, so absence is the empty string — which is what "no claim" looks
+  // like on the wire, and why `deliveries` being empty says the same thing.
+  private given Transformer[Option[ClaimRef], String] = _.getOrElse(ClaimRef(""))
+
+  // Likewise for the lease: no claim, no deadline.
+  private given Transformer[Option[Instant], Option[Timestamp]] =
+    _.map(instant => Timestamp(instant.getEpochSecond, instant.getNano))
+  private given Transformer[ClaimRef, String]                   = identity(_)
 
   private given Transformer[Chunk[Byte], ByteString] =
     bytes => ByteString.copyFrom(bytes.toArray)

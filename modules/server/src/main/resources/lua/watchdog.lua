@@ -14,7 +14,7 @@
 -- Idempotent, so every pod can run it and no leader election is needed. Bounded by `limit` because a script
 -- blocks the whole server — whatever is left over is picked up by the next sweep.
 --
--- `msgs`, `inflight` and `claiming` are built here rather than declared in KEYS, because which keys and
+-- `owned` and `claiming` are built here rather than declared in KEYS, because which keys and
 -- workers have expired is not known until the range queries run. That is only safe because every name shares
 -- the `prefix` hash tag and therefore one cluster slot.
 local claimed, state, ready, fence, workers, delayed =
@@ -25,12 +25,15 @@ local now = redis.call('TIME')
 now = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
 
 -- (1) A worker went silent while holding a claim: the key is in no list, so `claimed` is the only record.
+-- Its messages never left `msgs`, so all that is revoked here is the ownership.
 local expired = redis.call('ZRANGEBYSCORE', claimed, '-inf', now, 'LIMIT', 0, limit)
 
 for _, key in ipairs(expired) do
-  -- Back to the HEAD of the key's FIFO: a retry must not reorder the key it belongs to. The attempt count
-  -- is left alone on purpose — a reclaim IS a delivery that did not finish, and it should show.
-  redis.call('LMOVE', prefix .. ':inflight:' .. key, prefix .. ':msgs:' .. key, 'RIGHT', 'LEFT')
+  -- Nothing to move. A claim owns messages without taking them out of the key's list, so recovering one is
+  -- a matter of forgetting the ownership — the messages are already where they belong, in producer order.
+  -- The attempt counts are left alone on purpose: a reclaim IS a delivery that did not finish, and it
+  -- should show.
+  redis.call('DEL', prefix .. ':owned:' .. key)
 
   -- Revoking the claim invalidates the token, so the silent worker's settle is rejected even if nobody has
   -- claimed the key yet. Without this, a zombie finishing late would re-queue an already-queued key.
@@ -38,7 +41,14 @@ for _, key in ipairs(expired) do
 
   redis.call('ZREM', claimed, key)
   redis.call('HSET', state, key, 'queued')
-  redis.call('RPUSH', ready, key)
+
+  -- Not if a nack asked the key to wait. A claim may be settled piece by piece, so a nack can set a backoff
+  -- and leave the claim alive — and if that claim then expires, pushing here as well would put the key on
+  -- `ready` twice: once now, once when sweep (3) finds the backoff due. Two entries mean two claimers, and
+  -- although the fence stops the loser corrupting anything, it does the work for nothing.
+  if redis.call('ZSCORE', delayed, key) == false then
+    redis.call('RPUSH', ready, key)
+  end
 end
 
 -- (2) A worker died between its BLMOVE and consume.lua: the key is in that worker's claiming list, still

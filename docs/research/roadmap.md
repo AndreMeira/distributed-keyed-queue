@@ -2,7 +2,7 @@
 title: "From POC to implementation — a working order, and why it is in this order"
 type: research
 status: draft
-updated: 2026-08-23
+updated: 2026-08-30
 tags: [roadmap, sequencing, connection, streaming, persistence, distributed, exploration]
 ---
 
@@ -127,8 +127,19 @@ phase's price rather than as an implementation detail discovered later.
   *effective* workers on one key; nothing lost when a worker is killed mid-handler; a poison message does not
   wedge its key forever. Every later phase must pass it unchanged. This one artefact is what turns "swap the
   substrate" from a hope into a claim.
-- **Dead-letter and attempt limits.** API-visible, and urgent because per-key ordering means a permanently
-  failing message blocks every later message for that key. Clients need to know what happens to it.
+
+  Two of those four now mean something narrower than when this was written, because a claim covers a
+  **batch** of a key's messages rather than one. "Never two workers on one key" is still enforced — the key
+  is what is owned — but *within* a batch, working one message at a time is the consumer's discipline rather
+  than something the store can refuse. And "per-key order" now means the order messages are handed out: a
+  nacked message is retried after later ones a consumer chose to process, because a nack no longer blocks
+  what is behind it. That was a deliberate trade
+  ([`look-ahead-and-discard.md`](look-ahead-and-discard.md)), and the suite should assert the guarantee that
+  was actually chosen rather than the one this line originally described.
+- **Dead-letter and attempt limits.** API-visible, and *no longer urgent*: a nacked message stays where it
+  is and later messages for its key are handed out past it, so a permanently failing message cycles rather
+  than wedging its key. `attempts` is per message id and climbs on every redelivery, so the signal a policy
+  would read is already there — what is missing is somewhere to put a message once the count is too high.
 - **Observability** via `homelab-telemetry`: queue depth, age of the oldest ready message, reclaim rate,
   fencing-token rejections. Reclaim rate is the number that says whether the lease and heartbeat are tuned
   sanely; oldest-ready age is the one that catches every missed-wake-up bug at once, whatever its cause.

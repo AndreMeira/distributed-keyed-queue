@@ -32,6 +32,22 @@ object MessageKey:
   def apply(value: String): Type = value
 
 
+/** A message's own name, unique among those queued for its key: what a discard, or a dedupe, addresses. */
+type MessageId = MessageId.Type
+
+
+object MessageId:
+  opaque type Type <: String = String
+
+  /**
+   * A message id, trusted.
+   *
+   * @param value the id as the producer sent it
+   * @return the message id
+   */
+  def apply(value: String): Type = value
+
+
 /** A claim's generation. A token authorises exactly one transition: grant, revoke and settle all advance it. */
 type Token = Token.Type
 
