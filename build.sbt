@@ -10,7 +10,7 @@ val zioVersion            = "2.1.23"
 val toolkitVersion        = "0.0.1-alpha"
 val scalapbVersion        = "0.11.17"       // keep in sync with compilerplugin in project/plugins.sbt
 val zioGrpcVersion        = "0.6.3"
-val grpcVersion           = "1.64.0"        // must match the grpc-core zio-grpc pulls, not scalapb's
+val grpcVersion           = "1.83.1"        // must match the grpc-core zio-grpc pulls, not scalapb's
 val nettyVersion          = "4.1.100.Final" // grpc-netty 1.64 is built against this; see the overrides below
 val lettuceVersion        = "6.7.1.RELEASE"
 val typesafeConfigVersion = "1.4.9"
@@ -104,10 +104,10 @@ ThisBuild / dependencyOverrides ++= Seq(
  * The service proto is excluded from generation here rather than moved away; it stays on protoc's include
  * path, which is how `protocolZioGrpc` resolves its import of the messages.
  */
-lazy val protocolWire = project
-  .in(file("modules/protocol-wire"))
+lazy val protocol = project
+  .in(file("modules/protocol"))
   .settings(
-    name                                := "distributed-keyed-queue-protocol-wire",
+    name                                := "distributed-keyed-queue-protocol",
     // Everything under `protobuf` except the service: the messages are what this artifact is.
     Compile / PB.generate / excludeFilter := "*_service.proto",
     Compile / PB.targets := Seq(
@@ -118,7 +118,8 @@ lazy val protocolWire = project
     ),
     libraryDependencies ++= Seq(
       "com.thesamet.scalapb" %% "scalapb-runtime" % scalapbVersion,
-      // unpacks scalapb.proto onto protoc's include path, for the package-remap option
+      // unpacks scalapb.proto onto protoc's include path, so the `option (scalapb.options)` in the
+      // .proto files resolves
       "com.thesamet.scalapb" %% "scalapb-runtime" % scalapbVersion % "protobuf",
     ),
   )
@@ -127,9 +128,9 @@ lazy val protocolWire = project
 /**
  * The ZIO-native stubs for the service, and nothing else.
  *
- * '''No sources of its own.''' It generates from `protocolWire`'s protos, taking the service definition and
+ * '''No sources of its own.''' It generates from `protocol`'s protos, taking the service definition and
  * leaving the messages — which stay on protoc's include path so the import resolves, and stay in
- * `protocolWire`'s jar so a consumer never has two copies of a message class on its classpath.
+ * `protocol`'s jar so a consumer never has two copies of a message class on its classpath.
  *
  * This is what an RPC consumer depends on, and the end-to-end suite proves it is enough on its own — it
  * drives the deployment with this module and a transport, nothing else. It carries no transport itself,
@@ -137,11 +138,11 @@ lazy val protocolWire = project
  */
 lazy val protocolZioGrpc = project
   .in(file("modules/protocol-zio-grpc"))
-  .dependsOn(protocolWire)
+  .dependsOn(protocol)
   .settings(
     name                                := "distributed-keyed-queue-protocol-zio-grpc",
-    Compile / PB.protoSources           := Seq((protocolWire / Compile / sourceDirectory).value / "protobuf"),
-    // The mirror of the exclusion in `protocolWire`: between them, every proto is generated exactly once.
+    Compile / PB.protoSources           := Seq((protocol / Compile / sourceDirectory).value / "protobuf"),
+    // The mirror of the exclusion in `protocol`: between them, every proto is generated exactly once.
     Compile / PB.generate / includeFilter := "*_service.proto",
     Compile / PB.targets       := Seq(
       scalapb.gen(grpc = true)          -> (Compile / sourceManaged).value / "scalapb",
@@ -151,7 +152,8 @@ lazy val protocolZioGrpc = project
       "dev.zio"                       %% "zio"                  % zioVersion,
       "com.thesamet.scalapb"          %% "scalapb-runtime-grpc" % scalapbVersion,
       "com.thesamet.scalapb.zio-grpc" %% "zio-grpc-core"        % zioGrpcVersion,
-      // unpacks scalapb.proto onto protoc's include path, for the package-remap option
+      // unpacks scalapb.proto onto protoc's include path, so the `option (scalapb.options)` in the
+      // .proto files resolves
       "com.thesamet.scalapb"          %% "scalapb-runtime"      % scalapbVersion % "protobuf",
     ),
   )
@@ -216,7 +218,7 @@ lazy val server = project
  */
 lazy val root = project
   .in(file("."))
-  .aggregate(protocolWire, protocolZioGrpc, server)
+  .aggregate(protocol, protocolZioGrpc, server)
   .settings(
     name           := "distributed-keyed-queue",
     publish / skip := true,

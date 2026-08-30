@@ -18,9 +18,13 @@ What is specific to this repo:
     even while the thing it tests is not.
 
   And in `learning-material/`:
-  [`redis-state-walkthrough.md`](learning-material/redis-state-walkthrough.md) traces every request through
-  the structures it touches — the page to read when something is stuck and you are looking at a live
-  instance.
+  - [`redis-state-walkthrough.md`](learning-material/redis-state-walkthrough.md) — every request traced
+    through the structures it touches; the page for when something is stuck and you are looking at a live
+    instance.
+  - [`proto-generation.md`](learning-material/proto-generation.md) — how two published artifacts are
+    generated from one set of `.proto` files, and what breaks if that is rearranged.
+  - [`writing-end-to-end-tests.md`](learning-material/writing-end-to-end-tests.md) — what the e2e suite
+    taught about measuring and asserting against a real deployment.
 - **The problem statement lives outside this repo**, in `research/infrastructure/homelab-message-broker.md`
   and its transport companion: they precede this code and are not only about it. Rationale that *is* only
   about this repo goes in [`research/`](research/).

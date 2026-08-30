@@ -6,8 +6,9 @@
 # is driven by the Release, and `workflow_dispatch` is there to re-run one by hand if a publish fails after
 # the release already exists.
 #
-# Only `protocol` goes out: `server` ships as a Docker image and `root`/`e2e` build nothing a consumer
-# wants, so all three set `publish / skip` in build.sbt.
+# Two artifacts go out — `protocol` (the message types) and `protocol-zio-grpc` (the RPC stubs). `server`
+# ships as a Docker image and `root`/`e2e` build nothing a consumer wants, so all three set `publish / skip`
+# in build.sbt.
 name: release
 
 on:
