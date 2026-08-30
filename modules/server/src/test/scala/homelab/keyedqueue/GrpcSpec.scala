@@ -58,7 +58,14 @@ object GrpcSpec extends ZIOSpecDefault:
 
   /** Settle every message a claim handed over, with the same verdict. */
   private def settle(reply: DequeueResponse, outcome: Outcome): SettleRequest =
-    SettleRequest(reply.receipt, outcomes = reply.deliveries.map(d => MessageOutcome(d.messageId, outcome)))
+    SettleRequest(reply.receipt, outcomes = claimed(reply).map(d => MessageOutcome(d.messageId, outcome)))
+
+  /** Everything a claim handed over, head first — the shape a consumer actually iterates. */
+  private def claimed(reply: DequeueResponse): Seq[Delivery] = reply.head.toSeq ++ reply.tail
+
+  /** What a claim is carrying, as text, in the order it was handed over. */
+  private def bodies(reply: DequeueResponse): Seq[String] =
+    claimed(reply).flatMap(_.message).map(_.payload.toStringUtf8)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("KeyedQueue over gRPC")(
     test("enqueue, dequeue, settle — the loop a consumer writes") {
@@ -69,12 +76,12 @@ object GrpcSpec extends ZIOSpecDefault:
         settled <- client.settle(settle(reply, Outcome.OUTCOME_DONE))
         empty   <- client.dequeue(DequeueRequest("jobs", Some(ProtoDuration(seconds = 1))))
       yield assertTrue(
-        reply.deliveries.map(_.message.map(_.payload.toStringUtf8)) == Seq(Some("hello")),
-        reply.deliveries.map(_.attempt) == Seq(1),
+        bodies(reply) == Seq("hello"),
+        reply.head.map(_.attempt) == Some(1),
         reply.receipt.nonEmpty,
         reply.leaseExpiresAt.isDefined,
         settled.applied == Applied.APPLIED_OK,
-        empty.deliveries.isEmpty, // the queue is drained, and a timeout is an empty response, not an error
+        empty.head.isEmpty, // the queue is drained, and a timeout is an empty response, not an error
       )
     },
     test("a claim hands over a batch, and each message is settled by name") {
@@ -85,10 +92,10 @@ object GrpcSpec extends ZIOSpecDefault:
         settled <- client.settle(settle(reply, Outcome.OUTCOME_DONE))
         next    <- client.dequeue(DequeueRequest("batch", Some(ProtoDuration(seconds = 2))))
       yield assertTrue(
-        reply.deliveries.map(_.message.map(_.payload.toStringUtf8)) == Seq(Some("v1"), Some("v2"), Some("v3")),
+        bodies(reply) == Seq("v1", "v2", "v3"),
         reply.backlogDepth == 3 - 3 + 1, // v4, still queued behind the batch
         settled.applied == Applied.APPLIED_OK,
-        next.deliveries.map(_.message.map(_.payload.toStringUtf8)) == Seq(Some("v4")),
+        bodies(next) == Seq("v4"),
       )
     },
     test("a consumer can settle part of its batch and keep the rest") {
@@ -98,17 +105,17 @@ object GrpcSpec extends ZIOSpecDefault:
         client  <- ZIO.service[KeyedQueueClient]
         _       <- ZIO.foreachDiscard(1 to 3)(n => client.enqueue(EnqueueRequest("partial", Some(message("k1", s"v$n")))))
         reply   <- client.dequeue(DequeueRequest("partial", Some(ProtoDuration(seconds = 2)), maxBatch = 3))
-        ids      = reply.deliveries.map(_.messageId)
+        ids      = claimed(reply).map(_.messageId)
         // v1 and v2 are superseded by v3, so they are acknowledged without being worked.
-        partial <- client.settle(SettleRequest(reply.receipt, outcomes = ids.take(2).map(done)))
+        partial <- client.settle(SettleRequest(reply.receipt, outcomes = ids.take(2).map(done).toSeq))
         // Still owed v3, so nobody else may have the key.
         blocked <- client.dequeue(DequeueRequest("partial", Some(ProtoDuration(seconds = 1))))
-        _       <- client.settle(SettleRequest(reply.receipt, outcomes = ids.drop(2).map(done)))
+        _       <- client.settle(SettleRequest(reply.receipt, outcomes = ids.drop(2).map(done).toSeq))
         drained <- client.dequeue(DequeueRequest("partial", Some(ProtoDuration(seconds = 1))))
       yield assertTrue(
         partial.applied == Applied.APPLIED_OK,
-        blocked.deliveries.isEmpty, // the claim was still alive
-        drained.deliveries.isEmpty, // and by then there was nothing left
+        blocked.head.isEmpty, // the claim was still alive
+        drained.head.isEmpty, // and by then there was nothing left
       )
     },
     test("a settle replayed with the same receipt is harmless, and one after the claim ends is stale") {

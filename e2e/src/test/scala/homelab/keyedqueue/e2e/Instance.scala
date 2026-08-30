@@ -88,7 +88,7 @@ final case class Instance(name: String, address: String, client: KeyedQueueClien
    * @return whether it applied, or was refused as stale; fails when the call does
    */
   def settle(reply: DequeueResponse, outcome: Outcome = Outcome.OUTCOME_DONE): Task[Applied] =
-    settleEach(reply.receipt, reply.deliveries.map(one => MessageOutcome(one.messageId, outcome)))
+    settleEach(reply.receipt, Instance.claimed(reply).map(one => MessageOutcome(one.messageId, outcome)))
 
   /**
    * Renew everything named.
@@ -98,3 +98,17 @@ final case class Instance(name: String, address: String, client: KeyedQueueClien
    */
   def heartbeat(receipts: Seq[String]): Task[HeartbeatResponse] =
     client.heartbeat(HeartbeatRequest(receipts))
+
+
+object Instance:
+
+  /**
+   * Everything a claim handed over, head first.
+   *
+   * The response keeps the first message apart from the rest, so that "did I get anything" is one question
+   * and not an emptiness check. A test that wants to iterate wants them back together.
+   *
+   * @param reply what the dequeue returned
+   * @return the messages, in producer order; empty when nothing was claimed
+   */
+  def claimed(reply: DequeueResponse): Seq[Delivery] = reply.head.toSeq ++ reply.tail

@@ -38,10 +38,10 @@ object EndToEndSpec extends ZIOSpecDefault:
         applied  <- dkq.b.settle(delivery)
         drained  <- dkq.a.dequeue(dkq.queue("roundtrip"), 1.second)
       yield assertTrue(
-        delivery.deliveries.flatMap(_.message).map(_.payload.toStringUtf8).contains("hello"),
-        delivery.deliveries.map(_.attempt).contains(1),
+        Instance.claimed(delivery).flatMap(_.message).map(_.payload.toStringUtf8).contains("hello"),
+        delivery.head.map(_.attempt).contains(1),
         applied == Applied.APPLIED_OK,
-        drained.deliveries.isEmpty, // and settling on b really removed it, as seen from a
+        drained.head.isEmpty, // and settling on b really removed it, as seen from a
       )
     },
     test("a dequeue parked on one instance is woken by an enqueue on the other") {
@@ -55,7 +55,7 @@ object EndToEndSpec extends ZIOSpecDefault:
         (elapsed, delivery) <- parked.join
         _                   <- dkq.a.settle(delivery)
       yield assertTrue(
-        delivery.deliveries.flatMap(_.message).map(_.payload.toStringUtf8).contains("wake up"),
+        Instance.claimed(delivery).flatMap(_.message).map(_.payload.toStringUtf8).contains("wake up"),
         elapsed >= 1900.millis, // it really blocked, rather than finding the message already there
         elapsed <= 10.seconds,  // and it was woken, rather than waiting out its 20
       )
@@ -103,9 +103,9 @@ object EndToEndSpec extends ZIOSpecDefault:
         again   <- dkq.a.dequeue(dkq.queue("death"), 25.seconds)
         applied <- dkq.a.settle(again)
       yield assertTrue(
-        held.deliveries.map(_.attempt).contains(1),
-        again.deliveries.flatMap(_.message).map(_.payload.toStringUtf8).contains("survive me"),
-        again.deliveries.map(_.attempt).contains(2), // counted, which is what a poison-message policy will read
+        held.head.map(_.attempt).contains(1),
+        Instance.claimed(again).flatMap(_.message).map(_.payload.toStringUtf8).contains("survive me"),
+        again.head.map(_.attempt).contains(2), // counted, which is what a poison-message policy will read
         applied == Applied.APPLIED_OK,
       )
     } @@ TestAspect.after(Compose.revive("dkq-b").orDie) @@ TestAspect.ifEnvNotSet("DKQ_E2E_ENDPOINTS"),
@@ -120,7 +120,7 @@ object EndToEndSpec extends ZIOSpecDefault:
         beating <- dkq.a.heartbeat(Seq(receipt)).repeat(Schedule.spaced(lease.dividedBy(3))).fork
         _       <- ZIO.sleep(lease.multipliedBy(3))
         _       <- beating.interrupt
-        applied <- dkq.a.settleEach(receipt, held.deliveries.map(one => MessageOutcome(one.messageId, Outcome.OUTCOME_DONE)))
+        applied <- dkq.a.settle(held)
       yield assertTrue(applied == Applied.APPLIED_OK)
     },
     test("a claim held in silence is reclaimed, and its settle refused") {
@@ -136,7 +136,7 @@ object EndToEndSpec extends ZIOSpecDefault:
         _       <- dkq.b.settle(again)
       yield assertTrue(
         applied == Applied.APPLIED_STALE, // the fence moved on: this outcome is discarded, not applied
-        again.deliveries.map(_.attempt).contains(2), // and the message is somebody else's now
+        again.head.map(_.attempt).contains(2), // and the message is somebody else's now
       )
     },
     test("a batch claimed on one instance is settled message by message, and its key waits for the last") {
@@ -148,8 +148,8 @@ object EndToEndSpec extends ZIOSpecDefault:
         queue    = dkq.queue("batch")
         _       <- ZIO.foreachDiscard(1 to 3)(n => dkq(0).enqueue(queue, "k1", s"v$n"))
         held    <- dkq(0).dequeue(queue, 2.seconds, maxBatch = 3)
-        ids      = held.deliveries.map(_.messageId)
-        bodies   = held.deliveries.map(one => one.message.map(_.payload.toStringUtf8))
+        ids      = Instance.claimed(held).map(_.messageId)
+        bodies   = Instance.claimed(held).map(one => one.message.map(_.payload.toStringUtf8))
         // v1 and v2 are superseded by v3; acknowledged without being worked.
         _       <- dkq(0).settleEach(held.receipt, ids.take(2).map(MessageOutcome(_, Outcome.OUTCOME_DONE)))
         // Still owed v3, so the other instance cannot have the key.
@@ -159,8 +159,8 @@ object EndToEndSpec extends ZIOSpecDefault:
       yield assertTrue(
         bodies == Seq(Some("v1"), Some("v2"), Some("v3")), // producer order, across the deployment
         held.backlogDepth == 0,
-        blocked.deliveries.isEmpty, // the claim was still alive on the other instance
-        drained.deliveries.isEmpty, // and by then the key was empty
+        blocked.head.isEmpty, // the claim was still alive on the other instance
+        drained.head.isEmpty, // and by then the key was empty
       )
     },
     test("under load nothing is lost, nothing is delivered twice, and every key keeps its order") {

@@ -123,6 +123,20 @@ final class ConsumeScript(ref: LuaScript.Sha):
         Claimed.Owned(MessageId(ids(index)), messages(index), attempts(index).toInt)
 
   /**
+   * A claim over nothing is not a claim.
+   *
+   * The script answers with absence rather than an empty batch, so an empty one here means the script and
+   * this adapter disagree — which is a malformed reply, not a claim of no messages.
+   *
+   * @param batch what was read out of the reply
+   * @return the same messages, known to be at least one
+   */
+  private def nonEmpty(batch: Chunk[Claimed.Owned]): LuaScript.Decode.Of[NonEmptyChunk[Claimed.Owned]] =
+    NonEmptyChunk.fromChunk(batch) match
+      case Some(messages) => LuaScript.Decode.succeed(messages)
+      case None           => LuaScript.Decode.fail(QueueError.MalformedReply("consume granted a claim over no messages"))
+
+  /**
    * The shape the script promises: `{token, deadline, backlog, ids, messages, attempts}` when it granted a
    * claim, and absence when the key had nothing left.
    *
@@ -144,9 +158,10 @@ final class ConsumeScript(ref: LuaScript.Sha):
           ids      <- LuaScript.Decode.text.each.at(3)
           messages <- LuaScript.Decode.bytes.emap(StoredMessage.fromBytes).each.at(4)
           attempts <- LuaScript.Decode.long.each.at(5)
+          batch    <- nonEmpty(owned(ids, messages, attempts))
         yield Claimed(
           Claim(ns.queue, key, Token(token)),
-          owned(ids, messages, attempts),
+          batch,
           Instant.ofEpochMilli(deadline),
           backlog.toInt,
         )

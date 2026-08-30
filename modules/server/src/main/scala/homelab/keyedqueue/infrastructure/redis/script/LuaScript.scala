@@ -185,6 +185,29 @@ object LuaScript:
         case other                     => Left(malformed(path, "an array", other))
 
     /**
+     * A decoder that reads nothing and answers with this.
+     *
+     * With [[Of.flatMap]], what makes a `for` comprehension able to check something the reply cannot state
+     * for itself — a shape the script promises but the types do not.
+     *
+     * @param value the answer
+     * @tparam A what it means
+     * @return the decoder
+     */
+    def succeed[A](value: A): Of[A] = (_, _) => Right(value)
+
+    /**
+     * A decoder that reads nothing and refuses.
+     *
+     * The other half of [[succeed]]: the branch a check takes when the reply is not what the script
+     * promised, at a point where nothing is left to read.
+     *
+     * @param problem what was wrong with it
+     * @return the decoder
+     */
+    def fail(problem: QueueError): Of[Nothing] = (_, _) => Left(problem)
+
+    /**
      * An array reply of exactly `arity` elements.
      *
      * A script returning the wrong number of elements is a script and an adapter that disagree, and saying

@@ -29,13 +29,16 @@ final case class EnqueueResponse(keyDepth: Long)
  * The outcome of a wait: a claim over some of one key's messages, or nothing.
  *
  * @param receipt the claim every settle for these messages names, when there was one
- * @param deliveries what the consumer may work, oldest first; empty when none became ready in time
+ * @param head the message to work — present exactly when a claim was granted, so this and not an empty
+ *             list is what says whether the wait found anything
+ * @param tail the rest of the batch, in producer order after `head`
  * @param leaseExpiresAt when the whole claim lapses unless renewed
  * @param backlogDepth how many more were queued for this key behind the batch
  */
 final case class DequeueResponse(
   receipt: Option[ClaimRef],
-  deliveries: Chunk[Delivery],
+  head: Option[Delivery],
+  tail: Chunk[Delivery],
   leaseExpiresAt: Option[Instant],
   backlogDepth: Int,
 )

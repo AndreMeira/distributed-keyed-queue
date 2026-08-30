@@ -57,11 +57,15 @@ message DequeueResponse {
   // The claim, and the handle every settle for these messages names. Empty when nothing became ready in
   // time, which is NOT an error.
   string                    receipt          = 1;
-  repeated Delivery         deliveries       = 2;  // producer order; empty when there was no claim
-  google.protobuf.Timestamp lease_expires_at = 3;  // when the whole claim lapses unless renewed
+  // The message to work. Present exactly when a claim was granted — so this, not an empty list, is what a
+  // consumer tests to find out whether it got anything.
+  Delivery                  head             = 2;
+  // The rest of the batch, if more than one was asked for, in producer order after `head`.
+  repeated Delivery         tail             = 3;
+  google.protobuf.Timestamp lease_expires_at = 4;  // when the whole claim lapses unless renewed
   // How many more were queued for this key behind the batch. A lower bound: producers may append while the
   // claim is held, and nothing else may take from it.
-  uint32                    backlog_depth    = 4;
+  uint32                    backlog_depth    = 5;
 }
 
 message Delivery {
@@ -85,14 +89,13 @@ enum Applied {
 
 message SettleRequest {
   string                   receipt     = 1;
-  reserved 2, 4;                             // was a single `outcome`, and a `discard_ahead` count
-  google.protobuf.Duration retry_after = 3;  // a nack asking the KEY to wait; zero means immediately
+  google.protobuf.Duration retry_after = 2;  // a nack asking the KEY to wait; zero means immediately
   // What became of each message named. A claim may be settled piece by piece: naming some leaves the rest
   // owed, and the claim ends — releasing the key — once nothing is.
   //
   // An id this claim does not own is ignored rather than refused, which is also what makes a retried settle
   // harmless.
-  repeated MessageOutcome  outcomes    = 5;
+  repeated MessageOutcome  outcomes    = 3;
 }
 
 // What a consumer did with one message of its batch.

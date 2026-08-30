@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.model
 
 
 import homelab.keyedqueue.domain.types.MessageId
-import zio.Chunk
+import zio.NonEmptyChunk
 
 import java.time.Instant
 
@@ -18,13 +18,14 @@ import java.time.Instant
  * therefore puts nothing back, and a consumer that dies loses only the acknowledgements it had not sent.
  *
  * @param claim which key, in which queue, under which generation
- * @param messages what it may work, oldest first
+ * @param messages what it may work, oldest first. Never empty: a claim over nothing is not a claim, and
+ *                 the store answers with nothing at all rather than with an empty one
  * @param leaseExpiresAt when the claim lapses unless renewed, on the store's clock
  * @param backlogDepth how many more were queued for this key, behind the batch
  */
 final case class Claimed(
   claim: Claim,
-  messages: Chunk[Claimed.Owned],
+  messages: NonEmptyChunk[Claimed.Owned],
   leaseExpiresAt: Instant,
   backlogDepth: Int,
 )

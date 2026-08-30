@@ -66,11 +66,13 @@ final class DequeueUseCase(
   private def response(claimed: Option[Claimed]): DequeueResponse =
     claimed match {
       case Some(batch) =>
+        val delivered = batch.messages.map(owned => Delivery(owned.id, owned.message, owned.attempt))
         DequeueResponse(
           Some(batch.claim.reference),
-          batch.messages.map(owned => Delivery(owned.id, owned.message, owned.attempt)),
+          Some(delivered.head),
+          Chunk.fromIterable(delivered.tail),
           Some(batch.leaseExpiresAt),
           batch.backlogDepth,
         )
-      case None        => DequeueResponse(None, Chunk.empty, None, 0)
+      case None        => DequeueResponse(None, None, Chunk.empty, None, 0)
     }

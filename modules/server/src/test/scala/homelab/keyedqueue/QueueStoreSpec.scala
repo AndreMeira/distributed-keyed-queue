@@ -63,10 +63,10 @@ object QueueStoreSpec extends ZIOSpecDefault:
   private def cargo(message: Message): String = String(message.payload.toArray, "UTF-8")
 
   /** What a batch is carrying, as text, in the order it was handed over. */
-  private def body(batch: Claimed): Chunk[String] = batch.messages.map(owned => cargo(owned.message))
+  private def body(batch: Claimed): Chunk[String] = batch.messages.map(owned => cargo(owned.message)).toChunk
 
   /** Acknowledge everything a batch owns. */
-  private def acks(batch: Claimed): Chunk[(MessageId, Verdict)] = batch.messages.map(_.id -> Verdict.Done)
+  private def acks(batch: Claimed): Chunk[(MessageId, Verdict)] = batch.messages.map(_.id -> Verdict.Done).toChunk
 
   /** Claim exactly one message, for the tests that are not about batching. */
   private def one(store: QueueStore, queue: QueueName): ZIO[Any, QueueError, Option[Claimed]] =
@@ -80,7 +80,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
 
   /** Report a whole batch as failed. */
   private def nack(store: QueueStore)(batch: Claimed): ZIO[Any, QueueError, Boolean] =
-    store.settle(batch.claim, batch.messages.map(_.id -> Verdict.Failed), Duration.Zero)
+    store.settle(batch.claim, batch.messages.map(_.id -> Verdict.Failed).toChunk, Duration.Zero)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueStore over Redis")(
     test("a key's messages are delivered oldest first") {
@@ -149,7 +149,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
       yield assertTrue(
         held.map(body) == Some(Chunk("a", "b", "c")),
         held.map(_.backlogDepth) == Some(1), // d, still queued
-        held.map(_.messages.map(_.attempt)) == Some(Chunk(1, 1, 1)),
+        held.map(_.messages.map(_.attempt).toChunk) == Some(Chunk(1, 1, 1)),
       )
     },
     test("a batch larger than the key holds returns what there is") {
@@ -193,8 +193,8 @@ object QueueStoreSpec extends ZIOSpecDefault:
         _              <- worker.settle(batch.claim, Chunk(by("3") -> Verdict.Failed), Duration.Zero)
         again          <- worker.claim(queue, 2.seconds, maxBatch = 5)
       yield assertTrue(
-        again.map(body) == Some(Chunk("2", "3", "5")),               // producer order, whatever order they were settled in
-        again.map(_.messages.map(_.attempt)) == Some(Chunk(2, 2, 1)), // the nacked ones carry their count
+        again.map(body) == Some(Chunk("2", "3", "5")),                       // producer order, whatever order they were settled in
+        again.map(_.messages.map(_.attempt).toChunk) == Some(Chunk(2, 2, 1)), // the nacked ones carry their count
       )
     },
     test("a settle naming a message the claim does not own changes nothing") {

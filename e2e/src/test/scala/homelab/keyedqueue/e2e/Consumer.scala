@@ -82,7 +82,7 @@ object Consumer:
       .flatMap: reply =>
         // One message at a time: this consumer exists to exercise per-key exclusivity, and a batch would
         // put several of one key's messages in its hands at once — a different property, tested elsewhere.
-        reply.deliveries.headOption match
+        reply.head match
           case None           => ZIO.succeed(handled)
           case Some(delivery) =>
             for
