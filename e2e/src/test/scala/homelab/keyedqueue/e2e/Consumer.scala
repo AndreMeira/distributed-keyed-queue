@@ -79,24 +79,27 @@ object Consumer:
   ): Task[Int] =
     instance
       .dequeue(queue, patience)
-      .flatMap:
-        case None           => ZIO.succeed(handled)
-        case Some(delivery) =>
-          for
-            claimedAt  <- Clock.instant
-            _          <- ZIO.sleep(hold).when(hold > Duration.Zero)
-            releasedAt <- Clock.instant
-            message     = delivery.message
-            _          <- into.update(
-                            _ :+ Handled(
-                              instance = instance.name,
-                              key = message.map(_.key).getOrElse(""),
-                              body = message.map(_.payload.toStringUtf8).getOrElse(""),
-                              attempt = delivery.attempt,
-                              claimedAt = claimedAt,
-                              releasedAt = releasedAt,
+      .flatMap: reply =>
+        // One message at a time: this consumer exists to exercise per-key exclusivity, and a batch would
+        // put several of one key's messages in its hands at once — a different property, tested elsewhere.
+        reply.head match
+          case None           => ZIO.succeed(handled)
+          case Some(delivery) =>
+            for
+              claimedAt  <- Clock.instant
+              _          <- ZIO.sleep(hold).when(hold > Duration.Zero)
+              releasedAt <- Clock.instant
+              message     = delivery.message
+              _          <- into.update(
+                              _ :+ Handled(
+                                instance = instance.name,
+                                key = message.map(_.key).getOrElse(""),
+                                body = message.map(_.payload.toStringUtf8).getOrElse(""),
+                                attempt = delivery.attempt,
+                                claimedAt = claimedAt,
+                                releasedAt = releasedAt,
+                              )
                             )
-                          )
-            _          <- instance.settle(delivery.receipt)
-            total      <- step(instance, queue, patience, hold, into, handled + 1)
-          yield total
+              _          <- instance.settle(reply)
+              total      <- step(instance, queue, patience, hold, into, handled + 1)
+            yield total

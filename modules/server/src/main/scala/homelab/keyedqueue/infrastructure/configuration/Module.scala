@@ -28,7 +28,7 @@ object Module:
    * @return the layer
    */
   val syncUseCases: ZLayer[QueueConfig, Nothing, SyncUseCases.Config] =
-    ZLayer.fromFunction((config: QueueConfig) => SyncUseCases.Config(config.maxWait))
+    ZLayer.fromFunction((config: QueueConfig) => SyncUseCases.Config(config.maxWait, config.maxBatchLimit))
 
   /**
    * The slice of it the repair loop is allowed to know.

@@ -27,6 +27,7 @@ object QueueConfigSpec extends ZIOSpecDefault:
         config.sweepLimit == 100,
         config.claimers == 8,
         config.maxWait == 30.seconds,
+        config.maxBatchLimit == 32,
       )
     },
     test("the lease outlasts a sweep, and a wait fits inside the lease") {

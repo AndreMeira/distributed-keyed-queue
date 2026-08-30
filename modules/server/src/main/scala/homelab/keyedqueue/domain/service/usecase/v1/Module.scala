@@ -25,7 +25,7 @@ object Module:
     ZLayer.fromFunction: (store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation, config: SyncUseCases.Config) =>
       SyncUseCases(
         enqueue = EnqueueUseCase(store, watchdog, validation),
-        dequeue = DequeueUseCase(store, watchdog, validation, config.maxWait),
-        settle = SettleUseCase(store),
+        dequeue = DequeueUseCase(store, watchdog, validation, config.maxWait, config.maxBatchLimit),
+        settle = SettleUseCase(store, validation),
         heartbeat = HeartbeatUseCase(store),
       )

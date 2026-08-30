@@ -23,17 +23,20 @@ Every key belongs to one queue and carries that queue's hash tag. `Namespace` bu
 
 ```
 {q:orders}:ready        {q:orders}:fence       {q:orders}:msgs:<key>
-{q:orders}:state        {q:orders}:attempts    {q:orders}:inflight:<key>
-{q:orders}:claimed      {q:orders}:workers     {q:orders}:claiming:<worker>
-                        {q:orders}:delayed
+{q:orders}:state        {q:orders}:attempts    {q:orders}:payloads:<key>
+{q:orders}:claimed      {q:orders}:workers     {q:orders}:owned:<key>
+                        {q:orders}:delayed     {q:orders}:claiming:<worker>
 ```
+
+What each of them is for is [`redis-data-structures.md`](redis-data-structures.md); what matters here is
+only that they all carry the same tag.
 
 One queue's keys hash to one slot, and **every script touches exactly one queue** — which is what makes the
 Lua legal at all, since a script may only reach keys in a single slot.
 
 Two consequences are easy to undo by accident:
 
-- **`watchdog.lua` builds key names at runtime** — `prefix .. ':inflight:' .. key`, `prefix .. ':claiming:'
+- **`watchdog.lua` builds key names at runtime** — `prefix .. ':owned:' .. key`, `prefix .. ':claiming:'
   .. worker` — without declaring them in `KEYS`. Reaching an undeclared key is only safe because the tag
   guarantees the same slot. That is why the sweep takes `prefix` as an argument at all.
 - **`renew` groups claims by queue** and issues one call per queue rather than one for a caller's whole

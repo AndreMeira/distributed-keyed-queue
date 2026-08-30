@@ -2,7 +2,7 @@
 title: "A keyed queue on Redis — idle pops, per-key exclusivity, and what it costs"
 type: research
 status: draft
-updated: 2026-08-23
+updated: 2026-08-30
 tags: [connection, keyed-queue, idle, lease, heartbeat, lua, postgres, exploration]
 ---
 
@@ -12,6 +12,15 @@ tags: [connection, keyed-queue, idle, lease, heartbeat, lua, postgres, explorati
 > hazards; none of it is a committed API, and Postgres remains the alternative (§6). What this note is for is
 > the *shape* of the thing and the price of each option — naming, module layout and the gRPC surface are all
 > still open.
+>
+> **The built layout has since moved on, and this note is kept as written.** Three things below are no longer
+> how it works: `msgs` holds message *ids* with the messages in a `payloads` hash; there is no `inflight`,
+> because a claim marks ownership in an `owned` set without moving anything; and a claim covers a *batch* of
+> a key's messages, settled one at a time. A nack therefore returns nothing to the head — the message never
+> left it — so per-key ordering is now the order messages are *handed out* rather than the order their
+> effects land. For what exists, see
+> [`../architecture/redis-data-structures.md`](../architecture/redis-data-structures.md); where the two
+> disagree, that one is right.
 
 Problem statement and the requirement this serves:
 [`research/infrastructure/homelab-message-broker.md`](../../../research/infrastructure/homelab-message-broker.md)

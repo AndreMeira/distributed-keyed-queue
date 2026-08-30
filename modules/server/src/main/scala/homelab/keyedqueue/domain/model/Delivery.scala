@@ -1,17 +1,16 @@
 package homelab.keyedqueue.domain.model
 
-
-import homelab.keyedqueue.domain.types.ClaimRef
-
-import java.time.Instant
-
+import homelab.keyedqueue.domain.types.MessageId
 
 /**
- * A message handed to a consumer, with everything it needs to keep or settle it.
+ * One message handed to a consumer as part of a claim.
  *
- * @param receipt the opaque handle to give back to settle or renew
+ * Carries no handle of its own: the receipt belongs to the claim, and every message in a batch is settled
+ * against it by naming this id. That is the shape of the guarantee — a key is owned, and its messages are
+ * what ownership gives access to.
+ *
+ * @param messageId what a settle names this message by
  * @param message the message
  * @param attempt how many times this message has been delivered; 1 on the first
- * @param leaseExpiresAt when the claim lapses unless renewed, on the store's clock
  */
-final case class Delivery(receipt: ClaimRef, message: Message, attempt: Int, leaseExpiresAt: Instant)
+final case class Delivery(messageId: MessageId, message: Message, attempt: Int)

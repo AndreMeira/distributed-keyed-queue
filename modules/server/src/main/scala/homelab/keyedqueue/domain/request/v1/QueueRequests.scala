@@ -29,8 +29,10 @@ final case class EnqueueRequest(queue: QueueName, message: Message)
  *
  * @param queue the queue to take from
  * @param maxWait how long the caller is prepared to wait; the service clamps it to its own ceiling
+ * @param maxBatch the most messages to claim at once; clamped likewise
  */
-final case class DequeueRequest(queue: QueueName, maxWait: Duration)
+final case class DequeueRequest(queue: QueueName, maxWait: Duration, maxBatch: Int)
+
 
 /**
  * Report what happened to a claimed message.
@@ -38,8 +40,24 @@ final case class DequeueRequest(queue: QueueName, maxWait: Duration)
  * @param receipt the handle from the delivery
  * @param outcome what the consumer decided
  * @param retryAfter how long to hold the key back before retrying; ignored for `Done`
+ * @param outcomes what became of each message named. What is not named stays owed, and the claim ends
+ *                 once nothing is
+ * @param retryAfter how long the key should wait before anyone works it again, asked for by a nack
  */
-final case class SettleRequest(receipt: ClaimRef, outcome: Verdict, retryAfter: Duration)
+final case class SettleRequest(
+  receipt: ClaimRef,
+  outcomes: Chunk[MessageOutcome],
+  retryAfter: Duration,
+)
+
+
+/**
+ * What a consumer did with one message of its batch.
+ *
+ * @param messageId which message, as the delivery named it
+ * @param outcome what became of it
+ */
+final case class MessageOutcome(messageId: MessageId, outcome: Verdict)
 
 /**
  * Renew everything a consumer still holds.

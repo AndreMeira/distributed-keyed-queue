@@ -9,7 +9,7 @@ import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
 import homelab.keyedqueue.domain.syntax.*
-import zio.{ duration2DurationOps, Duration, IO }
+import zio.{ duration2DurationOps, Chunk, Duration, IO }
 
 
 /**
@@ -24,14 +24,23 @@ import zio.{ duration2DurationOps, Duration, IO }
  * @param watchdog told about the queue, so its abandoned work is repaired
  * @param validation what makes a request actionable
  * @param maxWait the longest wait this service will honour
+ * @param maxBatchLimit the most messages this service will hand over in one claim
  */
-final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation, maxWait: Duration):
+final class DequeueUseCase(
+  store: QueueStore,
+  watchdog: Watchdog,
+  validation: QueueInputValidation,
+  maxWait: Duration,
+  maxBatchLimit: Int,
+):
 
   /**
    * Wait for a message.
    *
    * A caller asking to wait longer than the service allows is clamped rather than refused: patience is a
-   * preference, not a mistake, and the response says when the wait actually ended.
+   * preference, not a mistake, and the response says when the wait actually ended. The same for asking for
+   * a bigger batch than the service will hand over — the response says how many came back, and
+   * `backlogDepth` says how many were left.
    *
    * @param request the queue and how long the caller will wait, clamped to the service's ceiling
    * @return the delivery, or nothing when none became ready in time; aborts with `InvalidRequest` when the
@@ -39,9 +48,10 @@ final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, validation: Qu
    */
   def apply(request: DequeueRequest): IO[QueueError, DequeueResponse] =
     val patience = if request.maxWait > maxWait then maxWait else request.maxWait
+    val batch    = request.maxBatch.max(1).min(maxBatchLimit)
     validation.parse(request).orFail
       *> watchdog.watch(request.queue)
-      *> store.claim(request.queue, patience).map(response)
+      *> store.claim(request.queue, patience, batch).map(response)
 
   /**
    * Present what the store returned as the answer the caller gets.
@@ -51,23 +61,18 @@ final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, validation: Qu
    * into error handling, and make an idle queue indistinguishable from a broken one.
    *
    * @param claimed what the store handed over, or nothing when the wait elapsed first
-   * @return the response, carrying a delivery only when there was one
+   * @return the response, carrying a claim only when there was one
    */
-  private def response(claimed: Option[Claimed]): DequeueResponse = DequeueResponse:
+  private def response(claimed: Option[Claimed]): DequeueResponse =
     claimed match {
-      case Some(claim) => Some(delivery(claim))
-      case None        => None
+      case Some(batch) =>
+        val delivered = batch.messages.map(owned => Delivery(owned.id, owned.message, owned.attempt))
+        DequeueResponse(
+          Some(batch.claim.reference),
+          Some(delivered.head),
+          Chunk.fromIterable(delivered.tail),
+          Some(batch.leaseExpiresAt),
+          batch.backlogDepth,
+        )
+      case None        => DequeueResponse(None, None, Chunk.empty, None, 0)
     }
-
-  /**
-   * Present a claim as a delivery: the same message, with the handle that settles it in place of the claim
-   * the store hands back.
-   *
-   * Total, because the store returns a message rather than bytes to be read: whether what it holds is
-   * readable is settled before it gets here.
-   *
-   * @param claimed what the store handed over
-   * @return the delivery
-   */
-  private def delivery(claimed: Claimed): Delivery =
-    Delivery(claimed.claim.reference, claimed.message, claimed.attempt, claimed.leaseExpiresAt)

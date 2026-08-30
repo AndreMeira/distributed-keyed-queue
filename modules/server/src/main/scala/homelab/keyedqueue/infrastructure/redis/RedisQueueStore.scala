@@ -71,14 +71,14 @@ final class RedisQueueStore(
    * @param timeout how long to wait for work
    * @return the claim, or `None` on timeout
    */
-  override def claim(queue: QueueName, timeout: Duration): IO[QueueError, Option[Claimed]] =
+  override def claim(queue: QueueName, timeout: Duration, maxBatch: Int): IO[QueueError, Option[Claimed]] =
     val ns = Namespace(queue)
     connection.provideBlocking: claimer =>
       register(ns, claimer) *> ZIO
         .uninterruptibleMask: restore =>
           restore(take(ns, claimer, timeout)).flatMap:
             case None      => ZIO.none
-            case Some(key) => scripts.consume.run(ns, claimer, MessageKey(key), leaseTtl)
+            case Some(key) => scripts.consume.run(ns, claimer, MessageKey(key), leaseTtl, maxBatch)
         .onInterrupt(release(ns, claimer))
 
   /**
@@ -88,11 +88,16 @@ final class RedisQueueStore(
    * @param claim the claim being settled, and the token that authorises it
    * @param verdict what became of the message
    * @param retryAfter how long to hold a failed message back; ignored when the verdict is `Done`
+   * @param outcomes what became of each message named, by id
    * @return whether it applied
    */
-  override def settle(claim: Claim, verdict: Verdict, retryAfter: Duration): IO[QueueError, Boolean] =
+  override def settle(
+    claim: Claim,
+    outcomes: Chunk[(MessageId, Verdict)],
+    retryAfter: Duration,
+  ): IO[QueueError, Boolean] =
     connection.provide:
-      scripts.complete.run(claim, verdict, retryAfter)
+      scripts.complete.run(claim, outcomes, retryAfter)
 
   /**
    * One `heartbeat` call '''per queue''', because worker liveness and claims are namespaced by queue while a

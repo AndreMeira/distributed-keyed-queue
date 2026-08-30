@@ -25,6 +25,7 @@ import zio.*
  * @param claimers how many connections may be parked in a idle claim at once — the ceiling on
  *                 concurrent `Dequeue` calls this instance can serve
  * @param maxWait the longest a caller may ask to wait, and the connection's command timeout
+ * @param maxBatchLimit the most messages this service will hand over in one claim
  */
 final case class QueueConfig(
   redisUrl: String,
@@ -35,6 +36,7 @@ final case class QueueConfig(
   sweepLimit: Int,
   claimers: Int,
   maxWait: Duration,
+  maxBatchLimit: Int,
 ) derives ConfigReader
 
 
