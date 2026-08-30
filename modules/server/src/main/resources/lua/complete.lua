@@ -12,6 +12,7 @@
 -- ARGV[2] token      the token handed out by consume.lua
 -- ARGV[3] outcome    'done' | 'failed'
 -- ARGV[4] retryAfter millis; 'failed' only, 0 means immediately
+-- ARGV[5] discard    how many to drop from the head after settling; 'done' only, 0 means none
 -- returns            1 when applied, 0 when the claim was stale
 --
 -- The token check is not an optimisation. A missed heartbeat only means the worker cannot be heard, so the
@@ -21,6 +22,7 @@
 local state, claimed, fence, msgs, inflight, ready, attempts, delayed =
   KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7], KEYS[8]
 local key, token, outcome, retryAfter = ARGV[1], tonumber(ARGV[2]), ARGV[3], tonumber(ARGV[4])
+local discard = tonumber(ARGV[5]) or 0
 
 if tonumber(redis.call('HGET', fence, key) or 0) ~= token then
   return 0
@@ -35,6 +37,19 @@ redis.call('ZREM', claimed, key)
 if outcome == 'done' then
   redis.call('DEL', inflight)
   redis.call('HDEL', attempts, key)   -- the head moves on, so its delivery count starts again
+
+  -- Conflation: the caller looked at `backlog_depth` on its delivery, decided those messages were
+  -- superseded, and asked for them to go. Safe here and nowhere else, because the key is still held.
+  --
+  -- BEFORE the emptiness check below, which is what decides whether this key goes back on `ready` or
+  -- becomes idle. Discarding after it would leave a key queued as ready with nothing behind it, and no
+  -- sweep would repair that: it is not a lapsed claim, not a dead worker, and not an elapsed backoff.
+  --
+  -- LTRIM clamps, so a discard larger than what remains simply empties the key. That is not an error: the
+  -- caller asked for everything behind it to go, and everything behind it went.
+  if discard > 0 then
+    redis.call('LTRIM', msgs, discard, -1)
+  end
 else
   -- Back to the HEAD: a retry must not reorder the key it belongs to, and the attempt count stays with it.
   redis.call('LMOVE', inflight, msgs, 'RIGHT', 'LEFT')

@@ -70,6 +70,24 @@ object GrpcSpec extends ZIOSpecDefault:
         empty.delivery.isEmpty, // the queue is drained, and a timeout is an empty response, not an error
       )
     },
+    test("a delivery reports the backlog, and a settle can discard it") {
+      // The conflation loop a latest-wins consumer writes: see something newer behind this one, skip the
+      // work, and drop the rest in the settle that was going out anyway.
+      for
+        client  <- ZIO.service[KeyedQueueClient]
+        _       <- ZIO.foreachDiscard(1 to 4)(n => client.enqueue(EnqueueRequest("conflate", Some(message("k1", s"v$n")))))
+        first   <- client.dequeue(DequeueRequest("conflate", Some(ProtoDuration(seconds = 2))))
+        receipt  = first.delivery.map(_.receipt).getOrElse("")
+        settled <- client.settle(SettleRequest(receipt, Outcome.OUTCOME_DONE, discardAhead = 2))
+        next    <- client.dequeue(DequeueRequest("conflate", Some(ProtoDuration(seconds = 2))))
+      yield assertTrue(
+        first.delivery.map(_.backlogDepth) == Some(3),
+        settled.applied == Applied.APPLIED_OK,
+        // v1 was settled and v2/v3 discarded, so the next delivery is v4 with nothing behind it.
+        next.delivery.flatMap(_.message).map(d => String(d.payload.toByteArray, "UTF-8")) == Some("v4"),
+        next.delivery.map(_.backlogDepth) == Some(0),
+      )
+    },
     test("a settle replayed with the same receipt is reported stale") {
       // What an at-least-once RPC does on a retry. The second must not apply, or the key would be queued
       // twice and two consumers could hold it.

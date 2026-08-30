@@ -53,10 +53,13 @@ trait QueueStore:
    * @param claim the claim being settled
    * @param verdict what the consumer decided
    * @param retryAfter how long to hold the key back before retrying; ignored for `Verdict.Done`
+   * @param discardAhead how many messages behind the settled one to drop as superseded; `Verdict.Done`
+   *                     only. Asking for more than remain empties the key rather than failing — a caller
+   *                     acting on a depth it was told cannot be wrong about what has since been drained
    * @return true when applied, false when the claim had already been revoked; aborts with `QueueError` if
    *         the store fails
    */
-  def settle(claim: Claim, verdict: Verdict, retryAfter: Duration): IO[QueueError, Boolean]
+  def settle(claim: Claim, verdict: Verdict, retryAfter: Duration, discardAhead: Int): IO[QueueError, Boolean]
 
   /**
    * Push the deadline forward on the claims still held, and say which are gone.

@@ -13,7 +13,7 @@
 -- KEYS[7] attempts   hash  key -> how many times the CURRENT head message has been delivered
 -- ARGV[1] key
 -- ARGV[2] ttl        millis
--- returns            {message, token, attempt}, or nil when the key had nothing left
+-- returns            {message, token, attempt, deadline, backlog}, or nil when the key had nothing left
 local claiming, state, claimed, fence, msgs, inflight, attempts =
   KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7]
 local key, ttl = ARGV[1], tonumber(ARGV[2])
@@ -42,4 +42,13 @@ redis.call('ZADD', claimed, now + ttl, key)
 -- message visible rather than silent.
 local attempt = redis.call('HINCRBY', attempts, key, 1)
 
-return { message, redis.call('HINCRBY', fence, key, 1), attempt, now + ttl }
+-- What is still queued for this key, measured after the LMOVE above, so it counts what is BEHIND the
+-- message being handed over rather than including it.
+--
+-- A lower bound rather than a fixed number: the claim keeps other CONSUMERS off the key, but produce.lua
+-- RPUSHes to this list whatever the key's state, so a producer may append while the claim is held. It can
+-- only grow — nothing but the holder may take from it — which is why a discard counted from the head
+-- cannot reach a message that arrived after this was read.
+local backlog = redis.call('LLEN', msgs)
+
+return { message, redis.call('HINCRBY', fence, key, 1), attempt, now + ttl, backlog }

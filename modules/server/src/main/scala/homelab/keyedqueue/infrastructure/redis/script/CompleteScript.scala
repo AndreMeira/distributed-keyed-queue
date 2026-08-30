@@ -33,12 +33,20 @@ final class CompleteScript(ref: LuaScript.Sha):
    * @param claim the claim being settled, and the token that authorises it
    * @param verdict what became of the message
    * @param retryAfter how long to hold a failed message back; ignored when the verdict is `Done`
+   * @param discardAhead how many messages behind this one to drop as superseded; `Done` only
    * @return whether it applied; aborts with `QueueError` when the store fails or the reply cannot be read
    */
-  def run(claim: Claim, verdict: Verdict, retryAfter: Duration): ZIO[Connection.Commands, QueueError, Boolean] =
+  def run(
+    claim: Claim,
+    verdict: Verdict,
+    retryAfter: Duration,
+    discardAhead: Int,
+  ): ZIO[Connection.Commands, QueueError, Boolean] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking(redis.evalsha[Any](ref, output, keys(claim), args(claim, verdict, retryAfter)*))
+        .attemptBlocking(
+          redis.evalsha[Any](ref, output, keys(claim), args(claim, verdict, retryAfter, discardAhead)*)
+        )
         .mapError(LuaScript.failure)
         .flatMap(reply => ZIO.fromEither(read(reply)))
 
@@ -70,14 +78,23 @@ final class CompleteScript(ref: LuaScript.Sha):
    * @param claim the claim being settled, and the token that authorises it
    * @param verdict what became of the message
    * @param retryAfter how long to hold a failed message back; ignored when the verdict is `Done`
-   * @return `key`, `token`, `outcome`, `retryAfter`, in the order `lua/complete.lua` reads them
+   * @param discardAhead how many messages behind this one to drop, counted from the head so a producer's
+   *                     concurrent append cannot be caught by it; the script ignores it unless the verdict
+   *                     is `done`
+   * @return `key`, `token`, `outcome`, `retryAfter`, `discard`, in the order `lua/complete.lua` reads them
    */
-  private def args(claim: Claim, verdict: Verdict, retryAfter: Duration): Array[Array[Byte]] =
+  private def args(
+    claim: Claim,
+    verdict: Verdict,
+    retryAfter: Duration,
+    discardAhead: Int,
+  ): Array[Array[Byte]] =
     Array(
       LuaScript.utf8(claim.key),
       LuaScript.utf8(claim.token.toString),
       LuaScript.utf8(if verdict == Verdict.Done then "done" else "failed"),
       LuaScript.utf8(retryAfter.toMillis.toString),
+      LuaScript.utf8(discardAhead.toString),
     )
 
   /**

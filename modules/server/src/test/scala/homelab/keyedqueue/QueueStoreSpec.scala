@@ -72,7 +72,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
                             for
                               claimed <- worker.claim(queue, 2.seconds)
                               body     = claimed.map(c => cargo(c.message)).getOrElse("")
-                              _       <- ZIO.foreachDiscard(claimed)(c => worker.settle(c.claim, Verdict.Done, Duration.Zero))
+                              _       <- ZIO.foreachDiscard(claimed)(c => worker.settle(c.claim, Verdict.Done, Duration.Zero, 0))
                             yield body
       yield assertTrue(seen == Chunk("a", "b", "c"))
     },
@@ -101,7 +101,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
         key             = MessageKey("k1")
         _              <- worker.enqueue(queue, message(key, "poison"))
         first          <- worker.claim(queue, 2.seconds)
-        _              <- ZIO.foreachDiscard(first)(c => worker.settle(c.claim, Verdict.Failed, Duration.Zero))
+        _              <- ZIO.foreachDiscard(first)(c => worker.settle(c.claim, Verdict.Failed, Duration.Zero, 0))
         second         <- worker.claim(queue, 2.seconds)
       yield assertTrue(
         first.map(_.attempt).contains(1),
@@ -119,13 +119,64 @@ object QueueStoreSpec extends ZIOSpecDefault:
         held                 <- worker.claim(queue, 2.seconds)
         _                    <- ZIO.sleep(leaseTtl + 500.millis) // stop heartbeating: the lease lapses
         swept                <- sweeper.sweep(queue, 100)
-        late                 <- ZIO.foreach(held)(c => worker.settle(c.claim, Verdict.Done, Duration.Zero))
+        late                 <- ZIO.foreach(held)(c => worker.settle(c.claim, Verdict.Done, Duration.Zero, 0))
         again                <- sweeper.claim(queue, 2.seconds)
       yield assertTrue(
         swept.reclaimed.map(_.toString) == Chunk("k1"),
         late.contains(false), // rejected: the token is stale
         again.map(c => cargo(c.message)).contains("work"), // and the work is back
       )
+    },
+    test("a delivery says how many messages are still queued behind it") {
+      for
+        (worker, _, _) <- ZIO.service[(QueueStore, QueueStore, RedisClusterCommands[String, Array[Byte]])]
+        queue           = QueueName("backlog")
+        key             = MessageKey("k1")
+        _              <- ZIO.foreachDiscard(List("a", "b", "c"))(m => worker.enqueue(queue, message(key, m)))
+        first          <- worker.claim(queue, 2.seconds)
+        _              <- ZIO.foreachDiscard(first)(c => worker.settle(c.claim, Verdict.Done, Duration.Zero, 0))
+        second         <- worker.claim(queue, 2.seconds)
+        _              <- ZIO.foreachDiscard(second)(c => worker.settle(c.claim, Verdict.Done, Duration.Zero, 0))
+        third          <- worker.claim(queue, 2.seconds)
+      yield assertTrue(
+        // Counted behind the message handed over, not including it, and it shrinks as the key drains.
+        first.map(_.backlogDepth) == Some(2),
+        second.map(_.backlogDepth) == Some(1),
+        third.map(_.backlogDepth) == Some(0),
+      )
+    },
+    test("a settle can discard what is behind it, and a key emptied that way goes idle") {
+      // Conflation: the consumer sees three behind, decides they are superseded, does the work once and
+      // drops the rest in the same settle.
+      for
+        (worker, _, redis) <- ZIO.service[(QueueStore, QueueStore, RedisClusterCommands[String, Array[Byte]])]
+        queue               = QueueName("conflate")
+        key                 = MessageKey("k1")
+        _                  <- ZIO.foreachDiscard(List("a", "b", "c", "d"))(m => worker.enqueue(queue, message(key, m)))
+        held               <- worker.claim(queue, 2.seconds)
+        _                  <- ZIO.foreachDiscard(held)(c => worker.settle(c.claim, Verdict.Done, Duration.Zero, 3))
+        after              <- worker.claim(queue, 1.second)
+        // White-box, because the hazard is invisible from outside: a key discarded down to nothing must be
+        // idle, not sitting on `ready` with an empty message list that no sweep would ever repair.
+        state              <- ZIO.attemptBlocking(redis.hget("{q:conflate}:state", "k1")).orDie
+        ready              <- ZIO.attemptBlocking(redis.llen("{q:conflate}:ready")).orDie
+      yield assertTrue(
+        held.map(_.backlogDepth) == Some(3),
+        after.isEmpty, // everything behind the first message went with it
+        state == null, // idle is the absence of an entry
+        ready == 0L,
+      )
+    },
+    test("a discard larger than the backlog empties the key rather than failing") {
+      for
+        (worker, _, _) <- ZIO.service[(QueueStore, QueueStore, RedisClusterCommands[String, Array[Byte]])]
+        queue           = QueueName("overshoot")
+        key             = MessageKey("k1")
+        _              <- ZIO.foreachDiscard(List("a", "b"))(m => worker.enqueue(queue, message(key, m)))
+        held           <- worker.claim(queue, 2.seconds)
+        applied        <- ZIO.foreach(held)(c => worker.settle(c.claim, Verdict.Done, Duration.Zero, 99))
+        after          <- worker.claim(queue, 1.second)
+      yield assertTrue(applied == Some(true), after.isEmpty)
     },
     test("a claimer registers in the queue it claims from, not somewhere else") {
       // White-box on purpose, because the failure is invisible from outside: a claimer registered under the

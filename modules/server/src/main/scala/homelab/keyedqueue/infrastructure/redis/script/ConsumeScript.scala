@@ -89,8 +89,8 @@ final class ConsumeScript(ref: LuaScript.Sha):
     decoder(ns, key).decode("consume", value)
 
   /**
-   * The shape the script promises: `{message, token, attempt, deadline}` when it granted a claim, and
-   * absence when the key had nothing left.
+   * The shape the script promises: `{message, token, attempt, deadline, backlog}` when it granted a claim,
+   * and absence when the key had nothing left.
    *
    * Absence is the outermost layer rather than something the four-element shape allows, because those are
    * two different replies: `nil` or an empty array is an answer, and anything else has to be all four.
@@ -104,17 +104,19 @@ final class ConsumeScript(ref: LuaScript.Sha):
    */
   private def decoder(ns: Namespace, key: MessageKey): LuaScript.Decode.Of[Option[Claimed]] =
     LuaScript.Decode
-      .sized(4) {
+      .sized(5) {
         for
           message  <- LuaScript.Decode.bytes.at(0).emap(StoredMessage.fromBytes)
           token    <- LuaScript.Decode.long.at(1)
           attempt  <- LuaScript.Decode.long.at(2)
           deadline <- LuaScript.Decode.long.at(3)
+          backlog  <- LuaScript.Decode.long.at(4)
         yield Claimed(
           Claim(ns.queue, key, Token(token)),
           message,
           attempt.toInt,
           Instant.ofEpochMilli(deadline),
+          backlog.toInt,
         )
       }
       .orNone

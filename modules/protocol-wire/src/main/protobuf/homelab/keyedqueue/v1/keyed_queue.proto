@@ -55,6 +55,14 @@ message Delivery {
   Message                   message          = 2;
   uint32                    attempt          = 3;  // 1 on first delivery, 2+ after a reclaim
   google.protobuf.Timestamp lease_expires_at = 4;
+  // How many messages were still queued for this key when this one was claimed. Non-zero means something
+  // newer exists, which for a latest-wins consumer is enough to know this one is superseded — see
+  // `discard_ahead` on SettleRequest.
+  //
+  // A LOWER BOUND, not a promise: holding a claim keeps other consumers off the key, but producers may
+  // still append while it is held, so the backlog can grow between this number and the settle. It never
+  // shrinks, because nothing else may take from a held key.
+  uint32                    backlog_depth    = 5;
 }
 
 enum Outcome {
@@ -71,9 +79,19 @@ enum Applied {
 }
 
 message SettleRequest {
-  string                   receipt     = 1;
-  Outcome                  outcome     = 2;
-  google.protobuf.Duration retry_after = 3;  // OUTCOME_FAILED only; zero means immediately
+  string                   receipt       = 1;
+  Outcome                  outcome       = 2;
+  google.protobuf.Duration retry_after   = 3;  // OUTCOME_FAILED only; zero means immediately
+  // Drop this many messages from the head of the key after settling. OUTCOME_DONE only. More than remain
+  // simply empties the key.
+  //
+  // Counted from the head, which is what makes it safe against a producer appending while the claim was
+  // held: appends land at the tail, so dropping N from the head drops exactly the N `backlog_depth`
+  // reported and never something that arrived afterwards.
+  //
+  // The queue never conflates on its own — it reports `backlog_depth` and drops what it is told to. What
+  // makes a message superseded is the consumer's business.
+  uint32                   discard_ahead = 4;
 }
 message SettleResponse {
   Applied applied = 1;

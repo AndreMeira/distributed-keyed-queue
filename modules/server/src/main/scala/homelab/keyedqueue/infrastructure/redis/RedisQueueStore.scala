@@ -88,11 +88,17 @@ final class RedisQueueStore(
    * @param claim the claim being settled, and the token that authorises it
    * @param verdict what became of the message
    * @param retryAfter how long to hold a failed message back; ignored when the verdict is `Done`
+   * @param discardAhead how many messages behind this one to drop as superseded; `Done` only
    * @return whether it applied
    */
-  override def settle(claim: Claim, verdict: Verdict, retryAfter: Duration): IO[QueueError, Boolean] =
+  override def settle(
+    claim: Claim,
+    verdict: Verdict,
+    retryAfter: Duration,
+    discardAhead: Int,
+  ): IO[QueueError, Boolean] =
     connection.provide:
-      scripts.complete.run(claim, verdict, retryAfter)
+      scripts.complete.run(claim, verdict, retryAfter, discardAhead)
 
   /**
    * One `heartbeat` call '''per queue''', because worker liveness and claims are namespaced by queue while a

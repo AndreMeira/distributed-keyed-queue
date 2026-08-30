@@ -38,8 +38,10 @@ final case class DequeueRequest(queue: QueueName, maxWait: Duration)
  * @param receipt the handle from the delivery
  * @param outcome what the consumer decided
  * @param retryAfter how long to hold the key back before retrying; ignored for `Done`
+ * @param discardAhead how many messages behind this one to drop as superseded; `Done` only, and more than
+ *                     remain simply empties the key
  */
-final case class SettleRequest(receipt: ClaimRef, outcome: Verdict, retryAfter: Duration)
+final case class SettleRequest(receipt: ClaimRef, outcome: Verdict, retryAfter: Duration, discardAhead: Int)
 
 /**
  * Renew everything a consumer still holds.

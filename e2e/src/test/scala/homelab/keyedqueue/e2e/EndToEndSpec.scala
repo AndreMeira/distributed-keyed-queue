@@ -139,6 +139,29 @@ object EndToEndSpec extends ZIOSpecDefault:
         again.map(_.attempt).contains(2), // and the message is somebody else's now
       )
     },
+    test("a discard drops what was reported, and not a message produced while the claim was held") {
+      // `backlog_depth` is a lower bound: holding a claim keeps other consumers off the key, but producers
+      // may still append to it. This is the case that says a discard counted from the head cannot swallow a
+      // message that arrived afterwards — enqueued through the *other* instance, so it is a real race
+      // across the deployment rather than one connection talking to itself.
+      for
+        dkq     <- ZIO.service[Deployment]
+        queue    = dkq.queue("conflate")
+        _       <- ZIO.foreachDiscard(1 to 3)(n => dkq(0).enqueue(queue, "k1", s"v$n"))
+        held    <- dkq(0).dequeue(queue, 2.seconds)
+        receipt  = held.map(_.receipt).getOrElse("")
+        // While v1 is held: the other instance appends v4, which the depth above never saw.
+        _       <- dkq(1).enqueue(queue, "k1", "v4")
+        // The consumer conflates on what it was told: v1 handled, v2 and v3 superseded.
+        _       <- dkq(0).settle(receipt, discardAhead = 2)
+        next    <- dkq(1).dequeue(queue, 2.seconds)
+        body     = next.flatMap(_.message).map(m => String(m.payload.toByteArray, "UTF-8"))
+      yield assertTrue(
+        held.map(_.backlogDepth) == Some(2), // v2 and v3; v4 did not exist yet
+        body == Some("v4"),                  // v2 and v3 discarded, v4 survived the trim
+        next.map(_.backlogDepth) == Some(0),
+      )
+    },
     test("under load nothing is lost, nothing is delivered twice, and every key keeps its order") {
       // A saturation check, not a benchmark: eight keys worked by eight consumers across both instances,
       // asserting correctness under concurrent pressure. The throughput it prints is information — there is

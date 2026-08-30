@@ -70,10 +70,15 @@ final case class Instance(name: String, address: String, client: KeyedQueueClien
    *
    * @param receipt what the delivery carried
    * @param outcome what the consumer decided
+   * @param discardAhead how many messages behind this one to drop as superseded; `OUTCOME_DONE` only
    * @return whether it applied, or was refused as stale; fails when the call does
    */
-  def settle(receipt: String, outcome: Outcome = Outcome.OUTCOME_DONE): Task[Applied] =
-    client.settle(SettleRequest(receipt, outcome)).map(_.applied)
+  def settle(
+    receipt: String,
+    outcome: Outcome = Outcome.OUTCOME_DONE,
+    discardAhead: Int = 0,
+  ): Task[Applied] =
+    client.settle(SettleRequest(receipt, outcome, discardAhead = discardAhead)).map(_.applied)
 
   /**
    * Renew everything named.

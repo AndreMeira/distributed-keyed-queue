@@ -42,9 +42,14 @@ A consumer conflates like this:
 
 Two claim/settle cycles and one unit of work, against five and five.
 
-**Why it is safe:** while the claim is held the key is held, so nothing behind it can move. The depth is a
-stable snapshot for the life of the lease rather than a racy peek — and `discard_ahead` acts on a list only
-this consumer can touch. That is a property worth stating in the contract, not just relying on.
+**Why it is safe — and what the claim does *not* buy.** Holding a claim keeps other consumers off the key,
+but `produce.lua` RPUSHes to `msgs` whatever the key's state, so **a producer may append while the claim is
+held**. `backlog_depth` is therefore a lower bound, not a snapshot: it can grow between the claim and the
+settle, and never shrinks, since nothing but the holder may take from the list.
+
+That is exactly why `discard_ahead` counts **from the head**. Appends land at the tail, so dropping N from
+the head drops the N that were reported and can never reach a message that arrived afterwards. Had it
+counted from the tail, or been expressed as "empty the key", a concurrent append would be silently lost.
 
 ## Why depth is enough, and headers are not free
 
