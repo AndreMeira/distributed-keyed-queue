@@ -21,6 +21,8 @@ What is specific to this repo:
   - [`redis-state-walkthrough.md`](learning-material/redis-state-walkthrough.md) — every request traced
     through the structures it touches; the page for when something is stuck and you are looking at a live
     instance.
+  - [`using-the-contract-as-a-dependency.md`](learning-material/using-the-contract-as-a-dependency.md) —
+    what another service depends on to talk to dkq, and what it still has to write itself.
   - [`proto-generation.md`](learning-material/proto-generation.md) — how two published artifacts are
     generated from one set of `.proto` files, and what breaks if that is rearranged.
   - [`writing-end-to-end-tests.md`](learning-material/writing-end-to-end-tests.md) — what the e2e suite

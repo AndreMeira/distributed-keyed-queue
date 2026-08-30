@@ -34,6 +34,9 @@ password=<your-classic-pat>
 
 Full recipe: [`../homelab-toolkit-zio/docs/learning-material/using-modules-as-a-dependency.md`](../homelab-toolkit-zio/docs/learning-material/using-modules-as-a-dependency.md).
 
+**Consuming dkq from another service** is the other direction, and has its own guide:
+[using the contract as a dependency](docs/learning-material/using-the-contract-as-a-dependency.md).
+
 ## Layout
 
 ```
