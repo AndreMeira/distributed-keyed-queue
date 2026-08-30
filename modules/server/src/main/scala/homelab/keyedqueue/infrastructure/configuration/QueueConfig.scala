@@ -16,7 +16,8 @@ import zio.*
  * it is when nobody sets it — each key carries a working default and a `${?DKQ_...}` override in the same
  * two lines.
  *
- * @param redisUrl where the substrate lives
+ * @param redisUrl where the substrate lives; a seed node when `cluster` is set
+ * @param cluster whether that URL names a Redis Cluster rather than a single server
  * @param port the port the gRPC server listens on
  * @param leaseTtl how long a claim survives without a heartbeat
  * @param sweepInterval how often each instance runs the repair sweeps
@@ -27,6 +28,7 @@ import zio.*
  */
 final case class QueueConfig(
   redisUrl: String,
+  cluster: Boolean,
   port: Int,
   leaseTtl: Duration,
   sweepInterval: Duration,

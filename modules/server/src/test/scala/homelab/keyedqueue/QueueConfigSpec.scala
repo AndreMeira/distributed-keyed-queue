@@ -20,6 +20,7 @@ object QueueConfigSpec extends ZIOSpecDefault:
       for config <- QueueConfig.load
       yield assertTrue(
         config.redisUrl == "redis://localhost:6379",
+        !config.cluster,
         config.port == 9000,
         config.leaseTtl == 30.seconds, // "30 seconds" in HOCON, a zio.Duration here
         config.sweepInterval == 5.seconds,

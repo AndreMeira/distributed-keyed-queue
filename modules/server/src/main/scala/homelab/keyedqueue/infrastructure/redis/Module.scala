@@ -5,7 +5,6 @@ import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.WorkerId
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import io.lettuce.core.RedisClient
 import io.lettuce.core.api.sync.RedisCommands
 import zio.*
 
@@ -21,24 +20,34 @@ import zio.*
 object Module:
 
   /**
-   * The client, shut down with the scope.
-   *
-   * @return the layer
-   */
-  val client: ZLayer[QueueConfig, QueueError, RedisClient] = ZLayer.scoped:
-    ZIO.service[QueueConfig].flatMap(config => Connection.client(config.redisUrl))
-
-  /**
    * The connections: one shared, and `claimers` more that may be occupied.
    *
+   * '''The client is built here rather than layered separately, because which client to build is a runtime
+   * question.''' Lettuce has no URL scheme that tells a cluster from a single server, so `cluster` in the
+   * configuration says which — and a layer cannot choose its own inputs, so the choice has to happen inside
+   * one. Everything downstream sees a [[Connection]] either way.
+   *
    * @return the layer
    */
-  val connection: ZLayer[RedisClient & QueueConfig, QueueError, Connection] = ZLayer.scoped:
-    for
-      client <- ZIO.service[RedisClient]
-      config <- ZIO.service[QueueConfig]
-      pool   <- Connection.pool(client, config.maxWait, config.maxWait + 10.seconds, config.claimers)
-    yield pool
+  val connection: ZLayer[QueueConfig, QueueError, Connection] = ZLayer.scoped:
+    ZIO
+      .service[QueueConfig]
+      .flatMap: config =>
+        val open: ZIO[Scope, QueueError, Duration => ZIO[Scope, QueueError, Connection.Commands]] =
+          if config.cluster then Connection.cluster(config.redisUrl).map(client => Connection.open(client, _))
+          else Connection.client(config.redisUrl).map(client => Connection.open(client, _))
+        open.flatMap(Connection.pool(_, config.maxWait, timeout(config), config.claimers))
+
+  /**
+   * The command ceiling for a claiming connection.
+   *
+   * Longer than the longest wait a caller may ask for, or Lettuce gives up on a `BLMOVE` that is doing
+   * exactly what it was told to.
+   *
+   * @param config the settings to read the wait from
+   * @return the ceiling
+   */
+  private def timeout(config: QueueConfig): Duration = config.maxWait + 10.seconds
 
   /**
    * The scripts, registered at startup so a missing or unparseable one fails here rather than on the first

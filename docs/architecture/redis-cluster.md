@@ -1,5 +1,5 @@
 ---
-title: "Redis Cluster — the key layout is ready, the client is not"
+title: "Redis Cluster — supported in code, unproven in practice"
 type: architecture
 status: current
 updated: 2026-08-30
@@ -8,13 +8,17 @@ tags: [redis, cluster, sharding, hash-tag, lettuce, lua]
 
 # Redis Cluster
 
-**dkq does not run against a Redis Cluster today.** The blocker is the client, not the data model: the part
-that is hard to retrofit — the key layout — was designed for cluster mode from the start, and the part that
-is missing is confined to two files.
+Set `cluster = true` (or `DKQ_CLUSTER=true`) and `redis-url` is read as a seed node instead of a server.
+Everything downstream is unchanged.
 
-## What is already correct
+> **Written, but never run against a cluster.** There is no multi-node Valkey in the test setup, so the
+> whole cluster path — routing, `MOVED` handling, script registration across masters, `BLMOVE` on a cluster
+> connection — is covered by reasoning about Lettuce's API and by nothing else. The standalone path is the
+> one the 18 tests exercise. Treat cluster mode as untested until a three-node fixture exists.
 
-Every key belongs to one queue and carries that queue's hash tag. `Namespace` builds all eleven of them from
+## Why the key layout was ready first
+
+Every key belongs to one queue and carries that queue's hash tag. `Namespace` builds all eleven from
 `prefix = "{q:<queue>}"`:
 
 ```
@@ -24,65 +28,60 @@ Every key belongs to one queue and carries that queue's hash tag. `Namespace` bu
                         {q:orders}:delayed
 ```
 
-So one queue's keys hash to one slot, and **every script touches exactly one queue**. That is what makes the
-Lua legal in cluster mode, where a script may only reach keys in a single slot.
+One queue's keys hash to one slot, and **every script touches exactly one queue** — which is what makes the
+Lua legal at all, since a script may only reach keys in a single slot.
 
-Two consequences of that are easy to miss and are load-bearing:
+Two consequences are easy to undo by accident:
 
 - **`watchdog.lua` builds key names at runtime** — `prefix .. ':inflight:' .. key`, `prefix .. ':claiming:'
   .. worker` — without declaring them in `KEYS`. Reaching an undeclared key is only safe because the tag
   guarantees the same slot. That is why the sweep takes `prefix` as an argument at all.
-- **`renew` groups claims by queue** and issues one call per queue rather than one call for a caller's whole
-  receipt set. A single call across two queues would be a call across two tags, and therefore two slots.
+- **`renew` groups claims by queue** and issues one call per queue rather than one for a caller's whole
+  receipt set. A single call across two queues is a call across two tags, and therefore two slots.
 
-## What blocks it
+Neither is visible as a failure on a single node, so both would break cluster mode silently.
 
-**The client is standalone.** `Connection.client` is `RedisClient.create(uri)` and `Connection.open` is
-`client.connect(codec)` — there is no `RedisClusterClient` in the repo. A standalone client does not follow
-`MOVED`, so against a cluster it serves only the slots of the node it happened to connect to and fails on
-everything else.
+## What the two backends share, and where they differ
 
-**Script registration reaches one node, and switching client does not fix it.** `LuaScript.register` calls
-`scriptLoad`, which registers the digest on whichever node served the call. In a cluster the digest must
-exist on every master, and `RedisAdvancedClusterCommands` does **not** broadcast it: it overrides
-`scriptFlush`, `scriptKill` and `flushall` — the cluster-wide ones — but inherits `scriptLoad` unchanged, so
-it still goes to a single node. Broadcasting is the node-selection API,
-`masters().commands().scriptLoad(bytes)`, which returns `Executions[String]` rather than one digest.
+`Connection.Commands` is bound by `RedisClusterCommands`, which Lettuce makes the supertype of both:
+`RedisCommands extends RedisClusterCommands`, and so does `RedisAdvancedClusterCommands`. Every command
+this adapter uses — `evalsha`, `scriptLoad`, `blmove`, `lmove`, and `zcard` in the specs — is on it.
 
-This matters more here than in most designs because there is deliberately **no `NOSCRIPT` fallback** (see
-`Scripts`): a call routed to a node that never received the script fails rather than recovering. It is also
-the one piece of the work that does **not** live in `Connection`.
+What the narrower `RedisCommands` bound would have added is `RedisTransactionalCommands`: `MULTI` / `EXEC`.
+This adapter must never use those anyway — every operation is exactly one script, so that there are no
+interleavings to reason about — so **the bound turns that rule into something the compiler keeps.**
 
-**Blocking needs a pinned connection.** `BLMOVE` must run on a connection bound to the node owning the slot.
-`Connection.Pool` currently hands out plain `StatefulRedisConnection`s from the standalone client, so the
-claiming path would need the cluster equivalent.
+They differ in exactly two places:
 
-## What sharding would buy — and what it would not
+1. **`Connection`** has a `cluster` client and an `open` for it, beside the standalone pair. `pool` takes an
+   opener rather than a client, so it serves both without knowing which it has.
+2. **`LuaScript.loadEverywhere`** registers the script on every master. `RedisAdvancedClusterCommands`
+   overrides the cluster-wide script commands — `SCRIPT FLUSH`, `SCRIPT KILL` — but **inherits `scriptLoad`
+   unchanged**, so on a cluster connection it would still reach one node. With no `NOSCRIPT` fallback (see
+   `Scripts`), a call routed anywhere else would simply fail. Broadcasting is the node-selection API,
+   `masters().commands().scriptLoad(bytes)`; every master returns the same digest, since a digest is a hash
+   of the script.
+
+The choice is made inside `Module.connection` rather than by a separate layer, because a layer cannot pick
+its own inputs and Lettuce has no URL scheme that distinguishes the two.
+
+## What sharding buys — and what it does not
 
 **A queue is one slot, so a queue is one node.** Sharding spreads *queues* across a cluster; it can never
-spread a single queue. That is a property of the hash tag, not a gap to close: the tag is what allows a
-script to be atomic across a queue's keys at all, and `docs/research/redis-keyed-queue.md` records the
-trade — atomicity and reliability intact, at the cost of no sharding within a queue.
+spread a single queue. That is a property of the hash tag, not a gap: the tag is what lets a script be
+atomic across a queue's keys at all, and `docs/research/redis-keyed-queue.md` records the trade — atomicity
+and reliability intact, at the cost of no sharding within a queue.
 
-So cluster support is worth having when there are **many queues** to spread, or for failover. It does
-nothing for one hot queue. If a single queue ever outgrows a node the answer is a different key layout, not
-a bigger cluster — and on the numbers in `docs/research/throughput-first-numbers.md` that is a long way off.
+So cluster mode is worth having for **many queues**, or for failover. It does nothing for one hot queue. If
+a single queue ever outgrows a node the answer is a different key layout, not a bigger cluster — and on
+`docs/research/throughput-first-numbers.md` that is a long way off.
 
-## What it would take
+## What would make it trustworthy
 
-Two files, `Connection` and `LuaScript.register`:
+A three-node Valkey cluster in `QueueStoreSpec` or the compose file, running the existing suite unchanged.
+The claims most worth testing rather than reasoning about:
 
-1. **Widen the opaque type's bound.** `Connection.Commands` is `<: RedisCommands[String, Array[Byte]]`, and
-   `RedisAdvancedClusterCommands` is not a `RedisCommands`. Lettuce supplies the common supertype already:
-   `RedisCommands extends RedisClusterCommands`, and so does `RedisAdvancedClusterCommands`. Rebinding
-   `Commands` to `RedisClusterCommands` covers both with no abstraction of our own — and every command this
-   adapter uses (`evalsha`, `scriptLoad`, `blmove`, `lmove`, and `zcard` in the specs) is on it. The only
-   thing `RedisCommands` adds and `RedisClusterCommands` lacks is `RedisTransactionalCommands`: `MULTI` /
-   `EXEC`, which this design never uses because every operation is one script.
-2. **A cluster branch in `Connection`.** `RedisClusterClient` in `client`, its connection in `open`. Nothing
-   above the adapter names a connection type, so this stops at the package boundary.
-3. **Broadcast `scriptLoad` in `LuaScript.register`**, via `masters().commands()`.
-4. Check the claiming pool still receives node-pinned connections for `BLMOVE`.
-
-`Namespace`, all five `*Script` classes, and every `.lua` file are untouched by all four. The specs type
-their inspection connection as `RedisCommands` and would follow the same widening.
+- a `BLMOVE` parked on a cluster connection blocks only that connection, as it does standalone — this is
+  the assumption `Connection.Pool` rests on, and the one least supported by reading the API;
+- `Scripts.make` leaves every master able to serve `EVALSHA`;
+- the watchdog's runtime-built keys resolve, which is the check that the hash tag is doing its job.

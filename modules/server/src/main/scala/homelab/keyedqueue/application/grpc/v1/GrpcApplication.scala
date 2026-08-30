@@ -31,7 +31,6 @@ object GrpcApplication:
    */
   val serve: ZIO[QueueConfig, QueueError, Nothing] =
     (ZIO.service[Server] *> ZIO.never).provideSome[QueueConfig](
-      redis.Module.client,
       redis.Module.connection,
       redis.Module.scripts,
       redis.Module.store,

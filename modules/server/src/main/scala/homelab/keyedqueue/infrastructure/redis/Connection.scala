@@ -3,7 +3,8 @@ package homelab.keyedqueue.infrastructure.redis
 
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.types.WorkerId
-import io.lettuce.core.api.sync.RedisCommands
+import io.lettuce.core.cluster.RedisClusterClient
+import io.lettuce.core.cluster.api.sync.RedisClusterCommands
 import io.lettuce.core.codec.{ ByteArrayCodec, RedisCodec, StringCodec }
 import io.lettuce.core.{ RedisClient, RedisURI }
 import zio.*
@@ -68,11 +69,18 @@ object Connection:
   /**
    * A connection this object opened, and so one carrying the codec everything here assumes.
    *
-   * Opaque so a connection cannot be conjured from any `RedisCommands`: the scripts depend on keys being the
+   * Opaque so a connection cannot be conjured from any commands object: the scripts depend on keys being the
    * exact UTF-8 they wrote and values passing through untouched, which is true of [[open]]'s codec and not
-   * guaranteed of anything else. The `<:` keeps it usable as the Lettuce API at the apply site.
+   * guaranteed of anything else. The `<:` keeps it usable as the Lettuce API at the use site.
+   *
+   * '''Bounded by `RedisClusterCommands`, which is the supertype of both backends.''' Lettuce has
+   * `RedisCommands extends RedisClusterCommands`, and `RedisAdvancedClusterCommands` extends it too, so one
+   * type covers a standalone server and a cluster. What the narrower bound would have added is
+   * `RedisTransactionalCommands` — `MULTI` / `EXEC` — which this adapter must never use anyway: every
+   * operation here is exactly one script, so that there are no interleavings to reason about. Losing it
+   * from the type makes that a rule the compiler keeps rather than one the docs assert.
    */
-  opaque type Commands <: RedisCommands[String, Array[Byte]] = RedisCommands[String, Array[Byte]]
+  opaque type Commands <: RedisClusterCommands[String, Array[Byte]] = RedisClusterCommands[String, Array[Byte]]
 
   /**
    *
@@ -99,9 +107,51 @@ object Connection:
   final case class Claiming(commands: Commands, worker: WorkerId)
 
   /**
+   * A cluster client for the life of the scope.
+   *
+   * The sibling of [[client]], and the only place the two backends differ in setup: from here on a cluster
+   * connection is a [[Commands]] like any other, because every key a script touches carries its queue's
+   * `{q:<queue>}` hash tag and therefore lands in one slot.
+   *
+   * @param url a seed node, e.g. `redis://localhost:7000`
+   * @return the client; aborts with `QueueError` when the URL is unusable
+   */
+  def cluster(url: String): ZIO[Scope, QueueError, RedisClusterClient] =
+    ZIO
+      .acquireRelease {
+        ZIO.attempt:
+          val uri = RedisURI.create(url)
+          RedisClusterClient.create(uri)
+      }(client => ZIO.attempt(client.shutdown()).ignore)
+      .mapError(error => QueueError.StoreUnavailable(s"cannot reach $url: ${error.getMessage}"))
+
+  /**
+   * A cluster connection for the life of the scope.
+   *
+   * Identical in shape to the standalone [[open]]: the routing a cluster needs is Lettuce's business, and
+   * the commands this returns satisfy the same [[Commands]] bound.
+   *
+   * @param client the cluster client to connect with
+   * @param commandTimeout the ceiling for any single command
+   * @return the synchronous command API; aborts with `QueueError` when connecting fails
+   */
+  def open(client: RedisClusterClient, commandTimeout: Duration): ZIO[Scope, QueueError, Connection.Commands] =
+    ZIO
+      .acquireRelease(
+        ZIO.attemptBlocking(client.connect(codec))
+      )(connection => ZIO.attemptBlocking(connection.close()).ignore)
+      .mapAttempt: connection =>
+        connection.setTimeout(JavaDuration.ofMillis(commandTimeout.toMillis))
+        connection.sync()
+      .mapError(error => QueueError.StoreUnavailable(s"cannot open a connection: ${error.getMessage}"))
+
+  /**
    * One shared connection and `claimers` claiming connections, all closed with the scope.
    *
-   * @param client the client to connect with
+   * Takes an opener rather than a client, because that is the only thing it needs from one — which is what
+   * lets the same pool serve a standalone server and a cluster without knowing which it has.
+   *
+   * @param open how to open one connection with a given command ceiling
    * @param sharedTimeout the command ceiling for the shared connection
    * @param claimingTimeout the command ceiling for a claiming connection; must exceed the longest wait, or
    *                        Lettuce gives up on a `BLMOVE` that is doing exactly what it was asked to
@@ -109,14 +159,14 @@ object Connection:
    * @return the pool; aborts with `QueueError` when a connection cannot be opened
    */
   def pool(
-    client: RedisClient,
+    open: Duration => ZIO[Scope, QueueError, Commands],
     sharedTimeout: Duration,
     claimingTimeout: Duration,
     claimers: Int,
   ): ZIO[Scope, QueueError, Connection] =
     for
-      sync     <- open(client, sharedTimeout)
-      claiming <- ZIO.foreach(Chunk.fromIterable(0 until claimers))(claim(client, claimingTimeout, _))
+      sync     <- open(sharedTimeout)
+      claiming <- ZIO.foreach(Chunk.fromIterable(0 until claimers))(claim(open, claimingTimeout, _))
       idle     <- Queue.bounded[Claiming](claimers)
       _        <- idle.offerAll(claiming)
     yield Pool(sync, idle)
@@ -124,13 +174,17 @@ object Connection:
   /**
    * One claiming connection, with an identity of its own.
    *
-   * @param client the client to connect with
+   * @param open how to open one connection with a given command ceiling
    * @param commandTimeout the command ceiling
    * @param index distinguishes this connection from its peers within the process
    * @return the connection and its identity; aborts with `QueueError` when it cannot be opened
    */
-  private def claim(client: RedisClient, commandTimeout: Duration, index: Int): ZIO[Scope, QueueError, Claiming] =
-    open(client, commandTimeout).zipWith(identity(index))(Claiming.apply)
+  private def claim(
+    open: Duration => ZIO[Scope, QueueError, Commands],
+    commandTimeout: Duration,
+    index: Int,
+  ): ZIO[Scope, QueueError, Claiming] =
+    open(commandTimeout).zipWith(identity(index))(Claiming.apply)
 
   /**
    * A worker id that is unique per connection and stable for its life.

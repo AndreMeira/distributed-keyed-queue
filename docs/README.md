@@ -10,8 +10,8 @@ What is specific to this repo:
   claims "this is how it works" while the design is still moving is worse than no page. So far:
   [`architecture/end-to-end-testing.md`](architecture/end-to-end-testing.md) — the test harness is settled
   even while the thing it tests is not — and
-  [`architecture/redis-cluster.md`](architecture/redis-cluster.md), which is settled in the other direction:
-  it records what does *not* work yet, and why the key layout already assumes it will.
+  [`architecture/redis-cluster.md`](architecture/redis-cluster.md) — the key layout was built for it from
+  the start, and the page is as much about what is *not* proven as what is.
 - **The problem statement lives outside this repo**, in `research/infrastructure/homelab-message-broker.md`
   and its transport companion: they precede this code and are not only about it. Rationale that *is* only
   about this repo goes in [`research/`](research/).

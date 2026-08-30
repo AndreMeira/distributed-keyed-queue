@@ -3,6 +3,7 @@ package homelab.keyedqueue.infrastructure.redis.script
 
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.infrastructure.redis.Connection
+import io.lettuce.core.cluster.api.sync.RedisAdvancedClusterCommands
 import zio.*
 
 import java.nio.charset.StandardCharsets
@@ -52,9 +53,31 @@ object LuaScript:
     load(path).flatMap: text =>
       Connection.use: redis =>
         ZIO
-          .attemptBlocking(redis.scriptLoad(text.getBytes(StandardCharsets.UTF_8)))
+          .attemptBlocking(loadEverywhere(redis, text.getBytes(StandardCharsets.UTF_8)))
           .mapError(error => QueueError.StoreUnavailable(s"loading a script failed: ${error.getMessage}"))
           .map(Sha.apply)
+
+  /**
+   * Register a script on every node that might be asked to run it.
+   *
+   * `RedisAdvancedClusterCommands` overrides the cluster-wide script commands — `SCRIPT FLUSH`, `SCRIPT
+   * KILL` — but inherits `scriptLoad` unchanged, so on a cluster connection it still reaches a single node.
+   * With no `NOSCRIPT` fallback anywhere (see [[Scripts]]), a call routed to any other node would simply
+   * fail, which is why this reaches for the node-selection API instead.
+   *
+   * Every master answers with the same digest, since a digest is a hash of the script — so taking the first
+   * is not a choice between answers.
+   *
+   * @param redis the connection to register on
+   * @param script the script's bytes
+   * @return the digest the server gave it
+   */
+  private def loadEverywhere(redis: Connection.Commands, script: Array[Byte]): String =
+    redis match
+      case cluster: RedisAdvancedClusterCommands[?, ?] =>
+        cluster.masters().commands().scriptLoad(script).stream().findFirst().orElseThrow()
+      case standalone                                  =>
+        standalone.scriptLoad(script)
 
   /**
    * Read one script off the classpath.
