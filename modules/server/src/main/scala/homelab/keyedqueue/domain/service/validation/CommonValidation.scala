@@ -29,3 +29,16 @@ object CommonValidation:
    */
   def nonEmpty[A <: String](value: A, problem: InvalidInput): Validated[A] =
     if value.isEmpty then ZIO.fail(problem) else ZIO.succeed(value)
+
+  /**
+   * Require a count to be zero or more.
+   *
+   * Zero is legal wherever this is used — it is what "none of them" looks like — so the check is
+   * non-negative rather than strictly positive.
+   *
+   * @param value the count to check
+   * @param problem what to report when it is negative
+   * @return the count; fails with `problem` when it is below zero
+   */
+  def nonNegative(value: Int, problem: InvalidInput): Validated[Int] =
+    if value < 0 then ZIO.fail(problem) else ZIO.succeed(value)

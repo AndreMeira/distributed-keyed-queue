@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.service.validation
 
 import homelab.keyedqueue.domain.error.{ InvalidInput, QueueError }
 import homelab.keyedqueue.domain.model.Message
-import homelab.keyedqueue.domain.request.v1.{ DequeueRequest, EnqueueRequest }
+import homelab.keyedqueue.domain.request.v1.{ DequeueRequest, EnqueueRequest, SettleRequest }
 import homelab.keyedqueue.domain.syntax.*
 import homelab.keyedqueue.domain.types.*
 import zio.*
@@ -25,6 +25,22 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
     Message(MessageKey(key), messageId = "m1", payloadType = "test.Text/v1", Encoding.Json, None, Chunk.empty)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueInputValidation")(
+    test("a settle asking to discard a negative number of messages is refused") {
+      // Reachable because proto's uint32 decodes to a signed Int: anything at or above 2^31 arrives here
+      // negative. It must not reach LTRIM, which reads a negative start as an offset from the end and would
+      // keep the last N messages while discarding everything before them.
+      val request = SettleRequest(ClaimRef("anything"), Verdict.Done, Duration.Zero, discardAhead = -1)
+      for problems <- validation.parse(request).flip
+      yield assertTrue(problems == InvalidInput.NegativeDiscardAhead)
+    },
+    test("a settle discarding nothing, or something, passes") {
+      val none = SettleRequest(ClaimRef("anything"), Verdict.Done, Duration.Zero, discardAhead = 0)
+      val some = SettleRequest(ClaimRef("anything"), Verdict.Done, Duration.Zero, discardAhead = 7)
+      for
+        first  <- validation.parse(none).either
+        second <- validation.parse(some).either
+      yield assertTrue(first.isRight, second.isRight)
+    },
     test("a request with nothing wrong passes") {
       for
         enqueue <- validation.parse(EnqueueRequest(QueueName("jobs"), message("k1"))).exit

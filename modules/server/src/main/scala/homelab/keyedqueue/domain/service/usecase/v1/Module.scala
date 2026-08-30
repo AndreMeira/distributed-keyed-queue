@@ -26,6 +26,6 @@ object Module:
       SyncUseCases(
         enqueue = EnqueueUseCase(store, watchdog, validation),
         dequeue = DequeueUseCase(store, watchdog, validation, config.maxWait),
-        settle = SettleUseCase(store),
+        settle = SettleUseCase(store, validation),
         heartbeat = HeartbeatUseCase(store),
       )

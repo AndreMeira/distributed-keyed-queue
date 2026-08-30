@@ -121,6 +121,11 @@ would resolve to `None` — wasted round trips for ever, with no error anywhere.
   what the depth reported. An id is safe against a caller miscounting, but makes the server verify it
   against the head of `msgs` and decide what to do when it does not match. Worth settling before the proto
   ships, now that `protocol-wire` is publishable and field semantics become a contract.
+- ~~**Cap `discard_ahead`.**~~ Settled: it is validated as non-negative, not capped. Asking for more than
+  remain is legitimate — the backlog may have drained since the depth was read — and `LTRIM` clamps. A
+  *negative* is neither: `uint32` decodes to a signed `Int`, so a wire value at or above 2^31 arrives
+  negative, and `LTRIM` reads a negative start as an offset from the end. A discard of -2 would keep the
+  last two messages and drop everything before them. Refused in `QueueInputValidation`.
 - **Say in the contract that the queue never conflates on its own.** The consumer decides a message is
   superseded; the broker only reports depth and drops what it is told to. "Look-ahead" invites the opposite
   assumption, and someone will eventually expect log-compaction semantics.

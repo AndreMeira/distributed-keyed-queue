@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.validation
 
 
 import homelab.keyedqueue.domain.error.InvalidInput
-import homelab.keyedqueue.domain.request.v1.{ DequeueRequest, EnqueueRequest }
+import homelab.keyedqueue.domain.request.v1.{ DequeueRequest, EnqueueRequest, SettleRequest }
 import homelab.keyedqueue.domain.syntax.Validated
 import homelab.keyedqueue.domain.types.{ MessageKey, QueueName }
 import zio.ZIO
@@ -16,10 +16,13 @@ import zio.ZIO
  * everything, and the day a check needs the store — is this queue known? is this key parked? — that check
  * arrives as a constructor parameter instead of a rewrite of every call site.
  *
- * '''Only two of the four calls appear here.''' `Settle` and `Heartbeat` carry receipts, and an unreadable
- * receipt is deliberately *not* an input error: settle reports it stale, heartbeat lists it among what the
- * consumer has lost. Both are documented on their apply cases. Validating them here would turn a result a
- * caller must handle into an error it must catch, which is the opposite of the API's shape.
+ * '''A receipt is never validated here.''' `Settle` and `Heartbeat` carry receipts, and an unreadable one
+ * is deliberately *not* an input error: settle reports it stale, heartbeat lists it among what the consumer
+ * has lost. Both are documented on their apply cases. Validating them here would turn a result a caller must
+ * handle into an error it must catch, which is the opposite of the API's shape.
+ *
+ * `Settle` still appears below, for the one field on it that *is* a format-level input: how many messages
+ * behind this one to discard. `Heartbeat` carries nothing but receipts, so it has nothing to check.
  */
 final class QueueInputValidation:
 
@@ -46,6 +49,18 @@ final class QueueInputValidation:
    */
   def parse(request: DequeueRequest): Validated[Unit] =
     queue(request.queue).unit
+
+  /**
+   * Everything `Settle` needs to be actionable.
+   *
+   * Only the discard count. The receipt is not checked here — see the note on this class — and the outcome
+   * is an enum the wire layer has already refused if unspecified.
+   *
+   * @param request what the caller sent
+   * @return noop; fails with `NegativeDiscardAhead` when the count is below zero
+   */
+  def parse(request: SettleRequest): Validated[Unit] =
+    CommonValidation.nonNegative(request.discardAhead, InvalidInput.NegativeDiscardAhead).unit
 
   /**
    * A queue must be named.

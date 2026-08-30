@@ -27,10 +27,21 @@ enum InvalidInput:
   case EmptyMessageKey
 
   /**
+   * A settle asked to discard a negative number of messages behind it.
+   *
+   * Reachable despite the field being `uint32` on the wire, because that decodes to a *signed* `Int`: a
+   * value at or above 2^31 arrives here negative. Refused rather than clamped, because `LTRIM` reads a
+   * negative start as an offset from the end — a discard of -2 would keep the last two messages and drop
+   * everything before them, which is the opposite of what was asked.
+   */
+  case NegativeDiscardAhead
+
+  /**
    * What to tell the caller.
    *
    * @return the problem, phrased in terms of the request
    */
   def message: String = this match
-    case EmptyQueueName  => "a queue name is required"
-    case EmptyMessageKey => "a message key is required: it is what ordering is defined by"
+    case EmptyQueueName       => "a queue name is required"
+    case EmptyMessageKey      => "a message key is required: it is what ordering is defined by"
+    case NegativeDiscardAhead => "discard_ahead cannot be negative; zero means discard nothing"
