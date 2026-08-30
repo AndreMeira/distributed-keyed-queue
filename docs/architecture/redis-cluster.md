@@ -59,7 +59,7 @@ They differ in exactly two places:
    overrides the cluster-wide script commands — `SCRIPT FLUSH`, `SCRIPT KILL` — but **inherits `scriptLoad`
    unchanged**, so on a cluster connection it would still reach one node. With no `NOSCRIPT` fallback (see
    `Scripts`), a call routed anywhere else would simply fail. Broadcasting is the node-selection API,
-   `masters().commands().scriptLoad(bytes)`; every master returns the same digest, since a digest is a hash
+   `upstream().commands().scriptLoad(bytes)`; every master returns the same digest, since a digest is a hash
    of the script.
 
 The choice is made inside `Module.connection` rather than by a separate layer, because a layer cannot pick

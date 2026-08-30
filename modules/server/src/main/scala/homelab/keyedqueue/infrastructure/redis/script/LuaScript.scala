@@ -65,8 +65,9 @@ object LuaScript:
    * With no `NOSCRIPT` fallback anywhere (see [[Scripts]]), a call routed to any other node would simply
    * fail, which is why this reaches for the node-selection API instead.
    *
-   * Every master answers with the same digest, since a digest is a hash of the script — so taking the first
-   * is not a choice between answers.
+   * `upstream()` rather than `masters()`: the latter is the same selection under Lettuce's older name, and
+   * is deprecated. Every node answers with the same digest, since a digest is a hash of the script — so
+   * taking the first is not a choice between answers.
    *
    * @param redis the connection to register on
    * @param script the script's bytes
@@ -75,7 +76,7 @@ object LuaScript:
   private def loadEverywhere(redis: Connection.Commands, script: Array[Byte]): String =
     redis match
       case cluster: RedisAdvancedClusterCommands[?, ?] =>
-        cluster.masters().commands().scriptLoad(script).stream().findFirst().orElseThrow()
+        cluster.upstream().commands().scriptLoad(script).stream().findFirst().orElseThrow()
       case standalone                                  =>
         standalone.scriptLoad(script)
 

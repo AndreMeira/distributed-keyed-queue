@@ -83,12 +83,22 @@ object Connection:
   opaque type Commands <: RedisClusterCommands[String, Array[Byte]] = RedisClusterCommands[String, Array[Byte]]
 
   /**
+   * Ask for the connection in the environment, and run something with it.
    *
-   * @param effect
-   * @tparam R
-   * @tparam E
-   * @tparam A
-   * @return
+   * '''The requiring side, not the providing one.''' A [[Connection]]'s `provide` and `provideBlocking`
+   * decide which connection an effect gets; this is how the effect says it needs one at all. The two meet
+   * in the environment: everything below the port — every script's `run`, and script registration — is
+   * written as `ZIO[Commands, …]` and never learns whether the connection it was handed is shared,
+   * borrowed, standalone or clustered.
+   *
+   * Takes a function rather than an effect because the Lettuce API is not effectful: the callers all wrap a
+   * blocking call, and handing them the connection directly saves each one a `ZIO.service` of its own.
+   *
+   * @param effect what to run with the connection
+   * @tparam R what it needs besides the connection
+   * @tparam E how it fails
+   * @tparam A what it produces
+   * @return the same effect, now declaring that it needs a connection
    */
   def use[R, E, A](effect: Commands => ZIO[R, E, A]): ZIO[R & Commands, E, A] =
     ZIO.serviceWithZIO[Connection.Commands](effect)
