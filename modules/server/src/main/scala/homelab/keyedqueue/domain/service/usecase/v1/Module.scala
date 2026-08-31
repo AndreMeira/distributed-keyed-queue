@@ -11,8 +11,9 @@ import zio.ZLayer
  * Wiring for the synchronous apply cases.
  *
  * Everything it needs is a port or a domain value, so this layer says exactly what the domain depends on:
- * somewhere to keep the queue, something that repairs abandoned work, what makes a request valid, and
- * the limits to enforce. No adapter appears here, which is the property worth keeping.
+ * somewhere to keep the queue, something that repairs abandoned work, and the parse that turns a request
+ * into something the store accepts. The service's limits are not among them any more — they belong to the
+ * parse, which is what enforces them. No adapter appears here, which is the property worth keeping.
  */
 object Module:
 
@@ -21,11 +22,11 @@ object Module:
    *
    * @return the layer
    */
-  val useCases: ZLayer[QueueStore & Watchdog & QueueInputValidation & SyncUseCases.Config, Nothing, SyncUseCases] =
-    ZLayer.fromFunction: (store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation, config: SyncUseCases.Config) =>
+  val useCases: ZLayer[QueueStore & Watchdog & QueueInputValidation, Nothing, SyncUseCases] =
+    ZLayer.fromFunction: (store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation) =>
       SyncUseCases(
         enqueue = EnqueueUseCase(store, watchdog, validation),
-        dequeue = DequeueUseCase(store, watchdog, validation, config.maxWait, config.maxBatchLimit),
+        dequeue = DequeueUseCase(store, watchdog, validation),
         settle = SettleUseCase(store, validation),
-        heartbeat = HeartbeatUseCase(store),
+        heartbeat = HeartbeatUseCase(store, validation),
       )

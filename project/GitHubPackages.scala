@@ -5,8 +5,11 @@ import sbt._
  *
  * Both halves are here because they share one credential and are asymmetric in a way that is easy to get
  * wrong. **Publishing** from CI needs no secret of its own — Actions' built-in `GITHUB_TOKEN` can write to
- * its own repo's registry. **Consuming** needs a *classic* PAT with `read:packages`, since GitHub Packages
- * serves Maven only to authenticated callers, public repo or not.
+ * its own repo's registry. **Consuming** needs credentials of some kind, because GitHub Packages serves
+ * Maven only to authenticated callers, public repo or not; a laptop has no built-in token, so there it
+ * means a *classic* PAT with `read:packages`. Note that the toolkit's packages being public makes
+ * authorisation trivial — any authenticated identity may read them — so it is the authentication, not the
+ * scope, that a consumer is really missing.
  *
  * The catch for this repo in particular: it does both at once. A release resolves the toolkit from
  * *another* repo's registry and publishes to its own, and sbt matches credentials by host — so a single sbt

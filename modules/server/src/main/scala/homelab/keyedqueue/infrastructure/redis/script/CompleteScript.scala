@@ -2,7 +2,7 @@ package homelab.keyedqueue.infrastructure.redis.script
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.model.Claim
+import homelab.keyedqueue.domain.model.{ Claim, Settlement }
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
 import io.lettuce.core.ScriptOutputType
@@ -30,20 +30,14 @@ final class CompleteScript(ref: LuaScript.Sha):
   /**
    * Report what became of some of the claim's messages.
    *
-   * @param claim the claim being settled against, and the token that authorises it
-   * @param outcomes what became of each message named, by id
-   * @param retryAfter how long the key should wait before anyone works it again, asked for by a nack;
-   *                   several nacks in one claim leave the longest wait standing
+   * @param settlement the claim being settled against, what became of the messages it names, and any
+   *                   backoff a failure asked for — several in one claim leave the longest wait standing
    * @return whether it applied; aborts with `QueueError` when the store fails or the reply cannot be read
    */
-  def run(
-    claim: Claim,
-    outcomes: Chunk[(MessageId, Verdict)],
-    retryAfter: Duration,
-  ): ZIO[Connection.Commands, QueueError, Boolean] =
+  def run(settlement: Settlement): ZIO[Connection.Commands, QueueError, Boolean] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking(redis.evalsha[Any](ref, output, keys(claim), args(claim, outcomes, retryAfter)*))
+        .attemptBlocking(redis.evalsha[Any](ref, output, keys(settlement.claimed), args(settlement)*))
         .mapError(LuaScript.failure)
         .flatMap(reply => ZIO.fromEither(read(reply)))
 
@@ -76,25 +70,26 @@ final class CompleteScript(ref: LuaScript.Sha):
    * Flattened into pairs rather than sent as a structure, because a script's arguments are a flat array —
    * the script reads them two at a time from position four.
    *
-   * @param claim the claim being settled against, and the token that authorises it
-   * @param outcomes what became of each message named, by id
-   * @param retryAfter how long the key should wait, asked for by a nack
+   * No backoff is sent as `0`, which is what the script reads as "as soon as it is free" — the domain's
+   * `None` has to become a number somewhere, and the wire to Redis is a flat array of strings.
+   *
+   * @param settlement the claim being settled against, what became of the messages it names, and any backoff
    * @return `key`, `token`, `retryAfter`, then `id`, `verdict` repeated, in the order `lua/complete.lua`
    *         reads them
    */
-  private def args(
-    claim: Claim,
-    outcomes: Chunk[(MessageId, Verdict)],
-    retryAfter: Duration,
-  ): Array[Array[Byte]] =
-    val settle = Chunk(
+  private def args(settlement: Settlement): Array[Array[Byte]] = {
+    val claim = settlement.claimed
+    Chunk(
       LuaScript.utf8(claim.key),
       LuaScript.utf8(claim.token.toString),
-      LuaScript.utf8(retryAfter.toMillis.toString),
-    )
-    val each   = outcomes.flatMap: (id, verdict) =>
-      Chunk(LuaScript.utf8(id), LuaScript.utf8(if verdict == Verdict.Done then "ack" else "nack"))
-    (settle ++ each).toArray
+      LuaScript.utf8(settlement.retryAfter.fold(0L)(_.toMillis).toString),
+    ) ++ settlement.outcomes.toChunk.flatMap { outcome =>
+      Chunk(
+        LuaScript.utf8(outcome.messageId),
+        LuaScript.utf8(if outcome.verdict == Verdict.Done then "ack" else "nack"),
+      )
+    }
+  }.toArray
 
   /**
    * Read whether the settle applied.

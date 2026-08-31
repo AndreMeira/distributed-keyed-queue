@@ -2,14 +2,14 @@ package homelab.keyedqueue.domain.service.usecase.v1
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.model.{ Claimed, Delivery }
-import homelab.keyedqueue.domain.request.v1.DequeueRequest
-import homelab.keyedqueue.domain.response.v1.DequeueResponse
+import homelab.keyedqueue.domain.model.Claimed
+import homelab.keyedqueue.domain.request.v1.QueueRequest
+import homelab.keyedqueue.domain.response.v1.QueueResponse
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
 import homelab.keyedqueue.domain.syntax.*
-import zio.{ duration2DurationOps, Chunk, Duration, IO }
+import zio.{ Chunk, Duration, IO, NonEmptyChunk, duration2DurationOps }
 
 
 /**
@@ -22,17 +22,9 @@ import zio.{ duration2DurationOps, Chunk, Duration, IO }
  *
  * @param store where the queue lives
  * @param watchdog told about the queue, so its abandoned work is repaired
- * @param validation what makes a request actionable
- * @param maxWait the longest wait this service will honour
- * @param maxBatchLimit the most messages this service will hand over in one claim
+ * @param validation what turns a request into a demand this service will honour
  */
-final class DequeueUseCase(
-  store: QueueStore,
-  watchdog: Watchdog,
-  validation: QueueInputValidation,
-  maxWait: Duration,
-  maxBatchLimit: Int,
-):
+final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation):
 
   /**
    * Wait for a message.
@@ -40,18 +32,17 @@ final class DequeueUseCase(
    * A caller asking to wait longer than the service allows is clamped rather than refused: patience is a
    * preference, not a mistake, and the response says when the wait actually ended. The same for asking for
    * a bigger batch than the service will hand over — the response says how many came back, and
-   * `backlogDepth` says how many were left.
+   * `backlogDepth` says how many were left. Both clamps happen in the parse, which is what makes a
+   * `Demand` mean "within this service's limits" wherever one turns up.
    *
-   * @param request the queue and how long the caller will wait, clamped to the service's ceiling
+   * @param request the queue and what the caller is asking for, untrusted
    * @return the delivery, or nothing when none became ready in time; aborts with `InvalidRequest` when the
-   *         queue is unnamed, or with `QueueError` when the store fails
+   *         queue is unnamed or the batch is negative, or with `QueueError` when the store fails
    */
-  def apply(request: DequeueRequest): IO[QueueError, DequeueResponse] =
-    val patience = if request.maxWait > maxWait then maxWait else request.maxWait
-    val batch    = request.maxBatch.max(1).min(maxBatchLimit)
-    validation.parse(request).orFail
-      *> watchdog.watch(request.queue)
-      *> store.claim(request.queue, patience, batch).map(response)
+  def apply(request: QueueRequest.Dequeue): IO[QueueError, QueueResponse.Dequeue] =
+    validation.parse(request).orFail.flatMap { demand =>
+      watchdog.watch(demand.queue) *> store.claim(demand).map(response)
+    }
 
   /**
    * Present what the store returned as the answer the caller gets.
@@ -63,16 +54,24 @@ final class DequeueUseCase(
    * @param claimed what the store handed over, or nothing when the wait elapsed first
    * @return the response, carrying a claim only when there was one
    */
-  private def response(claimed: Option[Claimed]): DequeueResponse =
+  private def response(claimed: Option[Claimed]): QueueResponse.Dequeue =
     claimed match {
+      case None        => QueueResponse.Dequeue.Empty
       case Some(batch) =>
-        val delivered = batch.messages.map(owned => Delivery(owned.id, owned.message, owned.attempt))
-        DequeueResponse(
-          Some(batch.claim.reference),
-          Some(delivered.head),
-          Chunk.fromIterable(delivered.tail),
-          Some(batch.leaseExpiresAt),
+        val deliveries = toDeliveries(batch)
+        QueueResponse.Dequeue.NonEmpty(
+          batch.claim.reference,
+          deliveries.head,
+          Chunk.fromIterable(deliveries.tail),
+          batch.leaseExpiresAt,
           batch.backlogDepth,
         )
-      case None        => DequeueResponse(None, None, Chunk.empty, None, 0)
     }
+
+  /**
+   *
+   * @param claimed
+   * @return
+   */
+  private def toDeliveries(claimed: Claimed): NonEmptyChunk[QueueResponse.Delivery] =
+    claimed.messages.map(owned => QueueResponse.Delivery(owned.id, owned.message, owned.attempt))

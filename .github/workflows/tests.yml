@@ -25,10 +25,10 @@ jobs:
     timeout-minutes: 20
     env:
       # GitHubPackages.credentials (project/) reads these; the toolkit resolves from GitHub Packages, which
-      # serves Maven only to authenticated callers. The toolkit lives in another repository, so the default
-      # GITHUB_TOKEN can only read it if that package grants this repo Actions access — set
-      # HOMELAB_PACKAGES_PAT (a classic PAT with read:packages) to use one credential across every homelab
-      # consumer instead.
+      # serves Maven only to authenticated callers — no anonymous fetch at any visibility. The toolkit's
+      # packages are public, so the built-in GITHUB_TOKEN is identity enough and the fallback carries this
+      # on its own. HOMELAB_PACKAGES_PAT (a classic PAT with read:packages) is one credential across every
+      # homelab consumer, and the thing that keeps this working if the toolkit ever goes private.
       GITHUB_ACTOR: ${{ github.actor }}
       GITHUB_TOKEN: ${{ secrets.HOMELAB_PACKAGES_PAT || secrets.GITHUB_TOKEN }}
     steps:

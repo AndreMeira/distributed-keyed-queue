@@ -7,6 +7,7 @@
 
 val scala3Version         = "3.8.3"
 val zioVersion            = "2.1.23"
+val zioPreludeVersion     = "1.0.0-RC47" // the toolkit's version; Validation is a domain-level type here
 val toolkitVersion        = "0.0.1-alpha"
 val scalapbVersion        = "0.11.17"       // keep in sync with compilerplugin in project/plugins.sbt
 val zioGrpcVersion        = "0.6.3"
@@ -189,6 +190,9 @@ lazy val server = project
       "com.andremeira.homelab" %% "homelab-common"   % toolkitVersion,
       "com.andremeira.homelab" %% "homelab-postgres" % toolkitVersion,
       "dev.zio"                %% "zio"              % zioVersion,
+      // Validation as a value: accumulating rather than fail-fast, which ZIO's error channel cannot be.
+      // Comes transitively with homelab-common; named here because the domain uses it directly.
+      "dev.zio"                %% "zio-prelude"      % zioPreludeVersion,
       // Redis: the substrate. Lettuce rather than zio-redis, which derives its Input/Output from a
       // zio-schema BinaryCodec — that encodes keys and args, and this design needs them byte-exact
       // (the Lua builds key names by concatenation) plus heterogeneous script replies.

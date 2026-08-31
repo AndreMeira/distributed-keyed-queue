@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.persistence
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.model.{ Claim, Claimed, Message }
+import homelab.keyedqueue.domain.model.{ Claim, Claimed, Demand, Settlement, Submission }
 import homelab.keyedqueue.domain.types.*
 import zio.{ Chunk, Duration, IO }
 
@@ -28,43 +28,37 @@ trait QueueStore:
    *
    * The key is the message's own, so a message cannot be filed under a key that disagrees with it.
    *
-   * @param queue the queue to append to
-   * @param message the message, ordered by its own key
+   * @param submission where the message goes, and the message
    * @return the key's queue depth after the append; aborts with `QueueError` if the store fails
    */
-  def enqueue(queue: QueueName, message: Message): IO[QueueError, Long]
+  def enqueue(submission: Submission): IO[QueueError, Long]
 
   /**
-   * Wait up to `timeout` for a key to become claimable, then take its oldest message.
+   * Wait for a key to become claimable, then take the oldest of its messages the demand allows for.
    *
-   * Blocks the calling fiber, and with it the connection this store instance owns, which is why a claimer is
-   * a scarce resource rather than something to fork per request.
+   * Blocks the calling fiber, and with it a connection, which is why the blocking pool's size — not the
+   * number of keys — is what bounds concurrent claims, and why this is not something to fork per request.
    *
-   * @param queue the queue to claim from
-   * @param timeout how long to wait for work
+   * One claim covers the whole batch: the key is what is owned, so nothing else may work any of these
+   * messages until the claim ends, however many it turned out to contain.
+   *
+   * @param demand the queue to claim from, how long to wait, and the most to take
    * @return the claim, or `None` when nothing became claimable in time; aborts with `QueueError` if the
    *         store fails
    */
-  def claim(queue: QueueName, timeout: Duration, maxBatch: Int): IO[QueueError, Option[Claimed]]
+  def claim(demand: Demand): IO[QueueError, Option[Claimed]]
 
   /**
-   * Report what happened to a claimed message.
+   * Report what happened to some of what a claim owns.
    *
-   * @param claim the claim being settled
-   * @param verdict what the consumer decided
-   * @param retryAfter how long to hold the key back before retrying; ignored for `Verdict.Done`
-   * @param outcomes what became of each message named, by id. A claim may be settled piece by piece: what
-   *                 is not named stays owed, and the claim ends — releasing the key — once nothing is. An
-   *                 id this claim does not own is ignored rather than refused, which is what makes a
-   *                 retried settle harmless
+   * An id the claim does not own is ignored rather than refused, which is what makes a retried settle
+   * harmless: settling removes the id from what the claim owns, and removing it again finds nothing.
+   *
+   * @param settlement the claim, what became of the messages it names, and any backoff
    * @return true when applied, false when the claim had already been revoked; aborts with `QueueError` if
    *         the store fails
    */
-  def settle(
-    claim: Claim,
-    outcomes: Chunk[(MessageId, Verdict)],
-    retryAfter: Duration,
-  ): IO[QueueError, Boolean]
+  def settle(settlement: Settlement): IO[QueueError, Boolean]
 
   /**
    * Push the deadline forward on the claims still held, and say which are gone.

@@ -1,5 +1,7 @@
 package homelab.keyedqueue.domain.error
 
+import homelab.common.error.ValidationError
+
 
 /**
  * One thing wrong with a request, named.
@@ -9,11 +11,16 @@ package homelab.keyedqueue.domain.error
  * pass, all the problems" expressible — an error type that could only ever hold one reason would force
  * validation to stop at the first.
  *
+ * '''An implementation of the homelab's [[ValidationError.InvalidInput]].''' The contract is one problem
+ * with a `message`; this enumerates the ones a queue can have. Sharing the contract is what lets
+ * [[homelab.keyedqueue.domain.syntax.Validated]] be the toolkit's accumulating `Validation` rather than
+ * something local.
+ *
  * '''Named cases rather than free text.''' A case is something a test can assert on and a caller could one
  * day branch on; a string is something both have to pattern-match by eye. The wording lives in [[message]],
  * in one place, phrased for whoever reads the failed call.
  */
-enum InvalidInput:
+enum InvalidInput extends ValidationError.InvalidInput:
 
   /** No queue was named. There is no default queue, and inventing one would silently misroute the message. */
   case EmptyQueueName
@@ -48,6 +55,25 @@ enum InvalidInput:
   case DuplicateDiscardId
 
   /**
+   * A settle carried something that is not a receipt this service issued.
+   *
+   * Distinct from a claim that has been revoked, which is reported as `Stale` rather than refused: that one
+   * is a race a correct consumer can lose — it was late — while this one is a string that was never a
+   * receipt at all, and no amount of retrying makes it one.
+   */
+  case UnreadableReceipt
+
+  /**
+   * A settle named no messages at all.
+   *
+   * Refused rather than accepted as a no-op: it would decide nothing — the claim stays exactly as owed as
+   * it was — while costing a round trip and reading, to whoever sent it, like something happened. A
+   * consumer with nothing to report should send nothing, or a heartbeat if what it wants is to keep the
+   * lease.
+   */
+  case EmptySettle
+
+  /**
    * A dequeue asked for a negative batch size.
    *
    * Reachable because `uint32` on the wire decodes to a signed `Int`: a value at or above 2^31 arrives here
@@ -61,10 +87,12 @@ enum InvalidInput:
    *
    * @return the problem, phrased in terms of the request
    */
-  def message: String = this match
+  override def message: String = this match
     case EmptyQueueName     => "a queue name is required"
     case EmptyMessageKey    => "a message key is required: it is what ordering is defined by"
     case EmptyMessageId     => "a message id is required: it is what a message is addressed by"
     case EmptyDiscardId     => "a discarded message must be named"
     case DuplicateDiscardId => "the same message was named twice to discard"
+    case UnreadableReceipt  => "the receipt is not one this service issued"
+    case EmptySettle        => "a settle must name at least one message"
     case NegativeMaxBatch   => "max_batch cannot be negative; zero or one means one message"

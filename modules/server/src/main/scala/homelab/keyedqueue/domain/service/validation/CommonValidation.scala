@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.service.validation
 
 import homelab.keyedqueue.domain.error.InvalidInput
 import homelab.keyedqueue.domain.syntax.Validated
-import zio.ZIO
+import zio.prelude.Validation
 
 
 /**
@@ -28,7 +28,7 @@ object CommonValidation:
    * @return the value; fails with `problem` when it is empty
    */
   def nonEmpty[A <: String](value: A, problem: InvalidInput): Validated[A] =
-    if value.isEmpty then ZIO.fail(problem) else ZIO.succeed(value)
+    if value.isEmpty then Validation.fail(problem) else Validation.succeed(value)
 
   /**
    * Require a count to be zero or more.
@@ -41,4 +41,4 @@ object CommonValidation:
    * @return the count; fails with `problem` when it is below zero
    */
   def nonNegative(value: Int, problem: InvalidInput): Validated[Int] =
-    if value < 0 then ZIO.fail(problem) else ZIO.succeed(value)
+    if value < 0 then Validation.fail(problem) else Validation.succeed(value)

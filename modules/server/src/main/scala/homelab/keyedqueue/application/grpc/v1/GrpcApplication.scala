@@ -35,7 +35,7 @@ object GrpcApplication:
       redis.Module.scripts,
       redis.Module.store,
       homelab.keyedqueue.domain.service.maintenance.Module.watchdog,
-      homelab.keyedqueue.infrastructure.configuration.Module.syncUseCases,
+      homelab.keyedqueue.infrastructure.configuration.Module.validation,
       homelab.keyedqueue.infrastructure.configuration.Module.watchdog,
       validation.Module.input,
       usecase.Module.useCases,

@@ -38,10 +38,19 @@ object Claim:
   /**
    * Read back a reference handed out by [[Claim.reference]].
    *
+   * Takes a `String` rather than a [[ClaimRef]]: a reference off the wire is a string a consumer sent, and
+   * this is the mechanics of deciding whether it is a receipt. `ClaimRef` is what this service *hands out*
+   * — evidence of a claim it granted — so requiring one here would mean minting it before the check.
+   *
+   * Answers with an `Option` rather than refusing, because its two callers disagree about what a failure
+   * means: settle's validator turns `None` into an input problem, while a heartbeat lists an unreadable
+   * receipt among the claims the consumer has lost — refusing the whole call there would cost it the
+   * renewals that were good.
+   *
    * @param reference the opaque string from the consumer
    * @return the claim it names, or `None` when it is not one we issued
    */
-  def fromReference(reference: ClaimRef): Option[Claim] =
+  def fromReference(reference: String): Option[Claim] =
     scala.util
       .Try(String(Base64.getUrlDecoder.decode(reference), StandardCharsets.UTF_8))
       .toOption

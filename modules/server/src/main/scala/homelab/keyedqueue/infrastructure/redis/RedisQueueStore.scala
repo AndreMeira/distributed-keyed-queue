@@ -2,7 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.model.{ Claim, Claimed, Message }
+import homelab.keyedqueue.domain.model.{ Claim, Claimed, Demand, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.domain.types.*
@@ -52,13 +52,12 @@ final class RedisQueueStore(
    * The message is serialised here rather than by the caller: what a message looks like at rest is this
    * adapter's choice — see [[StoredMessage]].
    *
-   * @param queue the queue to append in
-   * @param message the message; the key it carries decides where it lands
+   * @param submission the queue to append in, and the message; the key it carries decides where it lands
    * @return the key's depth after the append
    */
-  override def enqueue(queue: QueueName, message: Message): IO[QueueError, Long] =
+  override def enqueue(submission: Submission): IO[QueueError, Long] =
     connection.provide:
-      scripts.produce.run(Namespace(queue), message)
+      scripts.produce.run(Namespace(submission.queue), submission.message)
 
   /**
    * The only operation that can occupy a connection, so the only one that borrows.
@@ -67,37 +66,33 @@ final class RedisQueueStore(
    * else shares one: the pool's size is the ceiling on concurrent claims, and a caller that cannot get a
    * connection waits for a peer rather than opening another.
    *
-   * @param queue the queue to claim from
-   * @param timeout how long to wait for work
+   * @param demand the queue to claim from, how long to wait, and the most to take
    * @return the claim, or `None` on timeout
    */
-  override def claim(queue: QueueName, timeout: Duration, maxBatch: Int): IO[QueueError, Option[Claimed]] =
-    val ns = Namespace(queue)
+  override def claim(demand: Demand): IO[QueueError, Option[Claimed]] =
+    val ns = Namespace(demand.queue)
     connection.provideBlocking: claimer =>
       register(ns, claimer) *> ZIO
         .uninterruptibleMask: restore =>
-          restore(take(ns, claimer, timeout)).flatMap:
+          restore(take(ns, claimer, demand.patience)).flatMap:
             case None      => ZIO.none
-            case Some(key) => scripts.consume.run(ns, claimer, MessageKey(key), leaseTtl, maxBatch)
+            case Some(key) => scripts.consume.run(ns, claimer, MessageKey(key), leaseTtl, demand.batch)
         .onInterrupt(release(ns, claimer))
 
   /**
-   * One `complete` call, which advances the key's fence as well as applying the verdict — so a replayed
-   * settle finds its token spent and reports stale rather than acting twice.
+   * One `complete` call, which checks the token every time and advances it only when the claim ends — a
+   * partial settle has to leave the receipt usable for the rest of the batch.
    *
-   * @param claim the claim being settled, and the token that authorises it
-   * @param verdict what became of the message
-   * @param retryAfter how long to hold a failed message back; ignored when the verdict is `Done`
-   * @param outcomes what became of each message named, by id
+   * So it is not the fence that makes a replay harmless here: settling removes the id from the claim's
+   * owned set, and removing it a second time finds nothing. The fence is what invalidates the receipt
+   * once the claim is over, or once the watchdog has revoked it.
+   *
+   * @param settlement the claim, what became of the messages it names, and any backoff
    * @return whether it applied
    */
-  override def settle(
-    claim: Claim,
-    outcomes: Chunk[(MessageId, Verdict)],
-    retryAfter: Duration,
-  ): IO[QueueError, Boolean] =
+  override def settle(settlement: Settlement): IO[QueueError, Boolean] =
     connection.provide:
-      scripts.complete.run(claim, outcomes, retryAfter)
+      scripts.complete.run(settlement)
 
   /**
    * One `heartbeat` call '''per queue''', because worker liveness and claims are namespaced by queue while a

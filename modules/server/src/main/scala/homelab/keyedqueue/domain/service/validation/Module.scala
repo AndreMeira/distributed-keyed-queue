@@ -7,11 +7,13 @@ import zio.ZLayer
 object Module:
 
   /**
-   * The input validator, which needs nothing to do its job today.
+   * The parse, and the limits it holds callers to.
    *
    * A layer rather than a constant so that the day a check needs the store, only this file changes: its
-   * requirement grows and every apply case keeps asking for the same thing.
+   * requirement grows and every use case keeps asking for the same thing. Today that requirement is the
+   * service's bounds, which the parse enforces by building a `Demand` that cannot exceed them.
    *
    * @return the layer
    */
-  val input: ZLayer[Any, Nothing, QueueInputValidation] = ZLayer.succeed(QueueInputValidation())
+  val input: ZLayer[QueueInputValidation.Config, Nothing, QueueInputValidation] =
+    ZLayer.fromFunction(QueueInputValidation.apply)

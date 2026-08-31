@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.error
 
 
-import homelab.common.error.ApplicationError
+import homelab.common.error.{ ApplicationError, ValidationError }
 import zio.NonEmptyChunk
 
 
@@ -25,8 +25,11 @@ enum QueueError extends ApplicationError:
    *
    * Carrying a `NonEmptyChunk` is what makes accumulating validation worth doing: a caller that sent two bad
    * fields learns about both in one round trip instead of fixing one and being told about the next.
+   *
+   * Typed as the toolkit's contract rather than this service's [[InvalidInput]], because that is what
+   * `Validated` accumulates — the enum's cases arrive through it unchanged.
    */
-  case InvalidRequest(problems: NonEmptyChunk[InvalidInput]) extends QueueError, ApplicationError.DomainError
+  case InvalidRequest(problems: NonEmptyChunk[ValidationError.InvalidInput]) extends QueueError, ApplicationError.DomainError
 
   /**
    * The service's own configuration is unusable.

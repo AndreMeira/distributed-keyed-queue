@@ -39,10 +39,19 @@ else is yours to choose.
 
 ## Getting them
 
-They resolve from **GitHub Packages**, which serves Maven only to authenticated callers — repo visibility
-does not change that, and it has to be a **classic** PAT. One token with `read:packages` covers every
+They resolve from **GitHub Packages**, which serves Maven only to authenticated callers. There is no
+anonymous fetch at any visibility — but *authorisation* is a separate gate from authentication, and these
+packages are public, so any authenticated identity may read them. Which is to say: what a consumer is
+missing is a way to authenticate, not a permission.
+
+**In CI that is free.** Every Actions run has a built-in `GITHUB_TOKEN`; pass it as the sbt credential
+(`GITHUB_ACTOR` / `GITHUB_TOKEN`) with `permissions: packages: read` and nothing has to be created. dkq's
+own tests resolved the toolkit that way for a week before any secret existed.
+
+**On a laptop it is not**, because there is no built-in token, and it has to be a **classic** PAT — the
+Maven registry predates fine-grained tokens and rejects them. One token with `read:packages` covers every
 package on the account, so if you already consume `homelab-toolkit-zio` you have what you need and can skip
-this section.
+the rest of this section.
 
 ```
 # ~/.sbt/1.0/credentials — never in a repo

@@ -3,7 +3,7 @@ package homelab.keyedqueue.infrastructure.configuration
 
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
-import homelab.keyedqueue.domain.service.usecase.v1.SyncUseCases
+import homelab.keyedqueue.domain.service.validation.QueueInputValidation
 import zio.ZLayer
 
 
@@ -23,12 +23,12 @@ object Module:
   val config: ZLayer[Any, QueueError, QueueConfig] = ZLayer(QueueConfig.load)
 
   /**
-   * The slice of it the domain is allowed to know.
+   * The slice of it the parse is allowed to know.
    *
    * @return the layer
    */
-  val syncUseCases: ZLayer[QueueConfig, Nothing, SyncUseCases.Config] =
-    ZLayer.fromFunction((config: QueueConfig) => SyncUseCases.Config(config.maxWait, config.maxBatchLimit))
+  val validation: ZLayer[QueueConfig, Nothing, QueueInputValidation.Config] =
+    ZLayer.fromFunction((config: QueueConfig) => QueueInputValidation.Config(config.maxWait, config.maxBatchLimit))
 
   /**
    * The slice of it the repair loop is allowed to know.

@@ -64,9 +64,11 @@ jobs:
       - name: Test
         env:
           # READING another repo's registry: `server` resolves the homelab toolkit, and GitHub Packages
-          # serves Maven only to authenticated callers. The built-in GITHUB_TOKEN cannot read a package
-          # belonging to another repo unless that package grants this one access, so this half — and only
-          # this half — needs HOMELAB_PACKAGES_PAT, a classic PAT with `read:packages`.
+          # serves Maven only to authenticated callers — there is no anonymous fetch, whatever the
+          # visibility. Authorisation is the separate gate, and the toolkit's packages are PUBLIC, so any
+          # authenticated identity may read them: the fallback alone has worked since the first run here.
+          # The PAT is what makes this survive the toolkit going private, where a token would have to be
+          # granted access explicitly.
           GITHUB_TOKEN: ${{ secrets.HOMELAB_PACKAGES_PAT || secrets.GITHUB_TOKEN }}
         run: sbt -batch -no-colors test
 

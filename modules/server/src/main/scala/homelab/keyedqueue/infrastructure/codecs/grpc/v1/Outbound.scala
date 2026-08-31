@@ -3,7 +3,7 @@ package homelab.keyedqueue.infrastructure.codecs.grpc.v1
 
 import com.google.protobuf.ByteString
 import com.google.protobuf.timestamp.Timestamp
-import homelab.keyedqueue.domain.model.{ Delivery, Message }
+import homelab.keyedqueue.domain.model.Message
 import homelab.keyedqueue.domain.response.v1.*
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.v1
@@ -43,7 +43,8 @@ object Outbound:
   // Likewise for the lease: no claim, no deadline.
   private given Transformer[Option[Instant], Option[Timestamp]] =
     _.map(instant => Timestamp(instant.getEpochSecond, instant.getNano))
-  private given Transformer[ClaimRef, String]                   = identity(_)
+
+  private given Transformer[ClaimRef, String] = identity(_)
 
   private given Transformer[Chunk[Byte], ByteString] =
     bytes => ByteString.copyFrom(bytes.toArray)
@@ -65,7 +66,8 @@ object Outbound:
   private given Transformer[Message, Option[v1.Message]] =
     message => Some(toProto(message))
 
-  private given Transformer[Delivery, v1.Delivery] = Transformer.derive[Delivery, v1.Delivery]
+  private given Transformer[QueueResponse.Delivery, v1.Delivery] =
+    Transformer.derive[QueueResponse.Delivery, v1.Delivery]
 
   /**
    * The wire form of a message, which is also how it is stored.
@@ -76,19 +78,27 @@ object Outbound:
   def toProto(message: Message): v1.Message =
     message.transformInto[v1.Message]
 
-  extension (response: EnqueueResponse)
+  extension (response: QueueResponse.Enqueue)
     /** @return the wire response */
     def toProto: v1.EnqueueResponse =
       response.transformInto[v1.EnqueueResponse]
 
-  extension (response: DequeueResponse)
-    /** @return the wire response; an absent delivery is a timeout, not an error */
-    def toProto: v1.DequeueResponse = response.transformInto[v1.DequeueResponse]
+  extension (response: QueueResponse.Dequeue)
+    /**
+     * The one response the derivation cannot carry alone: the domain states "claim or nothing" as a choice,
+     * the wire states it as fields that are absent together. Matching here is what keeps that flattening in
+     * the codec, where wire concerns belong, rather than in a domain shaped around the proto.
+     *
+     * @return the wire response; an empty one is a timeout, not an error
+     */
+    def toProto: v1.DequeueResponse = response match
+      case QueueResponse.Dequeue.Empty             => v1.DequeueResponse()
+      case granted: QueueResponse.Dequeue.NonEmpty => granted.transformInto[v1.DequeueResponse]
 
-  extension (response: SettleResponse)
+  extension (response: QueueResponse.Settle)
     /** @return the wire response */
     def toProto: v1.SettleResponse = response.transformInto[v1.SettleResponse]
 
-  extension (response: HeartbeatResponse)
+  extension (response: QueueResponse.Heartbeat)
     /** @return the wire response */
     def toProto: v1.HeartbeatResponse = response.transformInto[v1.HeartbeatResponse]

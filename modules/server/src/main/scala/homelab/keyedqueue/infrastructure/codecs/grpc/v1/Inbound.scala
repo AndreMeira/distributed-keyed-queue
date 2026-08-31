@@ -29,10 +29,19 @@ import java.time.Instant
  */
 object Inbound:
 
-  private given Transformer[String, QueueName]  = QueueName(_)
+  /**
+   * The only domain names minted here, and not on any request's behalf.
+   *
+   * Both exist for [[message]], which the storage codec uses to read back what this service itself wrote.
+   * Those bytes came from a message that had already been parsed, so reconstructing its names restores
+   * evidence rather than inventing it.
+   *
+   * '''No request crosses through them.''' Every request's fields arrive as the strings they are, and the
+   * names are minted by the parse, once something has checked them — which is why there is no
+   * `String => QueueName` or `String => ClaimRef` here to reach for.
+   */
   private given Transformer[String, MessageKey] = MessageKey(_)
   private given Transformer[String, MessageId]  = MessageId(_)
-  private given Transformer[String, ClaimRef]   = ClaimRef(_)
 
   private given Transformer[ByteString, Chunk[Byte]] =
     bytes => Chunk.fromArray(bytes.toByteArray)
@@ -58,8 +67,15 @@ object Inbound:
     case v1.Outcome.OUTCOME_FAILED => partial.Result.fromValue(Verdict.Failed)
     case other                     => partial.Result.fromErrorString(s"an outcome is required, got ${other.name}")
 
-  private given PartialTransformer[Option[v1.Message], Message] = PartialTransformer:
-    case Some(message) => message.transformIntoPartial[Message]
+  /**
+   * An enqueue without a message is a request with nothing in it. Chimney would refuse the absent field on
+   * its own, but with a generic reason; this says what the caller left out.
+   *
+   * Targets the request's own [[QueueRequest.Enqueue.Message]], not the domain's: the domain one carries a
+   * key and an id that have been checked, and this boundary checks nothing — it reads what arrived.
+   */
+  private given PartialTransformer[Option[v1.Message], QueueRequest.Enqueue.Message] = PartialTransformer:
+    case Some(message) => message.transformIntoPartial[QueueRequest.Enqueue.Message]
     case None          => partial.Result.fromErrorString("a message is required")
 
   /**
@@ -79,16 +95,16 @@ object Inbound:
     /**
      * @return the domain request; fails with the reasons the wire message could not be read
      */
-    def toDomain: partial.Result[EnqueueRequest] = request.transformIntoPartial[EnqueueRequest]
+    def toDomain: partial.Result[QueueRequest.Enqueue] = request.transformIntoPartial[QueueRequest.Enqueue]
 
   extension (request: v1.DequeueRequest)
     /** @return the domain request */
-    def toDomain: partial.Result[DequeueRequest] = request.transformIntoPartial[DequeueRequest]
+    def toDomain: partial.Result[QueueRequest.Dequeue] = request.transformIntoPartial[QueueRequest.Dequeue]
 
   extension (request: v1.SettleRequest)
     /** @return the domain request; fails when the outcome is unspecified */
-    def toDomain: partial.Result[SettleRequest] = request.transformIntoPartial[SettleRequest]
+    def toDomain: partial.Result[QueueRequest.Settle] = request.transformIntoPartial[QueueRequest.Settle]
 
   extension (request: v1.HeartbeatRequest)
     /** @return the domain request */
-    def toDomain: partial.Result[HeartbeatRequest] = request.transformIntoPartial[HeartbeatRequest]
+    def toDomain: partial.Result[QueueRequest.Heartbeat] = request.transformIntoPartial[QueueRequest.Heartbeat]
