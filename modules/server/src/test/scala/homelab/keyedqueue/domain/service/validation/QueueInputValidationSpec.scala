@@ -33,16 +33,6 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
     QueueRequest.Enqueue.Message(key, messageId, payloadType = "test.Text/v1", Encoding.Json, None, Chunk.empty)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueInputValidation")(
-    test("a heartbeat sorts its receipts and refuses none of them") {
-      // The one parse that cannot fail: a receipt this service never issued says nothing about the others,
-      // and a consumer that sent one still needs the renewals that were good.
-      val sorted = validation.parse(QueueRequest.Heartbeat(Chunk(receipt, "not-a-receipt")))
-      assertTrue(sorted == Renewal(held = Chunk(claim), unreadable = Chunk("not-a-receipt")))
-    },
-    test("a heartbeat holding nothing is legal") {
-      val empty = validation.parse(QueueRequest.Heartbeat(Chunk.empty))
-      assertTrue(empty == Renewal(Chunk.empty, Chunk.empty))
-    },
     test("a settle naming an empty id, or the same id twice, is refused") {
       val empty = QueueRequest.Settle(receipt, Chunk(MessageOutcome("", Verdict.Done)), Duration.Zero)
       val twice =

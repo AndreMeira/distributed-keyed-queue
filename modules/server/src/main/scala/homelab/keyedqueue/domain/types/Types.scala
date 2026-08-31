@@ -32,7 +32,7 @@ object MessageKey:
   def apply(value: String): Type = value
 
 
-/** A message's own name, unique among those queued for its key: what a discard, or a dedupe, addresses. */
+/** A message's own name, unique among those queued for its key: what a settle, or a dedupe, addresses. */
 type MessageId = MessageId.Type
 
 

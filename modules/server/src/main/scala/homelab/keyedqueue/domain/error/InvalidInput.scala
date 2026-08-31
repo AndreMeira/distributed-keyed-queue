@@ -42,14 +42,14 @@ enum InvalidInput extends ValidationError.InvalidInput:
   case EmptyMessageId
 
   /**
-   * A settle named an empty id among the messages it wanted discarded.
+   * A settle named an empty id among the messages it reported on.
    */
   case EmptyDiscardId
 
   /**
-   * A settle named the same id twice among the messages it wanted discarded.
+   * A settle named the same id twice among the messages it reported on.
    *
-   * Harmless to act on — dropping an id already gone finds nothing — but a caller that sent one has
+   * Harmless to act on — settling an id already settled finds nothing — but a caller that sent one has
    * miscounted something, and hearing so is cheaper than wondering later why its numbers disagree.
    */
   case DuplicateDiscardId

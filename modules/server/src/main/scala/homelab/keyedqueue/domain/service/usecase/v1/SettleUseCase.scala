@@ -36,8 +36,6 @@ final class SettleUseCase(store: QueueStore, validation: QueueInputValidation):
    *         `QueueError` when the store fails
    */
   def apply(request: QueueRequest.Settle): IO[QueueError, QueueResponse.Settle] =
-    validation
-      .parse(request)
-      .orFail
-      .flatMap(store.settle)
-      .map(applied => QueueResponse.Settle(if applied then Applied.Ok else Applied.Stale))
+    validation.parse(request).orFail.flatMap(store.settle).map { applied =>
+      QueueResponse.Settle(if applied then Applied.Ok else Applied.Stale)
+    }

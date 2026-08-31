@@ -17,7 +17,7 @@ import java.time.Instant
  * message (`docs/research/connection-keyed-queue.md`).
  *
  * @param key what ordering is defined by: one key is worked by one consumer at a time
- * @param messageId this message's own name: unique among those queued for its key, and what a discard or
+ * @param messageId this message's own name: unique among those queued for its key, and what a settle or
  *                  a repeated enqueue is matched on
  * @param payloadType the payload's schema identity — a stable name and version, never a class name
  * @param encoding how `payload` is serialised

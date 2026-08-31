@@ -12,20 +12,29 @@ import zio.{ Chunk, Duration, NonEmptyChunk }
 
 
 /**
- * Format-level validation of what a caller sent: every problem with a request, in one pass.
+ * The crossing from what a caller sent to what this service will act on: every problem with a request, in
+ * one pass.
  *
- * '''A class, though it holds nothing.''' It is wired as a dependency (see [[Module]]) rather than called as
- * an object, so a apply case declares that it validates, a test can substitute a validator that refuses
+ * '''Parses, it does not check.''' Each method returns the type the store accepts — `Submission`, `Demand`,
+ * `Settlement` — rather than a verdict on the request it was given. A use case therefore cannot proceed
+ * with the unchecked thing: the only way to hold something the store takes is to have come through here.
+ * The domain types those carry — a `QueueName`, a `MessageId`, a `Claim` — are the evidence that someone
+ * looked.
+ *
+ * '''A class, though it holds only limits.''' It is wired as a dependency (see [[Module]]) rather than
+ * called as an object, so a use case declares that it parses, a test can substitute one that refuses
  * everything, and the day a check needs the store — is this queue known? is this key parked? — that check
- * arrives as a constructor parameter instead of a rewrite of every call site.
+ * arrives as a constructor parameter instead of a rewrite of every call site. What it holds today is
+ * [[QueueInputValidation.Config]], the bounds a `Demand` may not exceed.
  *
- * '''A receipt is never validated here.''' `Settle` and `Heartbeat` carry receipts, and an unreadable one
- * is deliberately *not* an input error: settle reports it stale, heartbeat lists it among what the consumer
- * has lost. Both are documented on their apply cases. Validating them here would turn a result a caller must
- * handle into an error it must catch, which is the opposite of the API's shape.
+ * '''A receipt is read here; whether it is still live is not.''' A settle names a claim, and a string that
+ * was never a receipt is refused as `UnreadableReceipt` — nothing issued it, and no retry makes it valid.
+ * Whether the claim it names is still held is a different question, answered by the store's fence and
+ * reported as `Stale` rather than refused.
  *
- * `Settle` still appears below, for the one field on it that *is* a format-level input: how many messages
- * behind this one to discard. `Heartbeat` carries nothing but receipts, so it has nothing to check.
+ * `Heartbeat` is parsed by `HeartbeatUseCase` instead. It carries nothing but receipts, and an unreadable
+ * one is *not* an error there — it comes back among what the consumer has lost — so that parse cannot
+ * fail. A total method among these would have to promise a failure it could never deliver.
  */
 final class QueueInputValidation(config: QueueInputValidation.Config):
 
@@ -92,27 +101,6 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
         distinct(request.outcomes.map(_.messageId)),
       )
       .map((claim, settled, _) => Settlement(claim, settled, backoff(request.retryAfter)))
-
-  /**
-   * Sort what a consumer says it holds into what this service issued and what it did not.
-   *
-   * '''Total, and deliberately so.''' Every other parse here can refuse; this one cannot. A heartbeat
-   * carries many receipts, and one it cannot read says nothing about the others — refusing the call would
-   * cost the consumer renewals that were good, to tell it something it learns anyway from the answer,
-   * where the unreadable ones come back among what it has lost.
-   *
-   * The return type says it: `Renewal`, not `Validated[Renewal]`. A signature that promised failure it
-   * could never deliver would leave every caller handling a case that does not exist.
-   *
-   * @param request what the caller sent, untrusted
-   * @return its receipts, sorted
-   */
-  def parse(request: QueueRequest.Heartbeat): Renewal =
-    val read = request.receipts.map(receipt => receipt -> Claim.fromReference(receipt))
-    Renewal(
-      held = read.collect { case (_, Some(claim)) => claim },
-      unreadable = read.collect { case (receipt, None) => receipt },
-    )
 
   /**
    * A receipt must be one this service issued.
@@ -229,10 +217,11 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
       .map((key, id) => Message(key, id, message.payloadType, message.encoding, message.sentAt, message.payload))
 
   /**
-   * The same id must not be named twice in one discard.
+   * The same id must not be named twice in one settle.
    *
-   * Harmless to the script — a second `LREM` for an id already gone finds nothing — but a caller that sent
-   * one has miscounted something, and saying so is cheaper than letting it wonder why its numbers disagree.
+   * Harmless to the store — settling an id twice finds it already gone the second time — but a caller
+   * that sent one has miscounted something, and saying so is cheaper than letting it wonder later why its
+   * numbers disagree.
    *
    * @param ids the ids the caller named, as it sent them
    * @return them; fails with `DuplicateDiscardId` when one repeats

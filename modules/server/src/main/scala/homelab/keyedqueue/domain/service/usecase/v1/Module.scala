@@ -28,5 +28,5 @@ object Module:
         enqueue = EnqueueUseCase(store, watchdog, validation),
         dequeue = DequeueUseCase(store, watchdog, validation),
         settle = SettleUseCase(store, validation),
-        heartbeat = HeartbeatUseCase(store, validation),
+        heartbeat = HeartbeatUseCase(store),
       )
