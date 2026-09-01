@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.response.v1
 
 
-import homelab.keyedqueue.domain.model.Message
+import homelab.keyedqueue.domain.model.{ Claimed, Message }
 import homelab.keyedqueue.domain.types.*
 import zio.Chunk
 
@@ -58,6 +58,38 @@ object QueueResponse:
       leaseExpiresAt: Instant,
       backlogDepth: Int,
     )
+
+  object Dequeue:
+
+    /**
+     * Say what the store granted in the words the caller is answered in.
+     *
+     * '''Returns `NonEmpty`, not `Dequeue`.''' A [[homelab.keyedqueue.domain.model.Claimed]] carries a
+     * `NonEmptyChunk` of messages, so a granted claim can never produce the empty case — and saying so in
+     * the return type keeps the caller's `Empty` where it belongs, on the branch where the store returned
+     * nothing at all. It is also what lets `head` and `tail` be split here without an `Option`.
+     *
+     * The mapping itself carries no decision: `Claimed.Owned` and [[Delivery]] hold the same three fields,
+     * with `id` becoming `messageId` because that is what a settle names it by. They stay separate types
+     * because one is what a port hands back and the other is what a response carries.
+     *
+     * Lives on this companion rather than in the use case so the shape and the way to build it travel
+     * together — a field added to `NonEmpty` is a compile error here, not somewhere else.
+     *
+     * @param claimed the batch the store granted
+     * @return it as a response, its messages in the order they were handed over
+     */
+    def fromClaimed(claimed: Claimed): Dequeue.NonEmpty =
+      val deliveries = claimed.messages.map: owned =>
+        QueueResponse.Delivery(owned.id, owned.message, owned.attempt)
+
+      QueueResponse.Dequeue.NonEmpty(
+        claimed.claim.reference,
+        deliveries.head,
+        Chunk.fromIterable(deliveries.tail),
+        claimed.leaseExpiresAt,
+        claimed.backlogDepth,
+      )
 
   /**
    * One message handed to a consumer as part of a claim.

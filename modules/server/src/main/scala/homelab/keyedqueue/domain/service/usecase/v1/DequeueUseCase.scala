@@ -56,31 +56,6 @@ final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, validation: Qu
    */
   private def response(claimed: Option[Claimed]): QueueResponse.Dequeue =
     claimed match {
-      case None        => QueueResponse.Dequeue.Empty
-      case Some(batch) =>
-        val deliveries = toDeliveries(batch)
-        QueueResponse.Dequeue.NonEmpty(
-          batch.claim.reference,
-          deliveries.head,
-          Chunk.fromIterable(deliveries.tail),
-          batch.leaseExpiresAt,
-          batch.backlogDepth,
-        )
+      case None          => QueueResponse.Dequeue.Empty
+      case Some(claimed) => QueueResponse.Dequeue.fromClaimed(claimed)
     }
-
-  /**
-   * Say what a claim owns in the words the caller is answered in.
-   *
-   * Carries no decision: `Claimed.Owned` is the store's name for a message under a claim and `Delivery` is
-   * the response's for the same thing, down to the same three fields — `id` becomes `messageId`, which is
-   * what a settle names it by. They stay separate types because one is what a port hands back and the
-   * other is what a response carries, and a change to either should not silently reshape the other.
-   *
-   * The non-emptiness survives the mapping — `NonEmptyChunk` in, `NonEmptyChunk` out — which is what lets
-   * [[response]] take a `head` and a `tail` without first asking whether there is one.
-   *
-   * @param claimed the batch the store granted
-   * @return its messages as deliveries, in the order they were handed over
-   */
-  private def toDeliveries(claimed: Claimed): NonEmptyChunk[QueueResponse.Delivery] =
-    claimed.messages.map(owned => QueueResponse.Delivery(owned.id, owned.message, owned.attempt))
