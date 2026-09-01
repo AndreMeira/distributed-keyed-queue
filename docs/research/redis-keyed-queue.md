@@ -22,10 +22,8 @@ tags: [connection, keyed-queue, idle, lease, heartbeat, lua, postgres, explorati
 > [`../architecture/redis-data-structures.md`](../architecture/redis-data-structures.md); where the two
 > disagree, that one is right.
 
-Problem statement and the requirement this serves:
-[`research/infrastructure/homelab-message-broker.md`](../../../research/infrastructure/homelab-message-broker.md)
-— partition ownership, per-partition order, **per-key serial processing with long-lived handlers**, and
-concurrency across keys.
+The requirement this serves: partition ownership, per-partition order, **per-key serial processing with
+long-lived handlers**, and concurrency across keys — summarised in the [README](../../README.md).
 
 ## 1. Why this came up: the blocking dequeue
 
@@ -104,7 +102,7 @@ returns `a` and a `RIGHT` pop returns `c`.
 ## 3. The five operations
 
 Each is one Lua script, because each spans several structures and the interleavings are precisely the bugs.
-These are the real scripts, reproduced from [`src/main/resources/lua/`](../../src/main/resources/lua/) with
+These are the real scripts, reproduced from [`modules/server/src/main/resources/lua/`](../../modules/server/src/main/resources/lua/) with
 their `KEYS`/`ARGV` headers trimmed — **the files are the source of truth**, and this note can drift from
 them. All five were exercised end to end against the compose instance; see §4b for what that run proved.
 
@@ -534,7 +532,7 @@ Four things that sketch is trying to say.
 
 **The claim happens in the fiber that will use it.** The RPC handler does its own `BLMOVE` rather than a
 background loop claiming into a buffer that handlers draw from. That is the whole lesson of
-[the toolkit's `PollConsumer`](../../../homelab-toolkit-zio/docs/sessions/2026-08-22-pollconsumer-orphans.md):
+[the toolkit's `PollConsumer`](https://github.com/AndreMeira/homelab-toolkit-zio):
 separating the claim from the claimant is what creates work claimed for a caller that no longer exists, and
 no amount of bookkeeping fully repairs it. Here the claimant *is* the worker, so the problem does not arise.
 
@@ -597,9 +595,8 @@ fencing token exists to prevent.
 3. **Cluster mode needs hash tags.** A Lua script may only touch keys in one slot, so names have to be written
    `{<queue>}:msgs:<key>` to co-locate them. Cheap now, invasive later.
 4. **A cancelled `Dequeue` is a cancelled claim.** A client deadline or disconnect interrupts the server fiber
-   mid-claim — see
-   [`homelab-toolkit-zio/docs/sessions/2026-08-22-pollconsumer-orphans.md`](../../../homelab-toolkit-zio/docs/sessions/2026-08-22-pollconsumer-orphans.md)
-   for how expensive that is when the claim does not happen in the fiber that will do the work. Here it is
+   mid-claim — the toolkit's `PollConsumer` ([https://github.com/AndreMeira/homelab-toolkit-zio](https://github.com/AndreMeira/homelab-toolkit-zio)) records
+   how expensive that is when the claim does not happen in the fiber that will do the work. Here it is
    cheap for the same reason it is cheap in a single-element design: `BLMOVE` returns to the fiber that will
    run the work, and if that fiber dies the deadline reclaims the key.
 

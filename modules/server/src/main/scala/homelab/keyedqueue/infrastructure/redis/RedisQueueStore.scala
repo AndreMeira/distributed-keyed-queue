@@ -33,14 +33,12 @@ import java.time.Instant
  *
  * @param connection where its connections come from, shared or borrowed
  * @param scripts the loaded script digests
- * @param worker the identity this instance writes when it renews on a caller's behalf
  * @param leaseTtl how long a claim, and a registration, survive without a heartbeat
  * @param known the queues each claiming connection has registered in
  */
 final class RedisQueueStore(
   connection: Connection,
   scripts: Scripts,
-  worker: WorkerId,
   leaseTtl: Duration,
   known: Ref[Set[(WorkerId, QueueName)]],
 ) extends QueueStore:
@@ -63,21 +61,43 @@ final class RedisQueueStore(
    * The only operation that can occupy a connection, so the only one that borrows.
    *
    * `BLMOVE` parks for the whole wait, which is why claiming runs on a pooled connection while everything
-   * else shares one: the pool's size is the ceiling on concurrent claims, and a caller that cannot get a
-   * connection waits for a peer rather than opening another.
+   * else shares one: the pool's size is the ceiling on concurrent *parked* claims, and a caller that
+   * cannot get a connection waits for a peer rather than opening another.
+   *
+   * '''Patience is a deadline, not a budget that starts when a connection arrives.''' Queueing for a
+   * connection spends a caller's wait as surely as waiting on Redis does, and a caller cannot tell the two
+   * apart — so the clock starts here, and what is left of it becomes the `BLMOVE` timeout. A caller whose
+   * patience went entirely on the queue is answered `None`, which is what a wait that found nothing would
+   * have given it anyway.
    *
    * @param demand the queue to claim from, how long to wait, and the most to take
-   * @return the claim, or `None` on timeout
+   * @return the claim, or `None` when the patience elapsed — queueing for a connection or waiting for work
    */
   override def claim(demand: Demand): IO[QueueError, Option[Claimed]] =
     val ns = Namespace(demand.queue)
-    connection.provideBlocking: claimer =>
-      register(ns, claimer) *> ZIO
-        .uninterruptibleMask: restore =>
-          restore(take(ns, claimer, demand.patience)).flatMap:
-            case None      => ZIO.none
-            case Some(key) => scripts.consume.run(ns, claimer, MessageKey(key), leaseTtl, demand.batch)
-        .onInterrupt(release(ns, claimer))
+    Clock.instant.flatMap: asked =>
+      connection.provideBlocking: claimer =>
+        register(ns, claimer) *> remaining(demand.patience, asked).flatMap:
+          case None       => ZIO.none
+          case Some(left) =>
+            ZIO
+              .uninterruptibleMask: restore =>
+                restore(take(ns, claimer, left)).flatMap:
+                  case None      => ZIO.none
+                  case Some(key) => scripts.consume.run(ns, claimer, MessageKey(key), leaseTtl, demand.batch)
+              .onInterrupt(release(ns, claimer))
+
+  /**
+   * What is left of a caller's patience.
+   *
+   * @param patience what the caller was granted
+   * @param asked when its call reached this adapter
+   * @return the time still to wait, or `None` when the patience is already spent
+   */
+  private def remaining(patience: Duration, asked: Instant): UIO[Option[Duration]] =
+    Clock.instant.map: now =>
+      val left = patience.minus(Duration.fromInterval(asked, now))
+      Option.when(left.toMillis > 0)(left)
 
   /**
    * One `complete` call, which checks the token every time and advances it only when the claim ends — a
@@ -98,8 +118,9 @@ final class RedisQueueStore(
    * One `heartbeat` call '''per queue''', because worker liveness and claims are namespaced by queue while a
    * caller's receipts are not: a consumer holding work in three queues costs three round trips here.
    *
-   * The claims renewed are the caller's, and the only worker entry written is this instance's own liveness —
-   * a different thing from a claimer keeping its registration alive, which it does on its own connection.
+   * No worker entry is written. A consumer is not a worker: its claims are found by fence token, and the
+   * `workers` set exists to say which *claiming connections* are alive, so that abandoned keys can be
+   * recovered. Registering a caller there would add an entry that never holds a key.
    *
    * @param claims every claim the caller still holds, across any number of queues
    * @return the new deadline and the claims already revoked
@@ -108,7 +129,7 @@ final class RedisQueueStore(
     connection.provide:
       ZIO
         .foreach(claims.groupBy(_.queue).toList): (queue, held) =>
-          scripts.heartbeat.run(Namespace(queue), worker, leaseTtl, held)
+          scripts.heartbeat.run(Namespace(queue), worker = None, leaseTtl, held)
         .map: results =>
           val (when, chunk) = results.unzip
           when.maxOption.getOrElse(Instant.EPOCH) -> Chunk.fromIterable(chunk).flatten
@@ -137,7 +158,7 @@ final class RedisQueueStore(
   def beat: UIO[Unit] =
     known.get.flatMap: pairs =>
       ZIO.foreachDiscard(pairs): (claimer, queue) =>
-        connection.provide(scripts.heartbeat.run(Namespace(queue), claimer, leaseTtl, Chunk.empty)).ignore
+        connection.provide(scripts.heartbeat.run(Namespace(queue), Some(claimer), leaseTtl, Chunk.empty)).ignore
 
   /**
    * Announce a claiming connection in a queue, once.
@@ -155,7 +176,7 @@ final class RedisQueueStore(
     known.get.map(_.contains((claimer, ns.queue))).flatMap {
       case true  => ZIO.unit
       case false =>
-        scripts.heartbeat.run(ns, claimer, leaseTtl, Chunk.empty)
+        scripts.heartbeat.run(ns, Some(claimer), leaseTtl, Chunk.empty)
           *> known.update(_ + ((claimer, ns.queue))).unit
     }
 
@@ -207,19 +228,17 @@ object RedisQueueStore:
    *
    * @param connection where its connections come from
    * @param scripts the loaded digests
-   * @param worker the identity it writes when it renews on a caller's behalf
    * @param leaseTtl how long a claim, and a registration, survive without a heartbeat
    * @return the store
    */
   def make(
     connection: Connection,
     scripts: Scripts,
-    worker: WorkerId,
     leaseTtl: Duration,
   ): ZIO[Scope, Nothing, RedisQueueStore] =
     for
       known   <- Ref.make(Set.empty[(WorkerId, QueueName)])
-      store    = RedisQueueStore(connection, scripts, worker, leaseTtl, known)
+      store    = RedisQueueStore(connection, scripts, leaseTtl, known)
       schedule = Schedule.fixed(Duration.fromMillis(leaseTtl.toMillis / 3))
       _       <- store.beat.repeat(schedule).forkScoped
     yield store

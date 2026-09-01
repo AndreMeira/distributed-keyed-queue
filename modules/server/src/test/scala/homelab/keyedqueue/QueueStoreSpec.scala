@@ -28,33 +28,43 @@ object QueueStoreSpec extends ZIOSpecDefault:
   private val substrate: ZLayer[Any, Any, (QueueStore, QueueStore, RedisClusterCommands[String, Array[Byte]])] =
     ZLayer.scoped:
       for
-        container <- ZIO.acquireRelease(
-                       ZIO.attemptBlocking:
-                         // Docker Engine 29 rejects the API version docker-java negotiates by default with
-                         // an HTTP 400; pinning it is what the toolkit's Testcontainers specs do too.
-                         val _                            = java.lang.System.setProperty("api.version", "1.40")
-                         // GenericContainer is self-referentially generic (SELF extends GenericContainer),
-                         // which Scala infers as Nothing — hence the explicit wildcard and no chaining.
-                         val started: GenericContainer[?] = GenericContainer("valkey/valkey:8.1-alpine")
-                         started.setExposedPorts(java.util.List.of(Integer.valueOf(6379)))
-                         started.start()
-                         started
-                     )(container => ZIO.attemptBlocking(container.stop()).ignore)
-        url        = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-        config     = QueueConfig(url, cluster = false, 0, leaseTtl, 1.second, 100, 1, 5.seconds, maxBatchLimit = 32)
-        client    <- Connection.client(url)
-        first     <- store(client, config, "w1")
-        second    <- store(client, config, "sweeper")
-        inspect   <- Connection.open(client, config.maxWait) // to assert on what the adapter wrote
+        container       <- ZIO.acquireRelease(
+                             ZIO.attemptBlocking:
+                               // Docker Engine 29 rejects the API version docker-java negotiates by default with
+                               // an HTTP 400; pinning it is what the toolkit's Testcontainers specs do too.
+                               val _                            = java.lang.System.setProperty("api.version", "1.40")
+                               // GenericContainer is self-referentially generic (SELF extends GenericContainer),
+                               // which Scala infers as Nothing — hence the explicit wildcard and no chaining.
+                               val started: GenericContainer[?] = GenericContainer("valkey/valkey:8.1-alpine")
+                               started.setExposedPorts(java.util.List.of(Integer.valueOf(6379)))
+                               started.start()
+                               started
+                           )(container => ZIO.attemptBlocking(container.stop()).ignore)
+        url              = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
+        config           = QueueConfig(url, cluster = false, 0, leaseTtl, 1.second, 100, 1, 5.seconds, maxBatchLimit = 32)
+        (first, pooled) <- store(config)
+        (second, _)     <- store(config)
+        // To assert on what the adapter wrote. Borrowed from a store's own pool rather than opened here:
+        // a hand-rolled connection would need its own copy of the codec, and a copy that drifted would
+        // make these assertions read bytes differently from the code they are checking.
+        inspect         <- pooled.provide(ZIO.service[Connection.Commands])
       yield (first: QueueStore, second: QueueStore, inspect)
 
-  /** A store with its own connections — one shared, one claiming — as the service builds one. */
-  private def store(client: io.lettuce.core.RedisClient, config: QueueConfig, id: String) =
+  /**
+   * A store with its own client and connections, as the service builds one — so the two stores here are
+   * two instances, not two halves of one.
+   *
+   * @param config where Redis is, and the sizes to build with
+   * @return the store, and the pool behind it for tests that need to look at Redis directly
+   */
+  private def store(config: QueueConfig): ZIO[Scope, QueueError, (QueueStore, Connection)] =
     for
-      connection <- Connection.pool(Connection.open(client, _), config.maxWait, config.maxWait + 10.seconds, config.claimers)
+      connection <- Connection.pool(
+                      Connection.Config(config.maxWait, config.claimers, config.redisUrl, config.cluster)
+                    )
       scripts    <- connection.provide(Scripts.make)
-      store      <- RedisQueueStore.make(connection, scripts, WorkerId(id), config.leaseTtl)
-    yield store
+      store      <- RedisQueueStore.make(connection, scripts, config.leaseTtl)
+    yield (store, connection)
 
   /** A message whose cargo is `body`: these tests care about order and ownership, not about content. */
   private def message(key: MessageKey, body: String): Message =
@@ -235,6 +245,19 @@ object QueueStoreSpec extends ZIOSpecDefault:
         _              <- worker.settle(settlement(batch.claim, acks(batch)))
         after          <- worker.claim(Demand(queue, 2.seconds, 2))
       yield assertTrue(applied, after.map(body) == Some(Chunk("b")))
+    },
+    test("a dequeue's patience covers queueing for a connection, not only the wait for work") {
+      // The pool here has one claiming connection, so the second claim queues behind the first. Both must
+      // still answer within one patience: a caller cannot tell whether it waited on Redis or on a
+      // connection, and `max_wait` is what the service promised it.
+      for
+        (worker, _, _) <- ZIO.service[(QueueStore, QueueStore, RedisClusterCommands[String, Array[Byte]])]
+        queue           = QueueName("patience")
+        patience        = 2.seconds
+        demand          = Demand(queue, patience, batch = 1)
+        result         <- worker.claim(demand).zipPar(worker.claim(demand)).timed
+        (elapsed, both) = result
+      yield assertTrue(both._1.isEmpty, both._2.isEmpty, elapsed < patience + 1.second)
     },
     test("the same id enqueued twice for a key is one message") {
       // HSETNX in produce.lua: a producer retrying an at-least-once send must not double the work.

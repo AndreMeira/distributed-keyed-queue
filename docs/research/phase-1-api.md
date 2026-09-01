@@ -13,8 +13,9 @@ tags: [api, grpc, proto, phase-1, dequeue, lease, exploration]
 > written to be *replaceable*: four unary calls, no streaming, no batching, and nothing a client has to learn
 > that a stream will not also need.
 
-Substrate design: [`redis-keyed-queue.md`](./redis-keyed-queue.md). Requirement:
-[`research/infrastructure/homelab-message-broker.md`](../../../research/infrastructure/homelab-message-broker.md).
+Substrate design: [`redis-keyed-queue.md`](./redis-keyed-queue.md). The requirement it serves —
+per-key serial processing with long-lived handlers, concurrency across keys — is summarised in the
+[README](../../README.md).
 
 ## The shape
 

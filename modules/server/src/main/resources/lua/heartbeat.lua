@@ -4,7 +4,7 @@
 -- KEYS[2] fence      hash  key -> claim counter
 -- KEYS[3] workers    zset  worker -> deadline
 -- ARGV[1] ttl        millis
--- ARGV[2] worker     this worker's id
+-- ARGV[2] worker     this worker's id, or empty when the caller has no liveness to write
 -- ARGV[3..] key, token, key, token, ...
 -- returns            {renewedUntil, staleKeys}
 --
@@ -25,7 +25,12 @@ local ttl, worker = tonumber(ARGV[1]), ARGV[2]
 local now = redis.call('TIME')
 now = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
 
-redis.call('ZADD', workers, now + ttl, worker)
+-- Empty when a caller is only renewing claims. A consumer's claims are found by fence token, not by
+-- worker, so a renewal has no liveness of its own to write — and writing one would put an entry in
+-- `workers` for something that never claims, which is exactly what sweep (2) reads to find abandoned work.
+if worker ~= '' then
+  redis.call('ZADD', workers, now + ttl, worker)
+end
 
 local stale = {}
 for i = 3, #ARGV, 2 do

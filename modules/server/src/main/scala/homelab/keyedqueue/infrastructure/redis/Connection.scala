@@ -67,6 +67,16 @@ trait Connection:
 object Connection:
 
   /**
+   * A claiming connection's command ceiling must exceed the longest wait it will be asked to make, or
+   * Lettuce abandons a `BLMOVE` that is doing exactly what it was told to. Derived here rather than passed
+   * in, because nothing outside can get it right without knowing that.
+   */
+  private val claimingSlack: Duration = 10.seconds
+
+  /** Keys as UTF-8 strings, values as raw bytes. */
+  private val codec: RedisCodec[String, Array[Byte]] = RedisCodec.of(StringCodec.UTF8, ByteArrayCodec.INSTANCE)
+
+  /**
    * A connection this object opened, and so one carrying the codec everything here assumes.
    *
    * Opaque so a connection cannot be conjured from any commands object: the scripts depend on keys being the
@@ -117,84 +127,32 @@ object Connection:
   final case class Claiming(commands: Commands, worker: WorkerId)
 
   /**
-   * A cluster client for the life of the scope.
+   * What the pool needs to reach Redis, and to size and time itself.
    *
-   * The sibling of [[client]], and the only place the two backends differ in setup: from here on a cluster
-   * connection is a [[Commands]] like any other, because every key a script touches carries its queue's
-   * `{q:<queue>}` hash tag and therefore lands in one slot.
-   *
-   * @param url a seed node, e.g. `redis://localhost:7000`
-   * @return the client; aborts with `QueueError` when the URL is unusable
+   * @param maxWait the longest wait a caller may ask for; both command ceilings are derived from it
+   * @param claimers how many connections may be occupied by a wait at once
+   * @param redisUrl where the substrate lives — one server, or a seed node of a cluster
+   * @param cluster whether `redisUrl` names a cluster; Lettuce has no URL scheme that tells the two apart,
+   *                so it is said here
    */
-  def cluster(url: String): ZIO[Scope, QueueError, RedisClusterClient] =
-    ZIO
-      .acquireRelease {
-        ZIO.attempt:
-          val uri = RedisURI.create(url)
-          RedisClusterClient.create(uri)
-      }(client => ZIO.attempt(client.shutdown()).ignore)
-      .mapError(error => QueueError.StoreUnavailable(s"cannot reach $url: ${error.getMessage}"))
+  final case class Config(maxWait: Duration, claimers: Int, redisUrl: String, cluster: Boolean)
 
   /**
-   * A cluster connection for the life of the scope.
-   *
-   * Identical in shape to the standalone [[open]]: the routing a cluster needs is Lettuce's business, and
-   * the commands this returns satisfy the same [[Commands]] bound.
-   *
-   * @param client the cluster client to connect with
-   * @param commandTimeout the ceiling for any single command
-   * @return the synchronous command API; aborts with `QueueError` when connecting fails
-   */
-  def open(client: RedisClusterClient, commandTimeout: Duration): ZIO[Scope, QueueError, Connection.Commands] =
-    ZIO
-      .acquireRelease(
-        ZIO.attemptBlocking(client.connect(codec))
-      )(connection => ZIO.attemptBlocking(connection.close()).ignore)
-      .mapAttempt: connection =>
-        connection.setTimeout(JavaDuration.ofMillis(commandTimeout.toMillis))
-        connection.sync()
-      .mapError(error => QueueError.StoreUnavailable(s"cannot open a connection: ${error.getMessage}"))
-
-  /**
-   * One shared connection and `claimers` claiming connections, all closed with the scope.
-   *
-   * Takes an opener rather than a client, because that is the only thing it needs from one — which is what
-   * lets the same pool serve a standalone server and a cluster without knowing which it has.
-   *
-   * @param open how to open one connection with a given command ceiling
-   * @param sharedTimeout the command ceiling for the shared connection
-   * @param claimingTimeout the command ceiling for a claiming connection; must exceed the longest wait, or
-   *                        Lettuce gives up on a `BLMOVE` that is doing exactly what it was asked to
-   * @param claimers how many connections may be occupied at once
+   * One shared connection and `config.claimers` claiming connections, all closed with the scope.
+   * 
+   * @param config the longest wait to honour, and how many connections may be occupied by one
    * @return the pool; aborts with `QueueError` when a connection cannot be opened
    */
-  def pool(
-    open: Duration => ZIO[Scope, QueueError, Commands],
-    sharedTimeout: Duration,
-    claimingTimeout: Duration,
-    claimers: Int,
-  ): ZIO[Scope, QueueError, Connection] =
+  def pool(config: Config): ZIO[Scope, QueueError, Connection] =
     for
-      sync     <- open(sharedTimeout)
-      claiming <- ZIO.foreach(Chunk.fromIterable(0 until claimers))(claim(open, claimingTimeout, _))
-      idle     <- Queue.bounded[Claiming](claimers)
+      client   <- client(config)
+      sync     <- open(client, config.maxWait)
+      wait      = config.maxWait + claimingSlack
+      claiming <- ZIO.foreach(0 until config.claimers): index =>
+                    (open(client, wait) <*> identity(index)).map(Claiming.apply)
+      idle     <- Queue.bounded[Claiming](config.claimers)
       _        <- idle.offerAll(claiming)
     yield Pool(sync, idle)
-
-  /**
-   * One claiming connection, with an identity of its own.
-   *
-   * @param open how to open one connection with a given command ceiling
-   * @param commandTimeout the command ceiling
-   * @param index distinguishes this connection from its peers within the process
-   * @return the connection and its identity; aborts with `QueueError` when it cannot be opened
-   */
-  private def claim(
-    open: Duration => ZIO[Scope, QueueError, Commands],
-    commandTimeout: Duration,
-    index: Int,
-  ): ZIO[Scope, QueueError, Claiming] =
-    open(commandTimeout).zipWith(identity(index))(Claiming.apply)
 
   /**
    * A worker id that is unique per connection and stable for its life.
@@ -211,9 +169,19 @@ object Connection:
       random <- Random.nextIntBounded(1 << 16)
     yield WorkerId(f"$host-$index-$random%04x")
 
-  /** Keys as UTF-8 strings, values as raw bytes. */
-  private val codec: RedisCodec[String, Array[Byte]] =
-    RedisCodec.of(StringCodec.UTF8, ByteArrayCodec.INSTANCE)
+  /**
+   * The client the pool will open its connections from — the one place the two backends are chosen between.
+   *
+   * One per pool, not one per connection: a client owns Netty event loops and a timer wheel and is what
+   * `shutdown` releases, while a connection is a socket taken from it. Creating one per connection would
+   * multiply the threads by [[Config.claimers]] to no purpose.
+   *
+   * @param config where the substrate lives, and whether it is a cluster
+   * @return the client, shut down with the scope; aborts with `QueueError` when the URL is unusable
+   */
+  private def client(config: Config): ZIO[Scope, QueueError, RedisClient | RedisClusterClient] =
+    if config.cluster then redisClusterClient(config.redisUrl)
+    else redisClient(config.redisUrl)
 
   /**
    * A client for the life of the scope.
@@ -221,7 +189,7 @@ object Connection:
    * @param url the Redis URL, e.g. `redis://localhost:6379`
    * @return the client; aborts with `QueueError` when the URL is unusable
    */
-  def client(url: String): ZIO[Scope, QueueError, RedisClient] =
+  private def redisClient(url: String): ZIO[Scope, QueueError, RedisClient] =
     ZIO
       .acquireRelease {
         ZIO.attempt:
@@ -229,6 +197,41 @@ object Connection:
           RedisClient.create(uri)
       }(client => ZIO.attempt(client.shutdown()).ignore)
       .mapError(error => QueueError.StoreUnavailable(s"cannot reach $url: ${error.getMessage}"))
+
+  /**
+   * A cluster client for the life of the scope.
+   *
+   * The sibling of [[redisClient]], and the only place the two backends differ in setup: from here on a cluster
+   * connection is a [[Commands]] like any other, because every key a script touches carries its queue's
+   * `{q:<queue>}` hash tag and therefore lands in one slot.
+   *
+   * @param url a seed node, e.g. `redis://localhost:7000`
+   * @return the client; aborts with `QueueError` when the URL is unusable
+   */
+  private def redisClusterClient(url: String): ZIO[Scope, QueueError, RedisClusterClient] =
+    ZIO
+      .acquireRelease {
+        ZIO.attempt:
+          val uri = RedisURI.create(url)
+          RedisClusterClient.create(uri)
+      }(client => ZIO.attempt(client.shutdown()).ignore)
+      .mapError(error => QueueError.StoreUnavailable(s"cannot reach $url: ${error.getMessage}"))
+
+  /**
+   * A connection from whichever client [[redis]] returned.
+   *
+   * The union is what keeps the choice of backend out of the pool: from here on a connection is a
+   * [[Commands]] whichever side it came from, because every key a script touches carries its queue's
+   * `{q:<queue>}` hash tag and so lands in one slot either way.
+   *
+   * @param client the client to connect with
+   * @param commandTimeout the ceiling for any single command
+   * @return the synchronous command API; aborts with `QueueError` when connecting fails
+   */
+  private def open(client: RedisClient | RedisClusterClient, commandTimeout: Duration): ZIO[Scope, QueueError, Commands] =
+    client match
+      case c: RedisClient        => open(c, commandTimeout)
+      case c: RedisClusterClient => open(c, commandTimeout)
 
   /**
    * A connection for the life of the scope.
@@ -241,7 +244,27 @@ object Connection:
    * @param commandTimeout the ceiling for any single command
    * @return the synchronous command API; aborts with `QueueError` when connecting fails
    */
-  def open(client: RedisClient, commandTimeout: Duration): ZIO[Scope, QueueError, Connection.Commands] =
+  private def open(client: RedisClient, commandTimeout: Duration): ZIO[Scope, QueueError, Connection.Commands] =
+    ZIO
+      .acquireRelease(
+        ZIO.attemptBlocking(client.connect(codec))
+      )(connection => ZIO.attemptBlocking(connection.close()).ignore)
+      .mapAttempt: connection =>
+        connection.setTimeout(JavaDuration.ofMillis(commandTimeout.toMillis))
+        connection.sync()
+      .mapError(error => QueueError.StoreUnavailable(s"cannot open a connection: ${error.getMessage}"))
+
+  /**
+   * A cluster connection for the life of the scope.
+   *
+   * Identical in shape to the standalone [[open]]: the routing a cluster needs is Lettuce's business, and
+   * the commands this returns satisfy the same [[Commands]] bound.
+   *
+   * @param client         the cluster client to connect with
+   * @param commandTimeout the ceiling for any single command
+   * @return the synchronous command API; aborts with `QueueError` when connecting fails
+   */
+  private def open(client: RedisClusterClient, commandTimeout: Duration): ZIO[Scope, QueueError, Connection.Commands] =
     ZIO
       .acquireRelease(
         ZIO.attemptBlocking(client.connect(codec))

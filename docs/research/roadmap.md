@@ -14,9 +14,9 @@ tags: [roadmap, sequencing, connection, streaming, persistence, distributed, exp
 > decision someone made rather than drift nobody noticed. Expect the exit criteria to survive longer than the
 > sequence.
 
-Companion notes: [`redis-keyed-queue.md`](./redis-keyed-queue.md) for the substrate design, and
-[`research/infrastructure/homelab-message-broker.md`](../../../research/infrastructure/homelab-message-broker.md)
-for the requirement all of this serves.
+Companion note: [`redis-keyed-queue.md`](./redis-keyed-queue.md) for the substrate design. The
+requirement all of this serves — per-key serial processing with long-lived handlers, concurrency across
+keys — is summarised in the [README](../../README.md).
 
 ## The order
 
@@ -77,9 +77,9 @@ stream held, rather than one call's worth. Settle it while the substrate is a Re
 after a distributed core has grown on top of it.
 
 **The property it buys for free:** credits are *addressed* demand. They belong to one stream and die with the
-connection, which is the guarantee anonymous demand tokens could not give —
-[`homelab-toolkit-zio/docs/sessions/2026-08-22-pollconsumer-orphans.md`](../../../homelab-toolkit-zio/docs/sessions/2026-08-22-pollconsumer-orphans.md)
-is a day spent learning why that distinction matters. "Outstanding demand equals available workers" becomes a
+connection, which is the guarantee anonymous demand tokens could not give — the toolkit's `PollConsumer`
+([https://github.com/AndreMeira/homelab-toolkit-zio](https://github.com/AndreMeira/homelab-toolkit-zio)) spent a day learning why that distinction matters, when demand outlived the workers
+it was issued for. "Outstanding demand equals available workers" becomes a
 property of the connection lifecycle rather than something to reconcile after the fact.
 
 **Done when:** a worker holds one stream for its lifetime, backpressure is expressed as credits rather than

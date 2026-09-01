@@ -1,118 +1,159 @@
 # distributed-keyed-queue
 
-A POC: a **keyed queue, distributed over gRPC**, where per-key serialisation is a property of the *storage
-layer* rather than of consumer memory.
+A queue over gRPC where **one key is worked by one consumer at a time** — enforced by the storage layer,
+not by a lock inside your process.
 
-The requirement, and why mainstream brokers relocate the problem instead of solving it, is in
-[`../research/infrastructure/homelab-message-broker.md`](../research/infrastructure/homelab-message-broker.md):
-partition ownership, per-partition order, **per-key serial processing with long-lived handlers**, and
-concurrency across keys.
+```
+Enqueue(queue, key, message)  ──▶  ┌──────────┐  ──▶  Dequeue(queue)  ──▶  a claim on ONE key,
+                                   │  Redis / │       (long poll)          its oldest messages,
+                                   │  Valkey  │                            and a lease
+                                   └──────────┘  ◀──  Settle(receipt, per-message outcomes)
+```
 
-Built on [`homelab-toolkit-zio`](../homelab-toolkit-zio) — `homelab-common` brings the messaging, flow and
-store ports (`KeyedQueue`, `KeyLock`, `Distributer`, `PollConsumer`); `homelab-postgres` brings the leased
-store behind them.
+## The problem it solves
 
-Docs follow the homelab-wide taxonomy — see [`docs/README.md`](docs/README.md).
+Plenty of systems give you ordering per partition. Few give you *per-key serial processing with long-lived
+handlers*: "everything for customer 42 happens one at a time, in order, and a handler may take a minute",
+while thousands of other keys run concurrently.
 
-## Build
+The usual answers each cost something:
+
+- **Partition and pin consumers to partitions.** Ordering is per partition, so a slow key blocks every
+  other key that hashes to it, and rebalancing moves ownership underneath you.
+- **Serialise in the consumer.** A lock keyed by the message key, held in process memory. Correct on one
+  instance; meaningless across two, which is where the requirement usually came from.
+
+dkq puts the exclusivity where every instance can see it. A consumer **claims a key**, gets a lease and a
+fencing token, and nothing else may work that key until the claim ends or the lease lapses. Restarts,
+deployments and network partitions are all covered by the same mechanism, because the claim lives in the
+store rather than in a process.
+
+## What it guarantees
+
+- **Per-key exclusivity.** At most one consumer is authorised to work a key at a time, across every
+  instance.
+- **Per-key order.** A key's messages are handed out oldest first; an unacknowledged one keeps its place.
+- **At-least-once delivery**, with a per-message attempt count so redelivery is visible.
+- **Nothing is lost when a consumer dies.** The lease lapses, a watchdog revokes the claim, and the work
+  returns.
+- **Batch claims, individual settles.** One claim can cover several of a key's messages; each is settled on
+  its own, and the key is released once none are outstanding.
+
+The precise contract — including what is *not* guaranteed, and what a consumer must do to hold up its end —
+is [`docs/architecture/guarantees.md`](docs/architecture/guarantees.md). Read it before writing a consumer.
+
+## The API
+
+Four unary RPCs, defined in
+[`keyed_queue_service.proto`](modules/protocol/src/main/protobuf/homelab/keyedqueue/v1/keyed_queue_service.proto):
+
+```proto
+service KeyedQueue {
+  rpc Enqueue  (EnqueueRequest)   returns (EnqueueResponse);    // accept a message for a key
+  rpc Dequeue  (DequeueRequest)   returns (DequeueResponse);    // long-poll for a claim
+  rpc Settle   (SettleRequest)    returns (SettleResponse);     // report what became of each message
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);  // renew the claims still held
+}
+```
+
+A `Dequeue` answers with a **receipt** (the claim), a **head** delivery, any **tail** the batch included,
+and the **lease expiry**. Every `Settle` names the receipt and what became of which message id. A consumer
+that works longer than the lease must `Heartbeat` on a tick, and must stop the moment a heartbeat reports a
+claim stale — that is the half of the contract dkq cannot enforce for you.
+
+## Using it from a service
+
+Two artifacts are published to GitHub Packages: `distributed-keyed-queue-protocol` (the message types) and
+`distributed-keyed-queue-protocol-zio-grpc` (the ZIO client and server stubs). What to depend on, how to
+authenticate to GitHub Packages, and what a consumer still has to write itself is in
+[`docs/learning-material/using-the-contract-as-a-dependency.md`](docs/learning-material/using-the-contract-as-a-dependency.md).
+
+Any gRPC client works — the contract ships as `.proto`, so a consumer in another language generates its own
+stubs.
+
+## Running it
+
+```bash
+docker compose up -d          # a Valkey to back it
+sbt run                       # the service, on :9000
+```
+
+Settings are HOCON with an environment override for every key
+(`modules/server/src/main/resources/config/queue.conf`):
+
+| variable | default | what it decides |
+|---|---|---|
+| `DKQ_REDIS_URL` | `redis://localhost:6379` | where the substrate lives |
+| `DKQ_CLUSTER` | `false` | whether that URL names a Redis Cluster |
+| `DKQ_PORT` | `9000` | the gRPC port |
+| `DKQ_LEASE_TTL` | `30 seconds` | how long a claim survives without a heartbeat |
+| `DKQ_MAX_WAIT` | `30 seconds` | the longest `Dequeue` wait honoured |
+| `DKQ_MAX_BATCH_LIMIT` | `32` | the most messages one claim may take |
+| `DKQ_CLAIMERS` | `8` | connections that may be parked in a waiting `Dequeue` at once — one per queue being waited on |
+| `DKQ_SWEEP_INTERVAL` | `5 seconds` | how often each instance runs repair |
+| `DKQ_SWEEP_LIMIT` | `100` | entries one sweep handles, per kind |
+
+Every instance is identical and stateless — the queue's state is entirely in Redis — so scaling out is
+running more of them against the same store. Redis Cluster is supported: every key a queue uses carries the
+same hash tag, so a queue lives on one slot and sharding spreads queues rather than splitting one
+([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
+
+## Building from source
 
 ```bash
 sbt compile
-sbt test    # unit + integration, against a Testcontainers Valkey
-sbt e2e     # the deployed thing: builds the image, composes two instances, drives them over the wire
+sbt test    # unit + integration, against a Testcontainers Valkey (needs Docker)
+sbt e2e     # builds the image, composes two instances, drives them over the wire
 ```
 
-The toolkit resolves from **GitHub Packages**, which serves Maven only to authenticated callers. You need a
-classic PAT with `read:packages` in `~/.sbt/1.0/credentials`:
+Building requires a GitHub personal access token with `read:packages` in `~/.sbt/1.0/credentials`, because
+the shared homelab toolkit this service depends on resolves from GitHub Packages, which serves Maven only
+to authenticated callers:
 
 ```
 realm=GitHub Package Registry
 host=maven.pkg.github.com
 user=<your-github-username>
-password=<your-classic-pat>
+password=<a-classic-pat>
 ```
 
-Full recipe: [`../homelab-toolkit-zio/docs/learning-material/using-modules-as-a-dependency.md`](../homelab-toolkit-zio/docs/learning-material/using-modules-as-a-dependency.md).
+## Performance
 
-**Consuming dkq from another service** is the other direction, and has its own guide:
-[using the contract as a dependency](docs/learning-material/using-the-contract-as-a-dependency.md).
+On a laptop, two instances against one Valkey: **1,552–4,339 msg/s** end to end, the ceiling set by how
+many consumers are running rather than by keys or connections. Method and numbers:
+[`docs/research/throughput-first-numbers.md`](docs/research/throughput-first-numbers.md).
 
-## Layout
+## Status
 
-Four modules, split along what is *published* and what is not:
+**A POC, and honest about it.** The semantics are settled and tested — unit, integration against a real
+Valkey, and an end-to-end suite that kills an instance mid-handler — but this is not a system anyone should
+run critical work on yet. Expect breaking changes between versions; pin an exact one.
 
-```
-modules/protocol/           the .proto files, and the messages generated from them   published
-modules/protocol-zio-grpc/  the client and server stubs, generated from the service  published
-modules/server/             the implementation                                       not published
-e2e/                        the deployment suite — depends on the contract only      not published
-```
+Known gaps:
 
-Both `.proto` files live in `modules/protocol`; the split is in which of them each module *generates* from,
-so a consumer that only reads and writes messages does not drag in a gRPC runtime. How that is arranged, and
-what breaks if it is rearranged, is in
-[`docs/learning-material/proto-generation.md`](docs/learning-material/proto-generation.md).
+- **Poison messages.** `attempt` is counted per message but nothing acts on it. A permanently failing
+  message cycles rather than wedging its key, so this is not urgent — what is missing is somewhere to put
+  it once the count is too high.
+- **One queue per `Dequeue`.** A consumer spanning queues needs a connection each.
+- **Waiting costs a Redis connection.** `DKQ_CLAIMERS` bounds how many `Dequeue` calls can be parked *on
+  Redis* at once; further callers wait in-process for a connection, so nothing is refused and no work goes
+  unclaimed while a queue is being watched. Because a wait covers one queue, this binds on the number of
+  queues an instance serves rather than on the number of consumers — see
+  [`docs/research/dequeue-connection-model.md`](docs/research/dequeue-connection-model.md) for what would
+  replace it.
+- **No persistence.** The POC runs Valkey with saving off; durability is a later phase.
 
-Generator options (`flat_package`, package remaps) belong **in the `.proto`**, not in `build.sbt`: zio-grpc's
-generator reads them from the file, so a build-side `flatPackage` desynchronises the two generators and the
-ZIO stub ends up referring to a package ScalaPB no longer emits.
+## Docs
 
-## What exists
-
-Phase 1 of [`docs/research/roadmap.md`](docs/research/roadmap.md): four unary gRPC calls over Redis, with
-per-key exclusivity, leases and repair. A `Dequeue` may claim a **batch** of one key's messages and settle
-them individually; streaming is still phase 2.
-
-What the service promises — and what it deliberately does not — is
-[`docs/architecture/guarantees.md`](docs/architecture/guarantees.md). Read that before writing a consumer or
-a test.
-
-```
-modules/protocol/src/main/protobuf/homelab/keyedqueue/v1/
-  keyed_queue.proto          the messages
-  keyed_queue_service.proto  the service: Enqueue, Dequeue, Settle, Heartbeat
-modules/server/src/main/resources/lua/   the five atomic transitions
-modules/server/src/main/scala/homelab/keyedqueue/
-  domain/          types, the QueueStore port, one class per use case, the repair loop
-  infrastructure/  the Redis adapter, the Lua scripts, config
-  application/grpc the service, and the composition root
-```
-
-Run it against the local Redis:
-
-```bash
-docker compose up -d
-sbt run                    # settings: src/main/resources/config/queue.conf
-```
-
-Configuration is HOCON, and every key carries both a working default and an environment override in the
-same two lines, so there is one place to read what a setting means:
-
-```hocon
-lease-ttl = 30 seconds
-lease-ttl = ${?DKQ_LEASE_TTL}
-```
-
-`sbt test` starts its own Valkey container, so it needs Docker but not the compose stack. It runs on every
-push ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)); the end-to-end suite is only compiled
-there, not run.
-
-`sbt e2e` is the other kind of test: it builds a Docker image, brings up two instances over one Valkey
-(`docker-compose.e2e.yml`) and asserts what only a deployment can be wrong about — that both instances are
-one queue, that a blocked `Dequeue` on one is woken by an `Enqueue` on the other, and that a SIGKILLed
-instance loses no work. Point it at an existing deployment with `DKQ_E2E_ENDPOINTS=host:port,host:port`.
-Details: [`docs/architecture/end-to-end-testing.md`](docs/architecture/end-to-end-testing.md).
-
-## Known gaps
-
-- **Poison messages.** `attempt` is delivered and counted per message, but nothing acts on it. A message
-  that always fails no longer wedges its key — a nack leaves it in place and later messages are handed out
-  past it — so it cycles rather than blocks. What is missing is somewhere to put it once the count is too
-  high: `max_attempts` plus a dead-letter or park policy.
-- **One queue per `Dequeue`.** `BLMOVE` takes a single source; a consumer spanning queues needs a connection
-  each.
-- **Claimers bound concurrency.** `DKQ_CLAIMERS` connections may block at once; further `Dequeue` calls wait
-  for one to free rather than opening more.
+- [`docs/architecture/guarantees.md`](docs/architecture/guarantees.md) — the contract, for consumers and
+  test authors
+- [`docs/architecture/redis-data-structures.md`](docs/architecture/redis-data-structures.md) — what is kept
+  in Redis and why
+- [`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md) — the key layout and cluster
+  mode
+- [`docs/learning-material/redis-state-walkthrough.md`](docs/learning-material/redis-state-walkthrough.md) —
+  every request traced through the structures it touches
+- [`docs/README.md`](docs/README.md) — the full index
 
 ## Licence
 

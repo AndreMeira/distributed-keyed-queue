@@ -67,7 +67,7 @@ a 401 that reads like a bad token.
 Full recipe, including the CI half: the toolkit's
 [`using-modules-as-a-dependency.md`][toolkit-deps].
 
-[toolkit-deps]: ../../../homelab-toolkit-zio/docs/learning-material/using-modules-as-a-dependency.md
+[toolkit-deps]: https://github.com/AndreMeira/homelab-toolkit-zio/blob/main/docs/learning-material/using-modules-as-a-dependency.md
 
 ```scala
 resolvers += "distributed-keyed-queue" at

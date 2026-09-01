@@ -1,7 +1,9 @@
 # distributed-keyed-queue docs
 
-How docs are organised — folders, the promotion rule, the required frontmatter — is defined once for the
-whole homelab in [`../../DOCS.md`](../../DOCS.md). It is the authority; nothing here restates it.
+How docs are organised follows one taxonomy: `architecture/` for how the system works today,
+`learning-material/` for how a technology works, `research/` for design explorations not yet built, and
+`sessions/` for dated notes on a piece of work. Every page carries frontmatter — `title`, `type`, `status`,
+`updated`, `tags`.
 
 What is specific to this repo:
 

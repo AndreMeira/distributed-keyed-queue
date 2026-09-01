@@ -3,7 +3,6 @@ package homelab.keyedqueue.infrastructure.redis
 
 import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.domain.types.WorkerId
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import io.lettuce.core.api.sync.RedisCommands
 import zio.*
@@ -30,24 +29,9 @@ object Module:
    * @return the layer
    */
   val connection: ZLayer[QueueConfig, QueueError, Connection] = ZLayer.scoped:
-    ZIO
-      .service[QueueConfig]
-      .flatMap: config =>
-        val open: ZIO[Scope, QueueError, Duration => ZIO[Scope, QueueError, Connection.Commands]] =
-          if config.cluster then Connection.cluster(config.redisUrl).map(client => Connection.open(client, _))
-          else Connection.client(config.redisUrl).map(client => Connection.open(client, _))
-        open.flatMap(Connection.pool(_, config.maxWait, timeout(config), config.claimers))
-
-  /**
-   * The command ceiling for a claiming connection.
-   *
-   * Longer than the longest wait a caller may ask for, or Lettuce gives up on a `BLMOVE` that is doing
-   * exactly what it was told to.
-   *
-   * @param config the settings to read the wait from
-   * @return the ceiling
-   */
-  private def timeout(config: QueueConfig): Duration = config.maxWait + 10.seconds
+    ZIO.service[QueueConfig].flatMap { config =>
+      Connection.pool(Connection.Config(config.maxWait, config.claimers, config.redisUrl, config.cluster))
+    }
 
   /**
    * The scripts, registered at startup so a missing or unparseable one fails here rather than on the first
@@ -68,6 +52,6 @@ object Module:
       connection <- ZIO.service[Connection]
       scripts    <- ZIO.service[Scripts]
       config     <- ZIO.service[QueueConfig]
-      store      <- RedisQueueStore.make(connection, scripts, WorkerId("shared"), config.leaseTtl)
+      store      <- RedisQueueStore.make(connection, scripts, config.leaseTtl)
     yield store
   }
