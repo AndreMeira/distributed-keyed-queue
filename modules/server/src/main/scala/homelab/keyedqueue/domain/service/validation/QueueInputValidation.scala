@@ -227,7 +227,8 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * @return them; fails with `DuplicateDiscardId` when one repeats
    */
   private def distinct(ids: Chunk[String]): Validated[Chunk[String]] =
-    if ids.distinct.size == ids.size then Validation.succeed(ids) else Validation.fail(InvalidInput.DuplicateDiscardId)
+    if ids.distinct.size == ids.size then Validation.succeed(ids)
+    else Validation.fail(InvalidInput.DuplicateDiscardId)
 
 
 object QueueInputValidation:
