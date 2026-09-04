@@ -14,11 +14,11 @@ import java.time.Duration as JavaDuration
 /**
  * Where an effect gets a connection from.
  *
- * '''The caller declares whether it may block, and is given a connection accordingly.''' `BLMOVE` occupies
- * its connection for the whole wait, so an effect that parks must not run on one other callers are sharing —
- * and an effect that never parks should not have to wait for a free connection. Which of the two an operation
- * is, is known where it is written and nowhere else, so it is declared there rather than guessed at by
- * whatever holds the connections.
+ * '''Only one thing in this process blocks, and it gets its own connection.''' Every operation on the queue
+ * is a script that answers at once, so they all share one; the listener's `XREAD` parks for as long as it is
+ * told, so sharing would put every claim and settle behind the doorbell. Which of the two an effect is, is
+ * known where it is written and nowhere else, so it is declared there rather than guessed at by whatever
+ * holds the connections.
  *
  * The connection arrives in the environment as [[Connection.Commands]]: an effect asks for one by type, and
  * this decides which one it gets.
@@ -66,8 +66,8 @@ final case class Connection(sync: Connection.Commands, wake: Connection.Commands
  * what the mixed codec below buys, and it is why this adapter does not apply a client that encodes keys
  * through a schema codec.
  *
- * '''An idle connection is exclusive.''' `BLMOVE` occupies its connection for the whole wait, so a
- * claimer owns one outright rather than borrowing from a pool.
+ * '''The listening connection is exclusive.''' A blocking `XREAD` occupies its connection for the whole
+ * wait, so the listener owns one outright rather than sharing.
  */
 object Connection:
 
@@ -119,7 +119,7 @@ object Connection:
     ZIO.serviceWithZIO[Connection.Commands](effect)
 
   /**
-   * What the pool needs to reach Redis, and to size and time itself.
+   * What is needed to reach Redis, and to time the connections.
    *
    * @param maxWait the longest wait a caller may ask for; both command ceilings are derived from it
    * @param redisUrl where the substrate lives — one server, or a seed node of a cluster
@@ -130,10 +130,10 @@ object Connection:
 
   /**
    * Two connections, closed with the scope: one shared by everything that answers immediately, and one
-   * reserved for the doorbell. Named  for what it replaced; there is nothing to pool any more.
+   * reserved for the doorbell.
    *
-   * Two rather than a pool because nothing else blocks any more — a claim is a single script that returns
-   * at once, so the only long-lived wait in the process is the listener's `XREAD`.
+   * Two rather than a pool because only one thing blocks — a claim is a single script that returns at once,
+   * so the listener's `XREAD` is the sole long-lived wait in the process.
    *
    * @param config where Redis is, and the longest wait to honour
    * @return the connections; aborts with `QueueError` when one cannot be opened
@@ -146,11 +146,11 @@ object Connection:
     yield Connection(sync, wake)
 
   /**
-   * The client the pool will open its connections from — the one place the two backends are chosen between.
+   * The client both connections are opened from — the one place the two backends are chosen between.
    *
-   * One per pool, not one per connection: a client owns Netty event loops and a timer wheel and is what
+   * One per instance, not one per connection: a client owns Netty event loops and a timer wheel and is what
    * `shutdown` releases, while a connection is a socket taken from it. Creating one per connection would
-   * multiply the threads by [[Config.claimers]] to no purpose.
+   * double those threads to no purpose.
    *
    * @param config where the substrate lives, and whether it is a cluster
    * @return the client, shut down with the scope; aborts with `QueueError` when the URL is unusable
@@ -196,7 +196,7 @@ object Connection:
   /**
    * A connection from whichever client [[redis]] returned.
    *
-   * The union is what keeps the choice of backend out of the pool: from here on a connection is a
+   * The union is what keeps the choice of backend in one place: from here on a connection is a
    * [[Commands]] whichever side it came from, because every key a script touches carries its queue's
    * `{q:<queue>}` hash tag and so lands in one slot either way.
    *
@@ -212,9 +212,9 @@ object Connection:
   /**
    * A connection for the life of the scope.
    *
-   * The command timeout has to exceed the longest idle wait, or Lettuce gives up on a `BLMOVE` that is
-   * doing exactly what it was asked to. It is set generously here and bounded in practice by the caller's
-   * own deadline.
+   * The command timeout has to exceed the longest block it will be asked to make, or Lettuce gives up on an
+   * `XREAD` that is doing exactly what it was asked to. It is set generously here; the shared connection
+   * never blocks at all.
    *
    * @param client the client to connect with
    * @param commandTimeout the ceiling for any single command

@@ -15,7 +15,7 @@ import java.time.Instant
 /**
  * Push the deadline forward on the claims a consumer still holds — `lua/heartbeat.lua`.
  *
- * '''Registration and renewal are the same call.''' A claiming connection with nothing held beats with
+ * '''Renewal only.''' A consumer with nothing held has nothing to send, and beats with
  */
 final class HeartbeatScript(ref: LuaScript.Sha):
 

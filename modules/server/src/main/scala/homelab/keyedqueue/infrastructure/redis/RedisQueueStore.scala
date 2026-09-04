@@ -147,8 +147,8 @@ final class RedisQueueStore(
       scripts.complete.run(settlement)
 
   /**
-   * One `heartbeat` call '''per queue''', because worker liveness and claims are namespaced by queue while a
-   * caller's receipts are not: a consumer holding work in three queues costs three round trips here.
+   * One `heartbeat` call '''per queue''', because claims are namespaced by queue while a caller's receipts
+   * are not: a consumer holding work in three queues costs three round trips here.
    *
    * No worker entry is written, because there are none: a consumer is known by its receipts, and its
    * claims are found by fence token.
@@ -166,7 +166,7 @@ final class RedisQueueStore(
           when.maxOption.getOrElse(Instant.EPOCH) -> Chunk.fromIterable(chunk).flatten
 
   /**
-   * One `watchdog` call, which carries all three sweeps — lapsed claims, dead workers, elapsed backoffs — so
+   * One `watchdog` call, which carries both sweeps — lapsed claims and elapsed backoffs — so
    * a repair pass is a single round trip and a single idle window on the server.
    *
    * @param queue the queue to repair

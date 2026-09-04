@@ -13,8 +13,8 @@ import zio.*
 /**
  * One repair pass — `lua/watchdog.lua`.
  *
- * All three sweeps travel together — lapsed claims, dead workers, elapsed backoffs — so a pass is a single
- * round trip and a single blocking window on the server.
+ * Both sweeps travel together — lapsed claims and elapsed backoffs — so a pass is a single round trip and a
+ * single blocking window on the server.
  *
  * `prefix` goes over as an argument because the sweep builds per-key names at runtime; it is the same tag
  * every key here shares, which is what keeps them in one cluster slot.
@@ -23,7 +23,7 @@ import zio.*
  */
 final class WatchdogScript(ref: LuaScript.Sha):
 
-  /** Multi, because a pass reports three lists. */
+  /** Multi, because a pass reports two lists. */
   private val output: ScriptOutputType = ScriptOutputType.MULTI
 
   /**
@@ -41,8 +41,8 @@ final class WatchdogScript(ref: LuaScript.Sha):
         .flatMap(reply => ZIO.fromEither(read(reply)))
 
   /**
-   * Everything the three sweeps read or repair: leases, key state, the ready list they push back onto,
-   * fences they advance, worker liveness, and the backoff set.
+   * Everything the sweeps read or repair: leases, key state, the ready list they push back onto, the fences
+   * they advance, the backoff set, and the doorbell they ring when a key becomes claimable again.
    *
    * @param ns the queue to repair
    * @return `claimed`, `state`, `ready`, `fence`, `delayed`, `wake`, in the order `lua/watchdog.lua`
@@ -62,7 +62,7 @@ final class WatchdogScript(ref: LuaScript.Sha):
     Array(LuaScript.utf8(limit.toString), LuaScript.utf8(ns.prefix))
 
   /**
-   * Read the three lists the sweep reports, in the order the script returns them.
+   * Read the two lists the sweep reports, in the order the script returns them.
    *
    * @param value the raw reply
    * @return what the pass repaired, or `MalformedReply` naming the element that could not be read
@@ -73,8 +73,8 @@ final class WatchdogScript(ref: LuaScript.Sha):
   /**
    * The shape the script promises: `{reclaimed, released}`, each an array of bulk strings.
    *
-   * All three arrive as strings and are given their types here, which is the last point at which a message
-   * key and a worker id are still the same thing.
+   * Both arrive as arrays of bulk strings and are given their type here — the last point at which a key
+   * that was reclaimed and one that was released are the same kind of thing.
    *
    * @return the decoder
    */

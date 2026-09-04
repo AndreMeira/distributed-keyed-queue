@@ -15,7 +15,7 @@ import java.time.Instant
  *
  * Deliberately says nothing about Redis. Every operation here is one atomic step in the substrate, which is
  * what lets a second implementation exist without the layer above noticing: a Postgres variant would do with
- * `SKIP LOCKED` and a `claimed_until` column what this one does with `BLMOVE` and a deadline set.
+ * `SKIP LOCKED` and a `claimed_until` column what this one does with a script and a deadline set.
  *
  * '''It speaks in messages, and cargo stays opaque.''' How a message is serialised is this port's business,
  * not its caller's — the same way key layout is. What the store never does is look *inside* a message: only

@@ -20,6 +20,8 @@ What is specific to this repo:
     even while the thing it tests is not.
 
   And in `learning-material/`:
+  - [`claiming-identity.md`](learning-material/claiming-identity.md) — *superseded*: why a claim taken in
+    two steps needed an identity, and what removing the second step removed with it.
   - [`redis-state-walkthrough.md`](learning-material/redis-state-walkthrough.md) — every request traced
     through the structures it touches; the page for when something is stuck and you are looking at a live
     instance.

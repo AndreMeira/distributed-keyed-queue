@@ -42,8 +42,9 @@ final class ProduceScript(ref: LuaScript.Sha):
         .flatMap(reply => ZIO.fromEither(read(reply)))
 
   /**
-   * The three lists and hashes an append touches: where claimable keys queue, where their state is kept,
-   * and where this key's own messages accumulate.
+   * The five structures an append touches: where claimable keys queue, where their state is kept, where
+   * this key's own messages and payloads accumulate, and the doorbell it rings when the key becomes
+   * claimable.
    *
    * @param ns the queue to append in
    * @param message the message; the key it carries decides where it lands

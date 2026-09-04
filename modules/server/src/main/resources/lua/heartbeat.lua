@@ -7,8 +7,8 @@
 -- returns            {renewedUntil, staleKeys}
 --
 -- A heartbeat is a *renewal*, which is why a long-running handler needs no lease long enough to cover it.
--- Two guards keep a confused worker honest: `XX` never resurrects a claim the watchdog already revoked, and
--- the token check stops a worker extending a claim that has since been handed to somebody else — where a
+-- Two guards keep a confused consumer honest: `XX` never resurrects a claim the watchdog already revoked,
+-- and the token check stops one extending a claim that has since been handed to somebody else — where a
 -- blind `XX` would happily push the new owner's deadline around.
 --
 -- It returns the keys it could NOT renew rather than a count: the caller has to stop working those, and a

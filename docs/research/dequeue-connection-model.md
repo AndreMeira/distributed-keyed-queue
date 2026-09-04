@@ -1,12 +1,16 @@
 ---
 title: "What a waiting consumer should cost"
 type: research
-status: draft
+status: superseded
 updated: 2026-08-31
 tags: [dequeue, connections, blmove, pubsub, cluster, backpressure]
 ---
 
 # What a waiting consumer should cost
+
+> **Resolved by Option B.** The notification design was built; Option A — a watcher per queue, keeping
+> `BLMOVE` — was skipped. This page is kept for the framing and the measurements that led there. See
+> [`non-blocking-dequeue.md`](non-blocking-dequeue.md).
 
 Today it costs a Redis connection. This page is about what else it could cost, and what each option buys.
 Nothing here is built; the current model is described first because two of its properties are easy to get

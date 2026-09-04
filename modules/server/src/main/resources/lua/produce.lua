@@ -12,7 +12,7 @@
 --
 -- The state guard is the whole point: a key already `queued` is in `ready` (or held back in `delayed`) and
 -- must not be pushed twice, and a key `processing` is re-queued by whoever finishes it, or by the watchdog.
--- Two workers on one key is the one thing this design must never allow.
+-- Two consumers on one key is the one thing this design must never allow.
 --
 -- '''Ids in the list, messages in a hash.''' The list is what carries order; the hash is what carries cargo.
 -- Splitting them is what lets everything else address a message by name — discard this one, look at the next

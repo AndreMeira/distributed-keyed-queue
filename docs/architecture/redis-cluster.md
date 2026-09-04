@@ -2,7 +2,7 @@
 title: "Redis Cluster — supported in code, unproven in practice"
 type: architecture
 status: current
-updated: 2026-08-30
+updated: 2026-09-04
 tags: [redis, cluster, sharding, hash-tag, lettuce, lua]
 ---
 
@@ -12,7 +12,7 @@ Set `cluster = true` (or `DKQ_CLUSTER=true`) and `redis-url` is read as a seed n
 Everything downstream is unchanged.
 
 > **Written, but never run against a cluster.** There is no multi-node Valkey in the test setup, so the
-> whole cluster path — routing, `MOVED` handling, script registration across masters, `BLMOVE` on a cluster
+> whole cluster path — routing, `MOVED` handling, script registration across masters, a blocking `XREAD` on a cluster
 > connection — is covered by reasoning about Lettuce's API and by nothing else. The standalone path is the
 > one the 18 tests exercise. Treat cluster mode as untested until a three-node fixture exists.
 
@@ -24,8 +24,8 @@ Every key belongs to one queue and carries that queue's hash tag. `Namespace` bu
 ```
 {q:orders}:ready        {q:orders}:fence       {q:orders}:msgs:<key>
 {q:orders}:state        {q:orders}:attempts    {q:orders}:payloads:<key>
-{q:orders}:claimed      {q:orders}:workers     {q:orders}:owned:<key>
-                        {q:orders}:delayed     {q:orders}:claiming:<worker>
+{q:orders}:claimed      {q:orders}:delayed     {q:orders}:owned:<key>
+                        {q:orders}:wake
 ```
 
 What each of them is for is [`redis-data-structures.md`](redis-data-structures.md); what matters here is
@@ -36,9 +36,13 @@ Lua legal at all, since a script may only reach keys in a single slot.
 
 Two consequences are easy to undo by accident:
 
-- **`watchdog.lua` builds key names at runtime** — `prefix .. ':owned:' .. key`, `prefix .. ':claiming:'
-  .. worker` — without declaring them in `KEYS`. Reaching an undeclared key is only safe because the tag
-  guarantees the same slot. That is why the sweep takes `prefix` as an argument at all.
+- **`consume.lua` and `watchdog.lua` build key names at runtime** — `prefix .. ':msgs:' .. key` and its
+  siblings — without declaring them in `KEYS`. Reaching an undeclared key is only safe because the tag
+  guarantees the same slot. That is why both take `prefix` as an argument at all, and it is unavoidable in
+  `consume.lua`, which does not know which key it holds until it has popped one.
+- **The `wake` stream is per queue for the same reason.** A global doorbell would be a different slot, so
+  the entry could not be appended by the script that made the key claimable — and a separate append is a
+  crash window where work exists and nobody is told.
 - **`renew` groups claims by queue** and issues one call per queue rather than one for a caller's whole
   receipt set. A single call across two queues is a call across two tags, and therefore two slots.
 
@@ -84,7 +88,7 @@ a single queue ever outgrows a node the answer is a different key layout, not a 
 A three-node Valkey cluster in `QueueStoreSpec` or the compose file, running the existing suite unchanged.
 The claims most worth testing rather than reasoning about:
 
-- a `BLMOVE` parked on a cluster connection blocks only that connection, as it does standalone — this is
+- an `XREAD` parked on a cluster connection blocks only that connection, as it does standalone — this is
   the assumption `Connection.Pool` rests on, and the one least supported by reading the API;
 - `Scripts.make` leaves every master able to serve `EVALSHA`;
 - the watchdog's runtime-built keys resolve, which is the check that the hash tag is doing its job.

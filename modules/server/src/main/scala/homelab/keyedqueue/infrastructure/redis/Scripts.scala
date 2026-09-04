@@ -26,7 +26,7 @@ import zio.*
  * @param produce appends a message and makes its key claimable
  * @param consume turns possession of a key into a claim
  * @param complete settles the in-flight message and decides the key's next state
- * @param heartbeat renews worker liveness and the claims still held
+ * @param heartbeat renews the claims a consumer still holds
  * @param watchdog the three repair sweeps
  */
 final case class Scripts(

@@ -1,15 +1,15 @@
 ---
 title: "Dequeue without holding a connection"
 type: research
-status: draft
+status: current
 updated: 2026-09-01
 tags: [dequeue, redis, streams, xread, claiming, cluster, design]
 ---
 
 # Dequeue without holding a connection
 
-Not built. This is the design that replaces `BLMOVE` — what it deletes, what it adds, and the states
-everything moves through.
+**Built.** This is the design that replaced `BLMOVE` — what it deletes, what it adds, and the states
+everything moves through. What actually shipped follows it, with two deviations recorded at the end.
 
 ## The idea, in one picture
 
@@ -216,3 +216,19 @@ because one `XREAD` can name every stream.
    nobody touches keeps up to 1000 entries indefinitely — small, but it is state with no owner.
 4. **Does `Dequeue` still need `max_wait` at all?** Waiting no longer costs a connection, so the ceiling
    exists only to bound how long a client's RPC hangs.
+
+## What shipped, and where it differs
+
+Two things turned out differently from the design above:
+
+- **`XREADGROUP` was never in question, but redundant attempts are real and measurable.** With few keys,
+  every instance with a waiter attempts each claimable key and one attempt in two is wasted; the sweep in
+  [`throughput-first-numbers.md`](throughput-first-numbers.md) shows it as a slower 8-key shape. Where keys
+  outnumber consumers it does not show at all.
+- **Cross-instance fairness went, and is now documented as absent** in
+  [`../architecture/guarantees.md`](../architecture/guarantees.md). The instance that just settled a key is
+  already claiming while the others are being woken, so a hot key tends to stay put.
+
+One question the design left open answered itself: the safety poll was never built. With the doorbell
+appended inside the script that makes a key claimable, there is no window in which work exists and no entry
+was written, so there was nothing for a poll to catch.

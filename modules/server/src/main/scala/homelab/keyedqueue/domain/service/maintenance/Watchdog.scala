@@ -8,8 +8,7 @@ import zio.*
 
 
 /**
- * The repair loop: revoke lapsed claims, recover keys from workers that died mid-claim, release keys whose
- * retry backoff has elapsed.
+ * The repair loop: revoke lapsed claims, and release keys whose retry backoff has elapsed.
  *
  * Runs on every instance without coordination, because the sweep is idempotent — reclaiming an
  * already-reclaimed key does nothing. No leader election, and no single instance whose death stops repair.

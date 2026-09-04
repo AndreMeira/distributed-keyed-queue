@@ -16,7 +16,7 @@
 -- ARGV[4..] id, verdict, id, verdict, ...  verdict is 'ack' | 'nack'
 -- returns            1 when applied, 0 when the claim was stale
 --
--- The token check is not an optimisation. A missed heartbeat only means the worker cannot be heard, so the
+-- The token check is not an optimisation. A missed heartbeat only means the consumer cannot be heard, so the
 -- watchdog may already have revoked this claim and given the key to somebody else. Without the guard, a
 -- zombie would settle messages the new owner is working.
 --
