@@ -41,15 +41,15 @@ final class WatchdogScript(ref: LuaScript.Sha):
         .flatMap(reply => ZIO.fromEither(read(reply)))
 
   /**
-   * Everything the sweeps read or repair: leases, key state, the ready list they push back onto, the fences
+   * Everything the sweeps read or repair: leases, the claimable set they return keys to, the fences
    * they advance, the backoff set, and the wake stream they append to when a key becomes claimable again.
    *
    * @param ns the queue to repair
-   * @return `claimed`, `state`, `ready`, `fence`, `delayed`, `wake`, in the order `lua/watchdog.lua`
+   * @return `claimed`, `ready`, `fence`, `delayed`, `wake`, `sequence`, in the order `lua/watchdog.lua`
    *         reads them
    */
   private def keys(ns: Namespace): Array[String] =
-    Array(ns.claimed, ns.state, ns.ready, ns.fence, ns.delayed, ns.wake)
+    Array(ns.claimed, ns.ready, ns.fence, ns.delayed, ns.wake, ns.sequence)
 
   /**
    * The per-pass cap, and the prefix the sweep rebuilds per-key names from.

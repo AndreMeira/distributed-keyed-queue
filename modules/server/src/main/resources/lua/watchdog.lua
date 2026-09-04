@@ -2,11 +2,11 @@
 -- elapsed.
 --
 -- KEYS[1] claimed    zset  key -> deadline
--- KEYS[2] state      hash
--- KEYS[3] ready      list
--- KEYS[4] fence      hash
--- KEYS[5] delayed    zset  key -> when it may be worked again
--- KEYS[6] wake       stream  one entry per key made claimable
+-- KEYS[2] ready      zset  key -> when it became claimable (unix millis)
+-- KEYS[3] fence      hash
+-- KEYS[4] delayed    zset  key -> when it may be worked again
+-- KEYS[5] wake       stream  one entry per key made claimable
+-- KEYS[6] sequence   string  the counter that scores `ready`
 -- ARGV[1] limit      most entries to handle per sweep
 -- ARGV[2] prefix     key namespace, e.g. {w:3}:q:orders — see the note on cluster hash tags
 -- ARGV[3] queue      named in the wake entries, because the stream is shared by the whole bucket
@@ -22,8 +22,7 @@
 -- `owned` is built here rather than declared in KEYS, because which keys have expired is not known until
 -- the range query runs. That is only safe because every name shares the `prefix` hash tag and therefore one
 -- cluster slot.
-local claimed, state, ready, fence, delayed, wake =
-  KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]
+local claimed, ready, fence, delayed, wake, sequence = KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]
 local limit, prefix, queue = tonumber(ARGV[1]), ARGV[2], ARGV[3]
 
 local now = redis.call('TIME')
@@ -45,14 +44,13 @@ for _, key in ipairs(expired) do
   redis.call('HINCRBY', fence, key, 1)
 
   redis.call('ZREM', claimed, key)
-  redis.call('HSET', state, key, 'queued')
 
   -- Not if a nack asked the key to wait. A claim may be settled piece by piece, so a nack can set a backoff
   -- and leave the claim alive — and if that claim then expires, pushing here as well would put the key on
   -- `ready` twice: once now, once when the due sweep finds the backoff elapsed. Two entries mean two
   -- claimers, and although the fence stops the loser corrupting anything, it does the work for nothing.
   if redis.call('ZSCORE', delayed, key) == false then
-    redis.call('RPUSH', ready, key)
+    redis.call('ZADD', ready, redis.call('INCR', sequence), key)
     redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'queue', queue, 'key', key)
   end
 end
@@ -63,7 +61,7 @@ local due = redis.call('ZRANGEBYSCORE', delayed, '-inf', now, 'LIMIT', 0, limit)
 
 for _, key in ipairs(due) do
   redis.call('ZREM', delayed, key)
-  redis.call('RPUSH', ready, key)
+  redis.call('ZADD', ready, redis.call('INCR', sequence), key)
   redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'queue', queue, 'key', key)
 end
 

@@ -19,12 +19,12 @@ Everything downstream is unchanged.
 ## Why the key layout was ready first
 
 Every key belongs to one queue, and carries the hash tag of the **bucket** that queue falls in. `Namespace`
-builds all eleven from `prefix = "{w:<bucket>}:q:<queue>"`, with the wake stream tagged but not scoped to
+builds all ten from `prefix = "{w:<bucket>}:q:<queue>"`, with the wake stream tagged but not scoped to
 the queue:
 
 ```
 {w:0}:q:orders:ready      {w:0}:q:orders:fence      {w:0}:q:orders:msgs:<key>
-{w:0}:q:orders:state      {w:0}:q:orders:attempts   {w:0}:q:orders:payloads:<key>
+{w:0}:q:orders:seq        {w:0}:q:orders:attempts   {w:0}:q:orders:payloads:<key>
 {w:0}:q:orders:claimed    {w:0}:q:orders:delayed    {w:0}:q:orders:owned:<key>
                           {w:0}:wake                ← shared by every queue in bucket 0
 ```

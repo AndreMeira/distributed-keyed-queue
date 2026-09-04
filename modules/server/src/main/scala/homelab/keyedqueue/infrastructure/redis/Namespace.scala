@@ -34,11 +34,26 @@ final case class Namespace(queue: QueueName, buckets: Int):
   /** The tag every key shares, and what the scripts rebuild the per-key names from. */
   val prefix: String = s"${Namespace.tag(bucket)}:q:$queue"
 
-  /** Keys with work and nobody working them. The only place anything blocks. */
+  /**
+   * Keys with work and nobody working them, scored by when each became claimable.
+   *
+   * A sorted set rather than a list, because the structure is also the bookkeeping: membership makes "this
+   * key is already queued" the set's own property rather than a separate hash to keep in step, and the
+   * score carries oldest-first ordering across keys. Membership is O(log N), which is what a claim by name
+   * would need.
+   */
   val ready: String = s"$prefix:ready"
 
-  /** key -> queued | processing. Absence means idle, which keeps the hash small. */
-  val state: String = s"$prefix:state"
+  /**
+   * The counter that scores [[ready]]: one number per key that becomes claimable, ever increasing.
+   *
+   * '''Arrival order, not a clock.''' A timestamp would be the obvious score and is wrong here — at even
+   * moderate rates many keys become claimable inside the same millisecond, and `ZPOPMIN` breaks a tie by
+   * member name, so cross-key ordering would quietly become alphabetical. Measured on this codebase, 200
+   * keys enqueued back to back produced 133 distinct millisecond scores. A counter has no ties by
+   * construction, and it makes every writer agree on what "older" means without agreeing on a clock.
+   */
+  val sequence: String = s"$prefix:seq"
 
   /** key -> lease deadline, in unix millis. */
   val claimed: String = s"$prefix:claimed"

@@ -127,6 +127,28 @@ object QueueStoreSpec extends ZIOSpecDefault:
         seen           <- ZIO.foreach(1 to 3)(_ => one(worker, queue).flatMap(ack(worker, queue)))
       yield assertTrue(seen == Chunk("a", "b", "c"))
     },
+    test("keys are served in the order they became claimable, not just messages within a key") {
+      // Cross-key FIFO. Nothing asserted this before, and it is the property the `ready` structure carries:
+      // whatever holds claimable keys has to hand them out oldest-first, whether that is a list's head or a
+      // sorted set's lowest score. A change to that structure that got the ordering wrong would otherwise
+      // be invisible — the ordering tests above are all *within* one key.
+      for
+        (worker, _, _) <- ZIO.service[(QueueStore, QueueStore, RedisClusterCommands[String, Array[Byte]])]
+        queue           = QueueName("cross-key-order")
+        // Named against the alphabet on purpose: several keys can become claimable inside one millisecond,
+        // and a tie broken by member name rather than by arrival would pass with ascending names and be
+        // wrong. These fail unless the order really is the order they arrived in.
+        keys            = Chunk("k5", "k4", "k3", "k2", "k1").map(MessageKey.apply)
+        _              <- ZIO.foreachDiscard(keys)(key => worker.enqueue(Submission(queue, message(key, s"m-$key"))))
+        // A second message for the first key, after the rest: it must not move that key's place, and must
+        // not give it a second one either.
+        _              <- worker.enqueue(Submission(queue, message(keys.head, "m-again")))
+        served         <- ZIO.foreach(1 to keys.size): _ =>
+                            one(worker, queue).flatMap: batch =>
+                              val held = batch.get
+                              worker.settle(settlement(held.claim, acks(held))).as(held.claim.key)
+      yield assertTrue(Chunk.fromIterable(served) == keys)
+    },
     test("a key being worked is not handed to anybody else, and its next message waits") {
       // The invariant the whole design is built around. While k1 is held, a second claim must find k2 —
       // never k1's next message, and never k1 again.
@@ -286,9 +308,10 @@ object QueueStoreSpec extends ZIOSpecDefault:
         _                  <- ZIO.foreachDiscard(held)(batch => worker.settle(settlement(batch.claim, acks(batch))))
         payloads           <- ZIO.attemptBlocking(redis.hlen(Namespace(QueueName("cleanup"), buckets).payloads(MessageKey("k1")))).orDie
         owned              <- ZIO.attemptBlocking(redis.scard(Namespace(QueueName("cleanup"), buckets).owned(MessageKey("k1")))).orDie
-        state              <- ZIO.attemptBlocking(redis.hget(Namespace(QueueName("cleanup"), buckets).state, "k1")).orDie
-        ready              <- ZIO.attemptBlocking(redis.llen(Namespace(QueueName("cleanup"), buckets).ready)).orDie
-      yield assertTrue(payloads == 0L, owned == 0L, state == null, ready == 0L)
+        // Idle is the absence of the key from every structure — there is no state entry to check any more.
+        claimed            <- ZIO.attemptBlocking(redis.zcard(Namespace(QueueName("cleanup"), buckets).claimed)).orDie
+        ready              <- ZIO.attemptBlocking(redis.zcard(Namespace(QueueName("cleanup"), buckets).ready)).orDie
+      yield assertTrue(payloads == 0L, owned == 0L, claimed == 0L, ready == 0L)
     },
     test("a claim reclaimed while a nack's backoff is pending queues its key once, not twice") {
       // A partial nack can set a backoff and leave the claim alive. If that claim then lapses, the reclaim
@@ -306,7 +329,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
         // Let the lease lapse and the backoff fall due, then sweep both in one pass.
         _                        <- ZIO.sleep(leaseTtl + 1.second)
         _                        <- sweeper.sweep(queue, 100)
-        ready                    <- ZIO.attemptBlocking(redis.llen(Namespace(queue, buckets).ready)).orDie
+        ready                    <- ZIO.attemptBlocking(redis.zcard(Namespace(queue, buckets).ready)).orDie
       yield assertTrue(ready == 1L)
     },
     test("a heartbeat renews what is held and names what is lost") {

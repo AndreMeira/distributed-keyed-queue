@@ -24,8 +24,8 @@ queue in it. `{Q}` below is one queue's prefix, `{W}` its bucket's:
 
 | key | type | maps | written by |
 |---|---|---|---|
-| `{Q}:ready` | list | keys with work and nobody working them | produce, complete, watchdog |
-| `{Q}:state` | hash | key → `queued` \| `processing` (absent = idle) | produce, consume, complete, watchdog |
+| `{Q}:ready` | zset | key → its place in line; keys with work and nobody working them | produce, consume, complete, watchdog |
+| `{Q}:seq` | string | the counter that scores `ready` | produce, complete, watchdog |
 | `{Q}:claimed` | zset | key → lease deadline, unix millis | consume, complete, watchdog |
 | `{Q}:fence` | hash | key → claim counter | consume, complete, watchdog |
 | `{Q}:attempts` | hash | **message id** → delivery count | consume, complete |
@@ -37,9 +37,24 @@ queue in it. `{Q}` below is one queue's prefix, `{W}` its bucket's:
 
 ## Why the types are what they are
 
-**`ready` is a list** because it is a FIFO across keys: `RPUSH` on the way in, `LPOP` in `consume.lua`, so
-the key that has waited longest is claimed first. It was originally a list because `BLMOVE` needed one; that
-reason is gone, and the ordering one remains.
+**`ready` is a sorted set, scored by arrival.** It is a FIFO across keys — `ZPOPMIN` in `consume.lua`
+serves whichever key has waited longest — and being a set is what makes "is this key already queued" the
+structure's own property rather than a separate hash to keep in step. It was a list while `BLMOVE` needed
+one, and briefly afterwards; a set also makes claiming a *named* key O(log N), which is what any affinity
+scheme would need.
+
+**The score is a counter, not a clock.** `{Q}:seq` is `INCR`ed once per key that becomes claimable.
+A timestamp is the obvious score and is wrong: at even moderate rates several keys become claimable within
+the same millisecond, and `ZPOPMIN` breaks a tie by *member name* — so cross-key ordering would quietly
+become alphabetical. Measured here, 200 keys enqueued back to back produced 133 distinct millisecond
+scores. A counter cannot tie, and it makes every writer agree on what "older" means without agreeing on a
+clock.
+
+**Idle is the absence of the key**, everywhere. There is no structure that says what a key is doing: it is
+claimable if it is in `ready`, held if it is in `claimed`, waiting if it is in `delayed`, and idle if it is
+in none of them. A `state` hash used to say so explicitly, but nothing ever branched on its value — it was
+read in one place, for existence only, and three membership checks answer that question from structures
+that have to be right anyway.
 
 **`msgs` holds ids, `payloads` holds messages.** The split is what lets a script address a message by name:
 Redis cannot read inside a serialised protobuf, so if the list held payloads then "drop this message" could
@@ -78,12 +93,14 @@ trimmed past.
 
 ## What a message's life touches
 
-**Enqueue** — `HSETNX payloads id`, and if that is new, `RPUSH msgs id` and, when the key is idle,
-`HSET state queued` + `RPUSH ready key`. The `HSETNX` is what makes a repeated enqueue idempotent: the same
-id twice for one key is one message, for as long as it is queued.
+**Enqueue** — `HSETNX payloads id`, and if that is new, `RPUSH msgs id` and, when the key is in none of
+`ready`, `claimed` or `delayed`, `ZADD ready <INCR seq> key`. The `HSETNX` is what makes a repeated enqueue
+idempotent: the same id twice for one key is one message, for as long as it is queued. The three membership
+checks are what stop a key being queued while it is being worked — a key in `ready` twice is two consumers
+on one key, which is the one thing this design forbids.
 
-**Claim** — one call. `consume.lua` does `LPOP ready` itself, then takes the first N ids with
-`LRANGE msgs 0 n-1`, `SADD`s them to `owned`, sets `state processing`, writes the lease into `claimed`,
+**Claim** — one call. `consume.lua` does `ZPOPMIN ready` itself, then takes the first N ids with
+`LRANGE msgs 0 n-1`, `SADD`s them to `owned`, writes the lease into `claimed`,
 advances `fence`, counts an attempt each, and reads the payloads with `HMGET`. Because the pop and the grant
 are one script, **a key is either in `ready` or claimed** — there is no in-between state for anything to
 recover, which is why there is no per-connection holding list here any more.
@@ -96,11 +113,12 @@ which a consumer settles.
 **Settle** — `complete.lua` checks the token against `fence`, then per named id: `SREM owned` and, if
 acknowledged, `LREM msgs` + `HDEL payloads` + `HDEL attempts`. A nack removes only the ownership, and may
 `ZADD delayed GT` to ask the key to wait. When `owned` is empty the claim is over: `fence` advances,
-`claimed` is cleared, and the key goes back to `ready`, into `delayed`, or idle.
+`claimed` is cleared, and the key goes back to `ready` with a *fresh* score — it has been served, so it
+queues behind everything still waiting — or stays out of it, held by `delayed` or by having nothing left.
 
-**Every push to `ready` appends a wake.** `produce.lua`, `complete.lua` and both watchdog sweeps append to
-`wake` in the same script, and only where they actually pushed — a nacked key parked in `delayed` announces
-nothing, because its wake comes later, from the sweep that releases it.
+**Every addition to `ready` appends a wake.** `produce.lua`, `complete.lua` and both watchdog sweeps append
+to `wake` in the same script, and only where the key actually became claimable — a nacked key parked in
+`delayed` announces nothing, because its wake comes later, from the sweep that releases it.
 
 ## Two rules that are easy to break
 
@@ -118,8 +136,9 @@ consumers claim it — the fence stops the loser corrupting anything, but it wor
 ## The watchdog's two sweeps
 
 1. **Lapsed claims** — `ZRANGEBYSCORE claimed -inf now`: `DEL owned:<key>`, advance `fence`, clear the
-   lease, and re-ready the key unless `delayed` says otherwise. Nothing moves, because nothing had moved.
-2. **Elapsed backoffs** — `ZRANGEBYSCORE delayed -inf now`: back onto `ready`.
+   lease, and score the key back into `ready` unless `delayed` says otherwise. Nothing moves, because
+   nothing had moved.
+2. **Elapsed backoffs** — `ZRANGEBYSCORE delayed -inf now`: back into `ready`, with a fresh score.
 
 There used to be a third, draining the holding list of a connection that died mid-claim. With the claim in
 one script there is no such list and no such moment: **the lease is the only thing that expires.**

@@ -1,10 +1,9 @@
 -- Take the next claimable key and hand back a batch of its messages to work on.
 --
--- KEYS[1] ready      list  keys with work and nobody working them
--- KEYS[2] state      hash  key -> queued | processing (absent == idle)
--- KEYS[3] claimed    zset  key -> deadline (unix millis); the lease
--- KEYS[4] fence      hash  key -> monotonic claim counter
--- KEYS[5] attempts   hash  message id -> how many times it has been delivered
+-- KEYS[1] ready      zset  key -> when it became claimable (unix millis)
+-- KEYS[2] claimed    zset  key -> deadline (unix millis); the lease
+-- KEYS[3] fence      hash  key -> monotonic claim counter
+-- KEYS[4] attempts   hash  message id -> how many times it has been delivered
 -- ARGV[1] prefix     key namespace, e.g. {q:orders} — see the note on cluster hash tags
 -- ARGV[2] ttl        millis
 -- ARGV[3] batch      the most messages to hand over; at least 1
@@ -20,16 +19,19 @@
 -- `msgs`, `payloads` and `owned` are built here rather than declared in KEYS, because which key is claimed
 -- is not known until the pop. That is only safe because every name shares the `prefix` hash tag and
 -- therefore one cluster slot.
-local ready, state, claimed, fence, attempts = KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5]
+local ready, claimed, fence, attempts = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
 local prefix, ttl, batch = ARGV[1], tonumber(ARGV[2]), tonumber(ARGV[3])
 
--- The head, oldest first: RPUSH on the way in and LPOP here is FIFO across keys, so a key that has waited
--- longest is served first.
-local key = redis.call('LPOP', ready)
+-- The lowest score, which is the oldest: every writer scores a key with the moment it became claimable, so
+-- popping the minimum serves the key that has waited longest. `ZPOPMIN` answers with {member, score} or an
+-- empty table.
+local popped = redis.call('ZPOPMIN', ready)
 
-if not key then
+if #popped == 0 then
   return nil
 end
+
+local key = popped[1]
 
 local msgs     = prefix .. ':msgs:' .. key
 local payloads = prefix .. ':payloads:' .. key
@@ -40,8 +42,7 @@ local owned    = prefix .. ':owned:' .. key
 local ids = redis.call('LRANGE', msgs, 0, batch - 1)
 
 if #ids == 0 then
-  redis.call('HDEL', state, key)   -- nothing to do after all; back to idle rather than held
-  return nil
+  return nil   -- nothing to do after all; the key is simply not claimable, and is already out of `ready`
 end
 
 -- Server time, so deadlines do not depend on a caller's clock: a fast one would write leases that never
@@ -49,7 +50,6 @@ end
 local now = redis.call('TIME')
 now = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
 
-redis.call('HSET', state, key, 'processing')
 redis.call('ZADD', claimed, now + ttl, key)
 redis.call('SADD', owned, unpack(ids))
 

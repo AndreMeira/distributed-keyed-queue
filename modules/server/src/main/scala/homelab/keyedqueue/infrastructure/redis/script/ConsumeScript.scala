@@ -46,7 +46,7 @@ final class ConsumeScript(ref: LuaScript.Sha):
         .flatMap(reply => ZIO.fromEither(read(ns)(reply)))
 
   /**
-   * Where a claim comes from and everything it writes: the queue's ready list, the key's state, its lease,
+   * Where a claim comes from and everything it writes: the queue's claimable set, the key's lease,
    * its fence, and the delivery counts.
    *
    * The key's own structures — `msgs`, `payloads`, `owned` — are absent because their names depend on the
@@ -54,10 +54,10 @@ final class ConsumeScript(ref: LuaScript.Sha):
    * the queue's hash tag and therefore its slot.
    *
    * @param ns the queue to claim from
-   * @return `ready`, `state`, `claimed`, `fence`, `attempts`, in the order `lua/consume.lua` reads them
+   * @return `ready`, `claimed`, `fence`, `attempts`, in the order `lua/consume.lua` reads them
    */
   private def keys(ns: Namespace): Array[String] =
-    Array(ns.ready, ns.state, ns.claimed, ns.fence, ns.attempts)
+    Array(ns.ready, ns.claimed, ns.fence, ns.attempts)
 
   /**
    * The namespace to build the key's own structures from, how long the lease should run, and how many

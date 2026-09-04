@@ -42,27 +42,28 @@ final class CompleteScript(ref: LuaScript.Sha):
         .flatMap(reply => ZIO.fromEither(read(reply)))
 
   /**
-   * Everything a settle can move: the key's state and lease, its fence, its messages and their payloads,
-   * what the claim still owns, the delivery counts, the ready list it may return to, and the backoff a nack
+   * Everything a settle can move: where the key queues and its lease, its fence, its messages and their payloads,
+   * what the claim still owns, the delivery counts, the claimable set it may return to, and the backoff a nack
    * may park it in.
    *
    * @param ns the queue these keys belong to
    * @param claim the claim being settled against, which names the key
-   * @return `state`, `claimed`, `fence`, `msgs`, `payloads`, `owned`, `attempts`, `ready`, `delayed`, in the
+   * @return `ready`, `claimed`, `fence`, `msgs`, `payloads`, `owned`, `attempts`, `delayed`, `wake`,
+   *         `sequence`, in the
    *         order `lua/complete.lua` reads them
    */
   private def keys(ns: Namespace, claim: Claim): Array[String] =
     Array(
-      ns.state,
+      ns.ready,
       ns.claimed,
       ns.fence,
       ns.msgs(claim.key),
       ns.payloads(claim.key),
       ns.owned(claim.key),
       ns.attempts,
-      ns.ready,
       ns.delayed,
       ns.wake,
+      ns.sequence,
     )
 
   /**

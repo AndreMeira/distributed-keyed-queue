@@ -2,8 +2,8 @@
 title: "Every request, and what it does to Redis"
 type: learning-material
 status: current
-updated: 2026-09-04
-tags: [redis, walkthrough, state, lua, claims, debugging]
+updated: 2026-09-05
+tags: [redis, walkthrough, keys, lua, claims, debugging]
 ---
 
 # Every request, and what it does to Redis
@@ -32,8 +32,8 @@ Three messages for one key, sent in order.
 ```
 payloads:k1  {m1: …}          HSETNX — the id is new, so the message is stored
 msgs:k1      [m1]             appended
-state        {k1: queued}     the key was idle, so it becomes claimable
-ready        [k1]
+seq          1                INCR: the next place in line
+ready        {k1: 1}          the key was in none of ready/claimed/delayed, so it becomes claimable
 ```
 
 **`Enqueue(orders, k1, m2)`, `Enqueue(orders, k1, m3)`**
@@ -41,12 +41,14 @@ ready        [k1]
 ```
 payloads:k1  {m1: …, m2: …, m3: …}
 msgs:k1      [m1, m2, m3]
-state        {k1: queued}     unchanged — already queued, so `ready` is NOT pushed again
-ready        [k1]             still one entry: the key is claimable once, not once per message
+seq          1                unchanged — nothing new became claimable
+ready        {k1: 1}          same entry, same score: the key is claimable once, not once per message,
+                              and it does not lose its place because a later message arrived
 ```
 
-> **The state guard is the whole point.** A key on `ready` twice is two claimers for one key. Every path
-> that pushes to `ready` first checks that the key is not already queued or held.
+> **That guard is the whole point.** A key in `ready` twice is two claimers for one key. Every path that
+> adds to `ready` first checks the key is in none of `ready`, `claimed` or `delayed` — the three ways a key
+> is already accounted for.
 
 **`Enqueue(orders, k1, m2)` again** — a producer retry:
 
@@ -66,11 +68,10 @@ One call. The key leaves `ready` and the claim exists in the same script, so the
 belongs to nobody:
 
 ```
-ready        []                       the key leaves, inside the script
+ready        {}                       ZPOPMIN takes the lowest score, inside the script
 msgs:k1      [m1, m2, m3]             UNCHANGED — claimed messages do not move
 owned:k1     {m1, m2}                 the claim holds the first two
-state        {k1: processing}
-claimed      {k1: <now+lease>}        the lease
+claimed      {k1: <now+lease>}        the lease, and the record that the key is held
 fence        {k1: 1}                  the token this claim will settle with
 attempts     {m1: 1, m2: 1}           one delivery each
 ```
@@ -113,8 +114,8 @@ msgs:k1      [m2, m3]                 UNCHANGED — a nack puts nothing back, be
 attempts     {m2: 1}                  kept, so the next delivery counts 2
 fence        {k1: 2}                  the claim is over; the old token is now worthless
 claimed      {}                       lease released
-state        {k1: queued}
-ready        [k1]                     claimable again
+seq          2                        INCR: a fresh place in line
+ready        {k1: 2}                  claimable again — behind anything that was already waiting
 ```
 
 The next claim hands out `m2` first — it never lost its place — with `attempt: 2`.
@@ -123,11 +124,11 @@ The next claim hands out `m2` first — it never lost its place — with `attemp
 
 ```
 delayed      {k1: <now+wait>}
-ready        []                       NOT pushed: the key waits
-state        {k1: queued}
+ready        {}                       NOT added: the key waits
 ```
 
-The key sits queued-but-not-ready until a sweep finds the wait elapsed.
+The key is accounted for by `delayed` alone until a sweep finds the wait elapsed — which is also what stops
+a producer adding it back to `ready` in the meantime.
 
 **Naming something the claim does not own** — another key's message, or one already settled — changes
 nothing and is not an error. **Repeating a settle** is the same: the second finds nothing owed.
@@ -164,8 +165,7 @@ only kind of death there is:
 owned:k1     {}                       ownership forgotten
 fence        {k1: +1}                 the silent consumer's token is now worthless
 claimed      {}                       lease dropped
-state        {k1: queued}
-ready        [k1]                     …unless `delayed` says the key is still waiting
+ready        {k1: <next>}             …unless `delayed` says the key is still waiting
 msgs:k1      unchanged                nothing to restore: nothing had moved
 payloads:k1  unchanged
 attempts     unchanged                a reclaim IS a delivery that did not finish, and it shows
@@ -186,11 +186,11 @@ What each structure tells you when something looks wrong:
 
 | symptom | look at |
 |---|---|
-| a key seems stuck | `state` (is it `processing`?), `claimed` (is there a lease, and is it in the past?) |
+| a key seems stuck | `claimed` (is there a lease, and is it in the past?), `delayed` (waiting out a backoff?) |
 | a consumer's settles are refused | `fence` versus the token in its receipt — something revoked its claim |
-| work is not being handed out | `ready` (empty?), `delayed` (waiting?), `state` (still `processing`?) |
+| work is not being handed out | `ready` (empty?), `delayed` (waiting?), `claimed` (all held?) |
 | a message keeps coming back | `attempts` for its id — and whether anything ever acknowledges it |
-| a key is worked twice at once | `ready` for duplicate entries. It should never hold a key twice |
+| a key is worked twice at once | whether the key is in `ready` *and* `claimed`. A sorted set cannot hold it twice, but it must never be in both |
 | memory grows | `payloads:<key>` against `msgs:<key>` — they should hold the same ids |
 
 That last row is the one invariant no request depends on but every leak would show in: **every id in
