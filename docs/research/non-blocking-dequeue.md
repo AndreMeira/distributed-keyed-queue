@@ -2,7 +2,7 @@
 title: "Dequeue without holding a connection"
 type: research
 status: current
-updated: 2026-09-01
+updated: 2026-09-04
 tags: [dequeue, redis, streams, xread, claiming, cluster, design]
 ---
 
@@ -229,6 +229,14 @@ Two things turned out differently from the design above:
   [`../architecture/guarantees.md`](../architecture/guarantees.md). The instance that just settled a key is
   already claiming while the others are being woken, so a hot key tends to stay put.
 
-One question the design left open answered itself: the safety poll was never built. With the doorbell
-appended inside the script that makes a key claimable, there is no window in which work exists and no entry
-was written, so there was nothing for a poll to catch.
+One question the design left open answered itself, then reopened: **the safety poll was not needed for the
+reason it was proposed, and was built for another.** With the doorbell appended inside the script that makes
+a key claimable, there is no window in which work exists and no entry was written — nothing for a poll to
+catch in Redis. The window that does exist is in the *consumer*, not the substrate: a wake is carried back
+to it as a returned value, and a fiber interrupted between taking one and returning it drops the value
+where no finalizer can see. The key stays claimable and that instance's consumers stay asleep beside it.
+
+So a listening turn that hears nothing now rings whoever is parked — one look per parked queue, only while
+the doorbell is silent, which is to say only while the queue is idle anyway. Measured back to back, the
+sweep is unchanged. The mechanics, and why nothing local to the consumer can close the window, are in
+[`../learning-material/interruption-and-lost-wakes.md`](../learning-material/interruption-and-lost-wakes.md).

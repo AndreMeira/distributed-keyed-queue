@@ -25,39 +25,42 @@ object QueueStoreSpec extends ZIOSpecDefault:
   private val leaseTtl = 2.seconds
 
   /** A Valkey container for the suite, and two stores over it — a worker's, and a sweeper's. */
-  private val substrate: ZLayer[Any, Any, (QueueStore, QueueStore, RedisClusterCommands[String, Array[Byte]])] =
-    ZLayer.scoped:
+  private val substrate: ZLayer[Any, Any, (QueueStore, QueueStore, RedisClusterCommands[String, Array[Byte]]) & Waiters] =
+    ZLayer.scopedEnvironment:
       for
-        container       <- ZIO.acquireRelease(
-                             ZIO.attemptBlocking:
-                               // Docker Engine 29 rejects the API version docker-java negotiates by default with
-                               // an HTTP 400; pinning it is what the toolkit's Testcontainers specs do too.
-                               val _                            = java.lang.System.setProperty("api.version", "1.40")
-                               // GenericContainer is self-referentially generic (SELF extends GenericContainer),
-                               // which Scala infers as Nothing — hence the explicit wildcard and no chaining.
-                               val started: GenericContainer[?] = GenericContainer("valkey/valkey:8.1-alpine")
-                               started.setExposedPorts(java.util.List.of(Integer.valueOf(6379)))
-                               started.start()
-                               started
-                           )(container => ZIO.attemptBlocking(container.stop()).ignore)
-        url              = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-        config           = QueueConfig(url, cluster = false, 0, leaseTtl, 1.second, 100, 200.millis, 5.seconds, maxBatchLimit = 32)
-        (first, pooled) <- store(config)
-        (second, _)     <- store(config)
+        container                <- ZIO.acquireRelease(
+                                      ZIO.attemptBlocking:
+                                        // Docker Engine 29 rejects the API version docker-java negotiates by default with
+                                        // an HTTP 400; pinning it is what the toolkit's Testcontainers specs do too.
+                                        val _                            = java.lang.System.setProperty("api.version", "1.40")
+                                        // GenericContainer is self-referentially generic (SELF extends GenericContainer),
+                                        // which Scala infers as Nothing — hence the explicit wildcard and no chaining.
+                                        val started: GenericContainer[?] = GenericContainer("valkey/valkey:8.1-alpine")
+                                        started.setExposedPorts(java.util.List.of(Integer.valueOf(6379)))
+                                        started.start()
+                                        started
+                                    )(container => ZIO.attemptBlocking(container.stop()).ignore)
+        url                       = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
+        config                    = QueueConfig(url, cluster = false, 0, leaseTtl, 1.second, 100, 200.millis, 5.seconds, maxBatchLimit = 32)
+        (first, pooled, waiters) <- store(config)
+        (second, _, _)           <- store(config)
         // To assert on what the adapter wrote. Borrowed from a store's own pool rather than opened here:
         // a hand-rolled connection would need its own copy of the codec, and a copy that drifted would
         // make these assertions read bytes differently from the code they are checking.
-        inspect         <- pooled.provide(ZIO.service[Connection.Commands])
-      yield (first: QueueStore, second: QueueStore, inspect)
+        inspect                  <- pooled.provide(ZIO.service[Connection.Commands])
+      // The registry alongside the stores, because one guarantee is about consumers waiting rather than
+      // about what Redis holds: a waiter is only observable from the instance it parked on.
+      yield ZEnvironment((first: QueueStore, second: QueueStore, inspect)) ++ ZEnvironment(waiters)
 
   /**
    * A store with its own client and connections, as the service builds one — so the two stores here are
    * two instances, not two halves of one.
    *
    * @param config where Redis is, and the sizes to build with
-   * @return the store, and the pool behind it for tests that need to look at Redis directly
+   * @return the store, the pool behind it for tests that need to look at Redis directly, and the registry
+   *         its consumers park in
    */
-  private def store(config: QueueConfig): ZIO[Scope, QueueError, (QueueStore, Connection)] =
+  private def store(config: QueueConfig): ZIO[Scope, QueueError, (QueueStore, Connection, Waiters)] =
     for
       connection <- Connection.make(
                       Connection.Config(config.maxWait, config.redisUrl, config.cluster)
@@ -67,7 +70,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
       listener   <- WakeListener.make(connection, waiters, config.wakeBlock)
       _          <- listener.run.forkScoped
       store      <- RedisQueueStore.make(connection, scripts, listener, waiters, config.leaseTtl)
-    yield (store, connection)
+    yield (store, connection, waiters)
 
   /** A message whose cargo is `body`: these tests care about order and ownership, not about content. */
   private def message(key: MessageKey, body: String): Message =
@@ -305,6 +308,20 @@ object QueueStoreSpec extends ZIOSpecDefault:
         _                        <- sweeper.sweep(queue, 100)
         ready                    <- ZIO.attemptBlocking(redis.llen("{q:backoff-reclaim}:ready")).orDie
       yield assertTrue(ready == 1L)
+    },
+    test("a consumer parked while the doorbell is silent is roused anyway") {
+      // The backstop, and the one guarantee that cannot be checked from Redis: a wake is carried back to
+      // its consumer as a value, and a fiber interrupted in the gap between taking one and returning it
+      // drops it where no finalizer can see. The key stays claimable and this instance's consumers stay
+      // asleep — so a listening turn that heard nothing rings whoever is parked. Without that, this waiter
+      // sits out its whole patience.
+      for
+        waiters <- ZIO.service[Waiters]
+        queue    = QueueName("silent")
+        parked  <- waiters.waitFor(queue, 5.seconds).fork
+        _       <- waiters.waiting(queue).repeatUntil(_ >= 1)
+        roused  <- parked.join
+      yield assertTrue(roused)
     },
     test("a heartbeat renews what is held and names what is lost") {
       for

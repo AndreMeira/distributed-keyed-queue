@@ -46,12 +46,38 @@ final class Waiters(state: Ref.Synchronized[Waiters.State]):
     // is a window between joining the queue and attaching the exit handler: a caller interrupted there
     // leaves a live promise behind that nothing will ever settle, and the next wake is handed to a fiber
     // that no longer exists — lost, with a consumer asleep beside claimable work.
+    //
+    // The surrender belongs inside the mask for the same reason it exists: outside it, the deferred
+    // interrupt is delivered the instant the mask ends and the check never runs.
     ZIO.uninterruptibleMask: restore =>
-      ticket(queue).flatMap:
-        case Waiters.Ticket.Ready         => ZIO.succeed(true)
-        case Waiters.Ticket.Wait(promise) =>
-          restore(promise.await.timeout(patience).map(_.isDefined))
-            .onExit(exit => settle(queue, promise, exit))
+      ticket(queue)
+        .flatMap:
+          case Waiters.Ticket.Ready         => ZIO.succeed(true)
+          case Waiters.Ticket.Wait(promise) =>
+            restore(promise.await.timeout(patience).map(_.isDefined))
+              .onExit(exit => settle(queue, promise, exit))
+        .flatMap(surrender(queue, _))
+
+  /**
+   * Give a wake back when the caller that took it will never answer.
+   *
+   * '''Taking a wake and returning it are not the same instant.''' Interruption requested inside the mask
+   * is delivered when the mask ends, and ZIO discards the value with it: the effect computed `true`, the
+   * caller answers nothing, and the wake has already been counted as used — by [[settle]] for a delivered
+   * one, by [[ticket]] for one taken straight from `pending`. Neither hands it on, so the key goes quiet
+   * with a consumer asleep beside it.
+   *
+   * A doomed fiber knows it: `interrupters` is non-empty from the moment interruption is requested, which
+   * is before the value is dropped. Ringing again costs at worst somebody looking for nothing, since a
+   * wake means "look again" and never carries the work itself.
+   *
+   * @param queue the queue the wake was for
+   * @param woken whether a wake was taken
+   * @return `woken`, unchanged; an answer only a caller still alive can read
+   */
+  private def surrender(queue: QueueName, woken: Boolean): UIO[Boolean] =
+    ZIO.descriptorWith: descriptor =>
+      ZIO.when(woken && descriptor.interrupters.nonEmpty)(wake(queue)).as(woken)
 
   /**
    * Hand a wake to one waiter on `queue`, or remember it for the next one.
@@ -66,6 +92,21 @@ final class Waiters(state: Ref.Synchronized[Waiters.State]):
    */
   def wake(queue: QueueName): UIO[Unit] =
     state.updateZIO(handOn(_, queue))
+
+  /**
+   * The queues that have callers parked on them.
+   *
+   * For the doorbell's backstop. A caller takes a wake and returns it as a value, and a fiber interrupted
+   * between those two moments drops the value in a gap no finalizer can see — the effect succeeds, the
+   * fiber fails, and the wake goes with it. [[surrender]] catches the interrupts requested early enough to
+   * be visible; what is left needs somebody outside the dead fiber to notice, and this is what that
+   * somebody asks.
+   *
+   * Includes queues whose only registrations have given up: ringing one costs a look, not a claim.
+   *
+   * @return the queues with at least one registration
+   */
+  def parked: UIO[Set[QueueName]] = state.get.map(_.waiting.keySet)
 
   /**
    * How many callers are waiting on a queue, live or given up.
