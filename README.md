@@ -95,9 +95,11 @@ Settings are HOCON with an environment override for every key
 | `DKQ_SWEEP_LIMIT` | `100` | entries one sweep handles, per kind |
 
 Every instance is identical and stateless — the queue's state is entirely in Redis — so scaling out is
-running more of them against the same store. Redis Cluster is supported: every key a queue uses carries the
-same hash tag, so a queue lives on one slot and sharding spreads queues rather than splitting one
-([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
+running more of them against the same store. Redis Cluster is supported: every key a queue uses carries its
+**bucket's** hash tag, so a queue's keys and the stream announcing them live in one slot, and sharding
+spreads buckets across nodes. `DKQ_WAKE_BUCKETS` decides how many there are, and it is permanent for a
+deployment — **at the default of 1 the whole service is one slot**, which is right for a single node and no
+use in a cluster ([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
 
 ## Building from source
 
@@ -120,8 +122,9 @@ password=<a-classic-pat>
 
 ## Performance
 
-On a laptop, two instances against one Valkey: **1,552–4,339 msg/s** end to end, the ceiling set by how
-many consumers are running rather than by keys or connections. Method and numbers:
+On a laptop, two instances against one Valkey: **1,100–4,000 msg/s** end to end, the ceiling set by how
+many consumers are running rather than by keys or connections. A message reaching an idle consumer takes
+about 10ms, of which ~7ms is the enqueue round trip itself. Method and numbers:
 [`docs/research/throughput-first-numbers.md`](docs/research/throughput-first-numbers.md).
 
 ## Status
@@ -136,10 +139,13 @@ Known gaps:
   message cycles rather than wedging its key, so this is not urgent — what is missing is somewhere to put
   it once the count is too high.
 - **One queue per `Dequeue`.** A consumer spanning queues needs a connection each.
-- **A hot key stays on one instance.** Waiting consumers are woken by a broadcast and race to claim, and
+- **A hot key stays on one instance.** A wake reaches every waiting consumer and they race to claim, and
   the instance that just settled a key is already claiming while the others are being woken. Nothing is
   lost — a key is worked by one consumer at a time regardless — but "several consumers" does not mean the
   work for one key is spread across them.
+- **Idle consumers all wake for every message on their queue.** Cheap in the tens, and it is why the
+  contract asks for one outstanding `Dequeue` per consumer, with parallelism inside the consumer rather
+  than in extra pollers (see C7 in the guarantees).
 - **No persistence.** The POC runs Valkey with saving off; durability is a later phase.
 
 ## Docs

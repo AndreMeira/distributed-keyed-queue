@@ -2,7 +2,7 @@
 title: "What dkq keeps in Redis, and what each structure is for"
 type: architecture
 status: current
-updated: 2026-09-04
+updated: 2026-09-05
 tags: [redis, keys, data-structures, lua, claims, ordering, streams]
 ---
 
@@ -13,7 +13,7 @@ each structure has the type it has, and which script touches it.
 
 `Namespace` is the single place these names are built. Nothing else in the codebase constructs a key name,
 apart from `consume.lua` and `watchdog.lua`, which rebuild the per-key ones at runtime — see
-[Cluster](#one-queue-one-slot).
+[Cluster](#one-bucket-one-slot).
 
 ## The layout
 
@@ -57,14 +57,24 @@ climbs on redelivery, which is what makes a poison message visible.
 **`claimed` and `delayed` are sorted sets** because both are swept by "everything due before now", which is
 `ZRANGEBYSCORE` — the operation they exist to serve.
 
-**`wake` is a stream, and there is one per queue.** A stream rather than pub/sub because a reader that
+**`wake` is a stream, and there is one per bucket.** A stream rather than pub/sub because a reader that
 reconnects resumes from the id it holds, where a subscriber would simply have missed whatever arrived while
-it was away — and a missed wake is a consumer asleep beside claimable work. Per queue rather than one global
-stream because a script may not touch two cluster slots: sharing the queue's hash tag is what lets the entry
-be appended *in the same call* that made the key claimable, so no crash can land between the two.
+it was away — and a missed wake is a consumer asleep beside claimable work. Tagged by bucket rather than by
+queue because a script may not touch two cluster slots: sharing the *bucket's* hash tag with the keys it
+announces is what lets the entry be appended *in the same call* that made the key claimable, so no crash can
+land between the two. Shared by every queue in the bucket because a listener's `XREAD` names the streams it
+was issued with — a stream per queue means a set that grows as queues are served, and a queue asked for
+while a read is in flight goes unheard until that read returns.
 
-Entries are trimmed with `MAXLEN ~ 1000` on every append and carry the key as their only field — for a human
-reading `XRANGE`, since a consumer claims whatever is at the head rather than the key it was told about.
+Entries are trimmed with `MAXLEN ~ 1000` on every append and carry two fields: `queue`, which is what routes
+the entry to the right waiting consumers now that the stream name no longer says, and `key`, which is for a
+human reading `XRANGE` — a consumer claims whatever is at the head rather than the key it was told about.
+
+The trim is a budget shared by the bucket, and it is denominated in entries rather than time: at a few
+thousand appends a second, a thousand entries is a fraction of a second of history. That only matters to a
+listener that is *away* — one reading continuously is a handful of entries behind — and a listener that
+reconnects raises every local signal before it resumes, precisely because `XREAD` cannot report having been
+trimmed past.
 
 ## What a message's life touches
 
@@ -122,8 +132,10 @@ build `msgs:<key>`, `payloads:<key>` and `owned:<key>` at runtime from `prefix` 
 in `KEYS` — legal only because the tag guarantees the same slot, and unavoidable for `consume.lua`, which
 does not know which key it has until it pops one. That is why both take `prefix` as an argument.
 
-The same rule is what forced `wake` to be per queue: a global stream would be a different slot, so the
-append could not share a script with the push that made the key claimable.
+The same rule is what decides where `wake` lives: a stream tagged differently from the keys it announces
+would be a different slot, so the append could not share a script with the push that made the key claimable.
+Tagging both by bucket is what keeps them together.
 
-The consequence is that **a queue lives on one node**: sharding spreads queues, never one queue. See
-[`redis-cluster.md`](redis-cluster.md).
+The consequence is that **a bucket lives on one node**: sharding spreads buckets, never one queue and never
+one bucket. At the default of one bucket that is the whole service, which is right for a single node and no
+use in a cluster. See [`redis-cluster.md`](redis-cluster.md).

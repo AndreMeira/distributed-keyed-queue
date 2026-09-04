@@ -2,7 +2,7 @@
 title: "Redis streams, and driving them from Lettuce"
 type: learning-material
 status: current
-updated: 2026-09-01
+updated: 2026-09-05
 tags: [redis, valkey, streams, lettuce, xread, xadd]
 ---
 
@@ -165,6 +165,16 @@ was rejected as non-deterministic.
 
 ## Where this is going in this repo
 
-Streams are not used yet. The design that would introduce them — one `wake` stream per queue, appended to
-inside the scripts that make a key claimable, read by one blocking `XREAD` per instance — is
-[`../research/non-blocking-dequeue.md`](../research/non-blocking-dequeue.md).
+Streams are what dkq's wake path is built on: one `wake` stream **per bucket**, appended to inside the very
+scripts that make a key claimable, and read by one blocking `XREAD` per instance across every bucket at
+once. Two of the notes above turned out to be load-bearing:
+
+- **`COUNT` bounds a reply, not the block** — so the read is issued with `COUNT 1000` and costs nothing in
+  latency, while a listener that fell behind catches up in one round trip instead of twenty.
+- **Reading does not trim** — so the exposure is how long a listener may be *away* before the writer's
+  `MAXLEN` has moved past it, which is why a reconnecting listener conservatively wakes every consumer it
+  has rather than trusting its position.
+
+Why the stream is per bucket rather than per queue or global is
+[`../architecture/redis-cluster.md`](../architecture/redis-cluster.md); the reasoning that got there is
+[`../research/bucketed-wake-streams.md`](../research/bucketed-wake-streams.md).

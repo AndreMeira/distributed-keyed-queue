@@ -1,9 +1,9 @@
 # distributed-keyed-queue docs
 
 How docs are organised follows one taxonomy: `architecture/` for how the system works today,
-`learning-material/` for how a technology works, `research/` for design explorations not yet built, and
-`sessions/` for dated notes on a piece of work. Every page carries frontmatter — `title`, `type`, `status`,
-`updated`, `tags`.
+`learning-material/` for how a technology works, `research/` for why a design is the way it is — the
+explorations behind it, whether or not they were built — and `sessions/` for dated notes on a piece of
+work. Every page carries frontmatter — `title`, `type`, `status`, `updated`, `tags`.
 
 What is specific to this repo:
 

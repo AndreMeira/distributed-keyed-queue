@@ -2,7 +2,7 @@
 title: "First throughput numbers — what they mean, and mostly what they don't"
 type: research
 status: draft
-updated: 2026-08-29
+updated: 2026-09-05
 tags: [throughput, measurement, load, e2e, keyed-queue, exploration]
 ---
 
@@ -143,3 +143,35 @@ blocked client, so it did not pay that. This is the redundant-attempt cost named
 connection, so an instance can serve far more idle consumers and far more queues than `DKQ_CLAIMERS` ever
 allowed. The old ceiling did not appear in these numbers because the sweep never parked more consumers than
 connections on an idle queue — which is precisely the case it bounded.
+
+## After the wake path was rebuilt twice more
+
+The same sweep again, against the design that shipped: a shared signal per queue in place of the wake
+registry, and one wake stream per bucket in place of one per queue
+([`bucketed-wake-streams.md`](bucketed-wake-streams.md)). Same laptop, later week, so the column is only
+comparable to itself and to the run beside it.
+
+| keys | consumers | `BLMOVE` | wake stream | signal + bucket |
+|-----:|----------:|---------:|------------:|----------------:|
+| 8    | 8         | 1,552    | 1,364       | 1,143           |
+| 16   | 16        | 1,896    | 2,087       | 1,983           |
+| 64   | 8         | 2,048    | 2,101       | 1,975           |
+| 64   | 16        | 3,160    | 3,380       | 3,158           |
+| 64   | 32        | 4,339    | 4,465       | 4,017           |
+
+**Still a wash, three designs later.** Every row is within run-to-run spread of where it started, which is
+the point worth recording: none of these changes was a throughput change. `BLMOVE` was already fast. What it
+could not do was let more consumers wait than it had connections, and what it cost was a `WorkerId`, a
+claiming list per connection, a liveness set and a third watchdog sweep.
+
+**What did move is the latency of a queue's first consumer.** The listener now reads a fixed set of streams
+from startup, so there is no subscription to establish when a queue is first asked for:
+
+| | per-queue streams | one bucket |
+|---|---|---|
+| first message on a queue no instance had watched | median 122ms, p95 207ms | median 15ms, p95 38ms |
+| control: the same queue, watched a second earlier | median 12ms, p95 17ms | median 24ms, p95 33ms |
+
+The two rows are now indistinguishable — in that run the cold queue was *faster* than the warm control,
+which is noise, and is exactly what "no cold path" looks like. An idle consumer is reached about 10ms after
+an enqueue, of which ~7ms is the enqueue round trip itself.
