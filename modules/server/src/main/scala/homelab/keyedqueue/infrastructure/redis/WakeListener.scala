@@ -58,19 +58,6 @@ final class WakeListener(
       else position(queue).flatMap(id => watched.update(_.updated(queue, id)))
 
   /**
-   * Wait for this queue's doorbell, for at most `patience`.
-   *
-   * Does not watch the queue: a caller watches before its first claim attempt, because a queue nobody is
-   * listening to would go unheard exactly when the caller starts waiting on it. Watching here as well
-   * would be a second place to look for that ordering, and only one of them can be the reason.
-   *
-   * @param queue what to wait for work on
-   * @param patience the longest to wait
-   * @return whether a wake arrived
-   */
-  def await(queue: QueueName, patience: Duration): UIO[Boolean] = waiters.waitFor(queue, patience)
-
-  /**
    * Read the doorbells forever, waking one consumer per entry.
    *
    * '''Supervised, because a dead listener is silent.''' A failed read — a connection blip, a topology

@@ -57,6 +57,6 @@ object Module:
       // Forked here rather than in the composition root because the store is unusable without it: a
       // consumer that finds nothing waits on the doorbell, and an unrun listener never rings it.
       _          <- listener.run.forkScoped
-      store      <- RedisQueueStore.make(connection, scripts, listener, config.leaseTtl)
+      store      <- RedisQueueStore.make(connection, scripts, listener, waiters, config.leaseTtl)
     yield store
   }

@@ -31,13 +31,15 @@ import java.time.Instant
  *
  * @param connection where its connection comes from
  * @param scripts the loaded script digests
- * @param listener the doorbell, told which queues to hear and asked to wait on them
+ * @param listener the doorbell, told which queues to hear
+ * @param waiters where a caller waits when there is nothing to claim
  * @param leaseTtl how long a claim survives without a heartbeat
  */
 final class RedisQueueStore(
   connection: Connection,
   scripts: Scripts,
   listener: WakeListener,
+  waiters: Waiters,
   leaseTtl: Duration,
 ) extends QueueStore:
 
@@ -98,8 +100,8 @@ final class RedisQueueStore(
     remaining(demand.patience, asked).flatMap:
       case None       => ZIO.none
       case Some(left) =>
-        listener
-          .await(demand.queue, left)
+        waiters
+          .waitFor(demand.queue, left)
           .flatMap:
             case false => ZIO.none
             case true  =>
@@ -186,7 +188,8 @@ object RedisQueueStore:
    *
    * @param connection where its connection comes from
    * @param scripts the loaded digests
-   * @param listener the doorbell to wait on
+   * @param listener the doorbell
+   * @param waiters where a caller waits
    * @param leaseTtl how long a claim survives without a heartbeat
    * @return the store
    */
@@ -194,6 +197,7 @@ object RedisQueueStore:
     connection: Connection,
     scripts: Scripts,
     listener: WakeListener,
+    waiters: Waiters,
     leaseTtl: Duration,
   ): UIO[RedisQueueStore] =
-    ZIO.succeed(RedisQueueStore(connection, scripts, listener, leaseTtl))
+    ZIO.succeed(RedisQueueStore(connection, scripts, listener, waiters, leaseTtl))

@@ -66,7 +66,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
       waiters    <- Waiters.make
       listener   <- WakeListener.make(connection, waiters, config.wakeBlock)
       _          <- listener.run.forkScoped
-      store      <- RedisQueueStore.make(connection, scripts, listener, config.leaseTtl)
+      store      <- RedisQueueStore.make(connection, scripts, listener, waiters, config.leaseTtl)
     yield (store, connection)
 
   /** A message whose cargo is `body`: these tests care about order and ownership, not about content. */
