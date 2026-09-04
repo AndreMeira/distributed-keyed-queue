@@ -25,10 +25,7 @@ import scala.jdk.CollectionConverters.*
  * '''Why the wake carries no work.''' It says "look again", and the consumer looks. Every instance reads
  * every entry, so several may look at once and one wins; the losers wait again. That is the price of never
  * losing a wake, and it is paid in round trips rather than in latency.
- *
- * '''Why a silent turn rings anyway.''' Carrying no work is also what makes the backstop affordable: a
- * read that heard nothing wakes whoever is parked, so a wake lost with the consumer that took it costs a
- * wait of `block` rather than lasting until the queue sees traffic again. See the note on [[wake]].
+
  *
  * @param connection where the listening connection comes from
  * @param waiters who to hand a wake to
@@ -112,21 +109,12 @@ final class WakeListener(
         )
 
   /**
-   * Wake one consumer per entry, or — on a quiet turn — one per queue somebody is parked on.
-   *
-   * '''The backstop.''' A wake is taken by a consumer and carried back as a value, and a fiber interrupted
-   * between those two moments drops it where no finalizer can see: the effect succeeds, the fiber fails,
-   * and the key stays claimable with this instance's consumers asleep beside it. The same gap sits between
-   * [[Waiters.waitFor]] answering and the claim it answers for. Nothing inside a dead fiber can repair
-   * that, so a turn that heard nothing rings whoever is waiting instead — one look per parked queue, and
-   * only while the doorbell is silent, which is to say only while the queue is idle anyway.
+   * Wake one consumer per entry.
    *
    * @param rung the queues that had entries, one occurrence per entry
    * @return noop
    */
-  private def wake(rung: Chunk[QueueName]): UIO[Unit] =
-    if rung.nonEmpty then ZIO.foreachDiscard(rung)(waiters.wake)
-    else waiters.parked.flatMap(ZIO.foreachDiscard(_)(waiters.wake))
+  private def wake(rung: Chunk[QueueName]): UIO[Unit] = ZIO.foreachDiscard(rung)(waiters.wake)
 
   /**
    * Where a queue's doorbell is right now: the id of its last entry, or `0-0` when it has never rung.

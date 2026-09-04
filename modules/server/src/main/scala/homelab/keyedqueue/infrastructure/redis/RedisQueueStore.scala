@@ -65,7 +65,7 @@ final class RedisQueueStore(
    * per-connection identity and no recovery for one.
    *
    * '''Waiting costs a fiber, not a connection.''' The listener hears the doorbell for every queue on one
-   * connection, and hands each entry to one waiting caller here.
+   * connection, and rings the bell every caller waiting on that queue is holding.
    *
    * '''Patience is a deadline.''' A caller woken by an entry another instance won keeps waiting with what
    * is left of it, rather than starting again — so a race it loses costs it a round trip, not a full wait.
@@ -74,40 +74,46 @@ final class RedisQueueStore(
    * @return the claim, or `None` when the patience elapsed; aborts with `QueueError` when the store fails
    */
   override def claim(demand: Demand): IO[QueueError, Option[Claimed]] =
-    val ns = Namespace(demand.queue)
     for
       asked   <- Clock.instant
       // Before the first attempt, not after: a queue nobody is listening to would go unheard exactly when
       // this caller starts waiting on it.
       _       <- listener.watch(demand.queue)
-      claimed <- attempt(ns, demand).flatMap:
-                   case granted @ Some(_) => ZIO.succeed(granted)
-                   case None              => waitFor(ns, demand, asked)
+      claimed <- pursue(Namespace(demand.queue), demand, asked)
     yield claimed
 
   /**
-   * Wait for the doorbell, then try again, until the patience is spent.
+   * Take a bell, look, and — finding nothing — wait for it, until the patience is spent.
    *
-   * A wake is a hint, not a handover: every instance hears the same entry and one of them wins the claim,
-   * so a caller that finds nothing goes back to waiting rather than reporting empty.
+   * '''The bell is taken before the look, and that ordering is the whole mechanism.''' A ring that lands
+   * while the claim attempt is in flight completes the bell this caller is already holding, so it is
+   * waited on and returns immediately. Looking first and subscribing after would drop exactly that ring,
+   * and the consumer would sleep out its patience beside claimable work.
+   *
+   * A ring is a hint, not a handover: every instance hears the same entry, and every consumer waiting on
+   * this one hears its bell, so a caller that finds nothing goes back to waiting rather than reporting
+   * empty.
    *
    * @param ns the queue being claimed from
    * @param demand what the caller asked for
    * @param asked when its call arrived, which is what the patience is measured from
    * @return the claim, or `None` when the patience elapsed; aborts with `QueueError` when the store fails
    */
-  private def waitFor(ns: Namespace, demand: Demand, asked: Instant): IO[QueueError, Option[Claimed]] =
-    remaining(demand.patience, asked).flatMap:
-      case None       => ZIO.none
-      case Some(left) =>
-        waiters
-          .waitFor(demand.queue, left)
-          .flatMap:
-            case false => ZIO.none
-            case true  =>
-              attempt(ns, demand).flatMap:
-                case granted @ Some(_) => ZIO.succeed(granted)
-                case None              => waitFor(ns, demand, asked)
+  private def pursue(ns: Namespace, demand: Demand, asked: Instant): IO[QueueError, Option[Claimed]] =
+    waiters
+      .subscribe(demand.queue)
+      .flatMap: bell =>
+        attempt(ns, demand).flatMap:
+          case granted @ Some(_) => ZIO.succeed(granted)
+          case None              =>
+            remaining(demand.patience, asked).flatMap:
+              case None       => ZIO.none
+              case Some(left) =>
+                bell
+                  .await(left)
+                  .flatMap:
+                    case true  => pursue(ns, demand, asked)
+                    case false => ZIO.none
 
   /**
    * Claim whatever is claimable, without waiting.

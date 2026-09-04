@@ -7,91 +7,82 @@ import zio.test.*
 
 
 /**
- * The invariants a wake-up registry has to hold, all of them about races.
+ * The invariants a bell has to hold.
  *
- * The one that matters most: '''a wake is never lost while somebody wants it'''. Work is claimable the
- * moment it is announced, so a dropped wake is a consumer asleep beside work it asked for.
+ * The one that matters most: '''a ring reaches everybody who was listening for it'''. Work is claimable
+ * the moment it is announced, so a consumer that misses a ring is asleep beside work it asked for.
  */
 object WaitersSpec extends ZIOSpecDefault:
 
   private val queue = QueueName("orders")
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("Waiters")(
-    test("a wake goes to the longest-waiting caller, and only to one") {
+    test("a ring reaches every caller holding the bell") {
       for
         waiters <- Waiters.make
-        first   <- waiters.waitFor(queue, 5.seconds).fork
-        _       <- waitUntil(waiters, 1)
-        second  <- waiters.waitFor(queue, 5.seconds).fork
-        _       <- waitUntil(waiters, 2)
+        first   <- waiters.subscribe(queue)
+        second  <- waiters.subscribe(queue)
         _       <- waiters.wake(queue)
-        woken   <- first.join
-        pending <- second.poll
-      yield assertTrue(woken, pending.isEmpty)
+        one     <- first.await(5.seconds)
+        two     <- second.await(5.seconds)
+      yield assertTrue(one, two)
     },
-    test("a wake with nobody waiting is remembered, and taken without sleeping") {
-      for
-        waiters <- Waiters.make
-        _       <- waiters.wake(queue)
-        woken   <- waiters.waitFor(queue, 10.millis) // far shorter than the wake would take to arrive
-      yield assertTrue(woken)
-    },
-    test("the remembered wake is taken once, not repeatedly") {
+    test("a caller that subscribes after a ring waits for the next one") {
+      // Not a lost ring: a consumer subscribes before it claims, so whatever this ring announced is found
+      // by the attempt that follows. Remembering it would wake the next caller for work it already saw.
       for
         waiters <- Waiters.make
         _       <- waiters.wake(queue)
-        first   <- waiters.waitFor(queue, 10.millis)
-        second  <- waiters.waitFor(queue, 10.millis)
-      yield assertTrue(first, !second)
+        late    <- waiters.subscribe(queue)
+        rang    <- late.await(20.millis)
+      yield assertTrue(!rang)
     },
-    test("a caller that gave up does not absorb a wake meant for a live one") {
+    test("a bell rings once; the round after it is a new bell") {
       for
         waiters <- Waiters.make
-        gaveUp  <- waiters.waitFor(queue, 20.millis) // registers, times out, stays in the queue
-        live    <- waiters.waitFor(queue, 5.seconds).fork
-        _       <- waitUntil(waiters, 1)
+        bell    <- waiters.subscribe(queue)
         _       <- waiters.wake(queue)
-        woken   <- live.join
-      yield assertTrue(!gaveUp, woken)
+        rang    <- bell.await(5.seconds)
+        next    <- waiters.subscribe(queue)
+        again   <- next.await(20.millis)
+      yield assertTrue(rang, !again)
     },
-    test("a wake is never lost when a caller dies around it") {
-      // The race the promise CAS exists for, driven from both sides: the wake and the interrupt are fired
-      // together, so across enough rounds each ordering happens. Whichever wins, the invariant is the same
-      // — either the dying caller used the wake, or it is still there for the next one. Never neither.
+    test("a ring on one queue leaves another queue's callers waiting") {
+      for
+        waiters <- Waiters.make
+        mine    <- waiters.subscribe(queue)
+        other   <- waiters.subscribe(QueueName("elsewhere"))
+        _       <- waiters.wake(queue)
+        rang    <- mine.await(5.seconds)
+        quiet   <- other.await(20.millis)
+      yield assertTrue(rang, !quiet)
+    },
+    test("a caller dying around a ring takes nothing from anybody") {
+      // The failure the old registry had to work for: there, a wake was handed to one caller, so a caller
+      // that died holding one destroyed it. Here a ring is a broadcast, so a dying caller cannot remove
+      // anything — driven from both sides, hard, to show there is no ordering in which it can.
       ZIO
-        .foreach(1 to 200): _ =>
+        .foreach(1 to 500): _ =>
           for
-            waiters <- Waiters.make
-            caller  <- waiters.waitFor(queue, 5.seconds).fork
-            _       <- waitUntil(waiters, 1)
-            ringing <- waiters.wake(queue).fork
-            exit    <- caller.interrupt
-            used     = exit match
-                         case Exit.Success(woken) => woken
-                         case _                   => false
-            // Joined before asking, not because the ordering matters — it is the point of the test — but
-            // because the invariant is about the state once both have happened. Without this the wake can
-            // still be queued when the question is asked, and a slow scheduler answers "neither" for a
-            // wake that simply had not been rung yet.
-            _       <- ringing.join
-            later   <- waiters.waitFor(queue, 50.millis)
-          yield assertTrue(used || later)
+            waiters  <- Waiters.make
+            doomed   <- waiters.subscribe(queue)
+            survivor <- waiters.subscribe(queue)
+            waiting  <- doomed.await(5.seconds).fork
+            ringing  <- waiters.wake(queue).fork
+            _        <- waiting.interrupt
+            _        <- ringing.join
+            heard    <- survivor.await(5.seconds)
+          yield assertTrue(heard)
         .map(_.reduce(_ && _))
     },
-    test("under concurrency every wake reaches a caller") {
-      // Fifty waiters, fifty wakes, from many fibers at once: none may be lost or double-delivered.
+    test("under concurrency every caller holding the bell hears one ring") {
       val callers = 50
       for
         waiters <- Waiters.make
-        parked  <- ZIO.foreachPar(1 to callers)(_ => waiters.waitFor(queue, 30.seconds)).fork
-        _       <- waitUntil(waiters, callers)
-        _       <- ZIO.foreachParDiscard(1 to callers)(_ => waiters.wake(queue))
-        woken   <- parked.join
-        left    <- waiters.waiting(queue)
-      yield assertTrue(woken.forall(identity), woken.size == callers, left == 0)
+        bells   <- ZIO.foreachPar(1 to callers)(_ => waiters.subscribe(queue))
+        waiting <- ZIO.foreachPar(bells)(_.await(30.seconds)).fork
+        _       <- waiters.wake(queue)
+        heard   <- waiting.join
+      yield assertTrue(heard.forall(identity), heard.size == callers)
     },
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(60.seconds)
-
-  /** Wait until `count` callers are registered, so a test can wake them deterministically. */
-  private def waitUntil(waiters: Waiters, count: Int): UIO[Unit] =
-    waiters.waiting(queue).repeatUntil(_ >= count).unit

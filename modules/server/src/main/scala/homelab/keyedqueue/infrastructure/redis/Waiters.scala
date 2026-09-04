@@ -6,247 +6,96 @@ import zio.*
 
 
 /**
- * The consumers waiting for work on each queue, and the wake-ups owed to them.
+ * A bell per queue, rung by whoever makes a key claimable and heard by every consumer holding it.
  *
- * A coordination primitive, not a queue: it carries no work and knows nothing about Redis. A wake means
+ * A coordination primitive, not a queue: it carries no work and knows nothing about Redis. A ring means
  * "look again", and the caller does the looking — which is what keeps the claim in the fiber that will do
  * the work.
  *
- * '''The shape of a dequeue that uses it.'''
- * {{{
- *   claim()                       // 1. a busy queue never touches this class
- *     .flatMap:
- *       case Some(work) => ZIO.succeed(work)
- *       case None       => waiters.waitFor(queue, patience).flatMap:
- *         case true  => // woken: claim again with what is left of the patience
- *         case false => // patience elapsed: answer empty
- * }}}
+ * '''Nothing is consumed, which is the whole point.''' A ring is a broadcast to everyone holding the
+ * current bell, not a token handed to one of them. Nobody can take a ring away from anybody else, so there
+ * is no handover to get wrong: a caller that times out, is interrupted, or dies mid-claim removes nothing
+ * from the system. That is what a registry of one-shot handovers cannot offer, because "you were given a
+ * wake" and "you gave up" have to be decided as one atomic step, and every way of doing that has a window
+ * where the wake dies with its taker.
  *
- * Claiming *before* waiting is what makes [[Waiters.State.pending]] sound despite being a flag rather than
- * a count: several wake-ups arriving with nobody waiting collapse into one, and the keys they announced are
- * found by the next caller's claim, which always precedes its wait.
+ * '''The price is a look each.''' Every consumer waiting on the queue wakes and attempts a claim, and one
+ * wins. Redundant attempts are the currency this design pays in — the same currency it already pays across
+ * instances, where every instance hears every entry.
  *
- * @param state the waiters and the flags, in one ref because a registration and a delivery both span both
+ * '''Subscribe, then look, then wait.''' [[subscribe]] takes the current bell; a ring installs a fresh one
+ * and completes the old. A caller that takes its bell '''before''' its claim attempt cannot miss a ring
+ * that arrives during the attempt: the ring completes the bell it is already holding. Get that order
+ * wrong and a consumer sleeps beside work — which is why the order lives here, in the doc, and in
+ * [[RedisQueueStore]]'s loop.
+ *
+ * @param bells queue → the bell now current, made on first use
  */
-final class Waiters(state: Ref.Synchronized[Waiters.State]):
+final class Waiters(bells: Ref.Synchronized[Map[QueueName, Promise[Nothing, Unit]]]):
 
   /**
-   * Wait for a wake on `queue`, for at most `patience`.
+   * Take the bell now current for a queue, to be awaited after a claim attempt finds nothing.
    *
-   * Answers `true` when it was woken — including immediately, when a wake had arrived with nobody to take
-   * it — and `false` when the patience elapsed. An interrupted caller answers nothing, but still hands on
-   * anything it was given.
-   *
-   * @param queue what to wait for work on
-   * @param patience the longest to wait
-   * @return whether a wake arrived
+   * @param queue the queue to listen to
+   * @return the bell to await
    */
-  def waitFor(queue: QueueName, patience: Duration): UIO[Boolean] =
-    // Uninterruptible around the registration, interruptible only inside the wait. Without the mask there
-    // is a window between joining the queue and attaching the exit handler: a caller interrupted there
-    // leaves a live promise behind that nothing will ever settle, and the next wake is handed to a fiber
-    // that no longer exists — lost, with a consumer asleep beside claimable work.
-    //
-    // The surrender belongs inside the mask for the same reason it exists: outside it, the deferred
-    // interrupt is delivered the instant the mask ends and the check never runs.
-    ZIO.uninterruptibleMask: restore =>
-      ticket(queue)
-        .flatMap:
-          case Waiters.Ticket.Ready         => ZIO.succeed(true)
-          case Waiters.Ticket.Wait(promise) =>
-            restore(promise.await.timeout(patience).map(_.isDefined))
-              .onExit(exit => settle(queue, promise, exit))
-        .flatMap(surrender(queue, _))
+  def subscribe(queue: QueueName): UIO[Waiters.Bell] =
+    bells.modifyZIO: current =>
+      current.get(queue) match
+        case Some(bell) => ZIO.succeed(Waiters.Bell(bell) -> current)
+        case None       => Promise.make[Nothing, Unit].map(bell => Waiters.Bell(bell) -> current.updated(queue, bell))
 
   /**
-   * Give a wake back when the caller that took it will never answer.
+   * Ring a queue's bell: wake every consumer holding it, and install a fresh one for the next round.
    *
-   * '''Taking a wake and returning it are not the same instant.''' Interruption requested inside the mask
-   * is delivered when the mask ends, and ZIO discards the value with it: the effect computed `true`, the
-   * caller answers nothing, and the wake has already been counted as used — by [[settle]] for a delivered
-   * one, by [[ticket]] for one taken straight from `pending`. Neither hands it on, so the key goes quiet
-   * with a consumer asleep beside it.
-   *
-   * A doomed fiber knows it: `interrupters` is non-empty from the moment interruption is requested, which
-   * is before the value is dropped. Ringing again costs at worst somebody looking for nothing, since a
-   * wake means "look again" and never carries the work itself.
-   *
-   * @param queue the queue the wake was for
-   * @param woken whether a wake was taken
-   * @return `woken`, unchanged; an answer only a caller still alive can read
-   */
-  private def surrender(queue: QueueName, woken: Boolean): UIO[Boolean] =
-    ZIO.descriptorWith: descriptor =>
-      ZIO.when(woken && descriptor.interrupters.nonEmpty)(wake(queue)).as(woken)
-
-  /**
-   * Hand a wake to one waiter on `queue`, or remember it for the next one.
-   *
-   * '''One wake, one waiter.''' An entry means one key became claimable, so waking every waiter would give
-   * one claim and the rest a wasted look. Waiters are taken oldest first; ones that have given up are
-   * skipped and dropped on the way past, which is why a caller that times out never has to remove itself
-   * under contention.
+   * A ring with nobody listening is not remembered, and does not need to be: a consumer subscribes before
+   * it claims, so anything a ring announced is found by the claim of whoever comes next.
    *
    * @param queue what became claimable
    * @return noop
    */
   def wake(queue: QueueName): UIO[Unit] =
-    state.updateZIO(handOn(_, queue))
-
-  /**
-   * The queues that have callers parked on them.
-   *
-   * For the doorbell's backstop. A caller takes a wake and returns it as a value, and a fiber interrupted
-   * between those two moments drops the value in a gap no finalizer can see — the effect succeeds, the
-   * fiber fails, and the wake goes with it. [[surrender]] catches the interrupts requested early enough to
-   * be visible; what is left needs somebody outside the dead fiber to notice, and this is what that
-   * somebody asks.
-   *
-   * Includes queues whose only registrations have given up: ringing one costs a look, not a claim.
-   *
-   * @return the queues with at least one registration
-   */
-  def parked: UIO[Set[QueueName]] = state.get.map(_.waiting.keySet)
-
-  /**
-   * How many callers are waiting on a queue, live or given up.
-   *
-   * For tests and metrics; a number that includes waiters whose patience has expired but which no delivery
-   * has walked past yet.
-   *
-   * @param queue the queue to count
-   * @return the number of registrations held
-   */
-  def waiting(queue: QueueName): UIO[Int] =
-    state.get.map(_.waiting.getOrElse(queue, Chunk.empty).size)
-
-  /**
-   * Take a wake that was owed, or join the queue for the next one.
-   *
-   * '''One atomic decision.''' Checking the flag and registering cannot be two steps: a delivery landing
-   * between them would complete a registration that is about to be abandoned. Answering with either
-   * `Ready` or `Wait` — never both, never a half state — is what removes that window, and it is why the
-   * flags and the waiters live in one ref.
-   *
-   * @param queue the queue being waited on
-   * @return `Ready` when a wake was owed, or a registration to await
-   */
-  private def ticket(queue: QueueName): UIO[Waiters.Ticket] =
-    state.modifyZIO: current =>
-      if current.pending.contains(queue)
-      then ZIO.succeed(Waiters.Ticket.Ready -> current.copy(pending = current.pending - queue))
-      else
+    bells
+      .modifyZIO: current =>
         Promise
           .make[Nothing, Unit]
-          .map: promise =>
-            val queued = current.waiting.getOrElse(queue, Chunk.empty) :+ promise
-            Waiters.Ticket.Wait(promise) -> current.copy(waiting = current.waiting.updated(queue, queued))
-
-  /**
-   * Leave the queue, handing on a wake that arrived too late to be used.
-   *
-   * '''The promise is the arbiter.''' `succeed` and `interrupt` both answer whether *this* call completed
-   * it, so exactly one of "the caller gave up" and "a wake was delivered" wins. A caller that lost that
-   * race is holding a wake it can no longer use, and dropping it would leave a key claimable with nobody
-   * looking — so it delivers it onwards, exactly as the listener would.
-   *
-   * '''One transition, not three.''' Removing the registration, deciding the race and handing the wake on
-   * all happen inside a single `modifyZIO`, because they are one change to one piece of state. Done as
-   * separate updates, a concurrent [[wake]] could set `pending` between the removal and the hand-on and
-   * have it overwritten — a lost wake that appears once in a few hundred interleavings.
-   *
-   * Runs on every exit, including interruption, which is why it is attached with `onExit` rather than
-   * written after the await.
-   *
-   * @param queue the queue waited on
-   * @param promise this caller's registration
-   * @param exit how the wait ended
-   * @return noop
-   */
-  private def settle(queue: QueueName, promise: Promise[Nothing, Unit], exit: Exit[Nothing, Boolean]): UIO[Unit] =
-    state.updateZIO: current =>
-      val without = forget(current, queue, promise)
-      exit match
-        case Exit.Success(true) => ZIO.succeed(without) // woken, and the wake was used
-        case _                  =>
-          promise.interrupt.flatMap:
-            case true  => ZIO.succeed(without) // we ended the wait first; nothing was delivered to us
-            case false => handOn(without, queue)
-
-  /**
-   * Drop a registration from a state.
-   *
-   * Deliveries skip completed promises anyway, so this is tidying rather than correctness — it keeps a
-   * queue that is waited on often from accumulating spent registrations between wakes.
-   *
-   * @param current the state to remove from
-   * @param queue the queue waited on
-   * @param promise the registration to drop
-   * @return the state without it
-   */
-  private def forget(current: Waiters.State, queue: QueueName, promise: Promise[Nothing, Unit]): Waiters.State =
-    current.waiting.get(queue) match
-      case None       => current
-      case Some(held) =>
-        val rest = held.filterNot(_ == promise)
-        if rest.isEmpty then current.copy(waiting = current.waiting - queue)
-        else current.copy(waiting = current.waiting.updated(queue, rest))
-
-  /**
-   * Give a wake nobody used to the next waiter, or remember it.
-   *
-   * The same operation [[wake]] performs, reached from the other side: a caller that lost the race for its
-   * own promise is holding a wake, and holding is the one thing it must not do.
-   *
-   * @param current the state to deliver within
-   * @param queue the queue the wake was for
-   * @return the state after the hand-on
-   */
-  private def handOn(current: Waiters.State, queue: QueueName): UIO[Waiters.State] =
-    deliver(current.waiting.getOrElse(queue, Chunk.empty)).map:
-      case Some(rest) => current.copy(waiting = current.waiting.updated(queue, rest))
-      case None       => Waiters.State(current.waiting - queue, current.pending + queue)
-
-  /**
-   * Give the wake to the first waiter still willing to take it.
-   *
-   * @param waiting the registrations for one queue, oldest first
-   * @return what is left of them once one has been woken, or `None` when none were live
-   */
-  private def deliver(waiting: Chunk[Promise[Nothing, Unit]]): UIO[Option[Chunk[Promise[Nothing, Unit]]]] =
-    waiting.headOption match
-      case None          => ZIO.none
-      case Some(promise) =>
-        promise
-          .succeed(())
-          .flatMap:
-            case true  => ZIO.some(waiting.drop(1))
-            case false => deliver(waiting.drop(1))
+          .map(fresh => current.get(queue) -> current.updated(queue, fresh))
+      .flatMap(rung => ZIO.foreachDiscard(rung)(_.succeed(())))
 
 
 object Waiters:
 
   /**
-   * Who is waiting, and what is owed.
+   * One round's bell: completed when the queue is rung, and replaced by the next.
    *
-   * @param waiting queue → its registrations, oldest first
-   * @param pending queues a wake arrived for with nobody live to take it. A set rather than a count: the
-   *                next caller claims before it waits, so it finds whatever the collapsed wakes announced
+   * @param promise what a ring completes
    */
-  final case class State(waiting: Map[QueueName, Chunk[Promise[Nothing, Unit]]], pending: Set[QueueName])
+  final class Bell(promise: Promise[Nothing, Unit]):
 
-  /** The answer to "am I owed a wake, or do I have to wait for one". */
-  private enum Ticket:
+    /**
+     * Wait for this bell to ring, for at most `patience`.
+     *
+     * Interruption and expiry both take nothing away: the bell belongs to the round, not to the caller,
+     * so whoever else is holding it is unaffected.
+     *
+     * @param patience the longest to wait
+     * @return whether it rang
+     */
+    def await(patience: Duration): UIO[Boolean] = promise.await.timeout(patience).map(_.isDefined)
 
-    /** A wake was owed and has been taken; look again now. */
-    case Ready
-
-    /** Registered; await this. */
-    case Wait(promise: Promise[Nothing, Unit])
+    /**
+     * Whether this bell has rung, without waiting.
+     *
+     * For tests and metrics.
+     *
+     * @return whether it rang
+     */
+    def rang: UIO[Boolean] = promise.isDone
 
   /**
-   * An empty registry.
+   * An empty registry, with no bells yet.
    *
    * @return the waiters
    */
-  def make: UIO[Waiters] = Ref.Synchronized.make(State(Map.empty, Set.empty)).map(Waiters(_))
+  def make: UIO[Waiters] =
+    Ref.Synchronized.make(Map.empty[QueueName, Promise[Nothing, Unit]]).map(Waiters(_))
