@@ -70,8 +70,8 @@ trait QueueStore:
   def renew(claims: Chunk[Claim]): IO[QueueError, (Instant, Chunk[Claim])]
 
   /**
-   * Repair what a death or a backoff left behind: revoke lapsed claims, recover the keys of workers that
-   * died mid-claim, and release keys whose retry delay has elapsed.
+   * Repair what a death or a backoff left behind: revoke lapsed claims, and release keys whose retry delay
+   * has elapsed.
    *
    * Idempotent, so every instance can run it without coordination.
    *
@@ -88,14 +88,9 @@ object QueueStore:
    * What one sweep repaired.
    *
    * @param reclaimed keys whose holder went silent mid-handler
-   * @param recovered workers that died before their claim was granted
    * @param released keys whose retry backoff elapsed
    */
-  final case class Swept(
-    reclaimed: Chunk[MessageKey],
-    recovered: Chunk[WorkerId],
-    released: Chunk[MessageKey],
-  ):
+  final case class Swept(reclaimed: Chunk[MessageKey], released: Chunk[MessageKey]):
 
     /** True when nothing needed repairing, which is the normal case and not worth logging. */
-    def isEmpty: Boolean = reclaimed.isEmpty && recovered.isEmpty && released.isEmpty
+    def isEmpty: Boolean = reclaimed.isEmpty && released.isEmpty

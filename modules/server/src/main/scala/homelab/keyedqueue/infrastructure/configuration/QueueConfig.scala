@@ -22,8 +22,8 @@ import zio.*
  * @param leaseTtl how long a claim survives without a heartbeat
  * @param sweepInterval how often each instance runs the repair sweeps
  * @param sweepLimit the most entries one sweep handles per kind, so a script cannot block the server
- * @param claimers how many connections may be parked in a idle claim at once — the ceiling on
- *                 concurrent `Dequeue` calls this instance can serve
+ * @param wakeBlock how long the doorbell's read waits before going round again — also the longest a queue
+ *                  this instance has just started serving can go unheard
  * @param maxWait the longest a caller may ask to wait, and the connection's command timeout
  * @param maxBatchLimit the most messages this service will hand over in one claim
  */
@@ -34,7 +34,7 @@ final case class QueueConfig(
   leaseTtl: Duration,
   sweepInterval: Duration,
   sweepLimit: Int,
-  claimers: Int,
+  wakeBlock: Duration,
   maxWait: Duration,
   maxBatchLimit: Int,
 ) derives ConfigReader

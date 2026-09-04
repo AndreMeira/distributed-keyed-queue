@@ -81,7 +81,7 @@ final class Watchdog(store: QueueStore, config: Watchdog.Config, queues: Ref[Set
       .foldZIO(
         error => sweptWarn(queue, error),
         swept =>
-          val touched = swept.reclaimed.size + swept.recovered.size + swept.released.size
+          val touched = swept.reclaimed.size + swept.released.size
           // A full pass means there is more waiting; do not make it wait for the next tick.
           sweptInfo(queue, swept) *> sweep(queue).when(touched >= config.sweepLimit).unit,
       )
@@ -117,8 +117,7 @@ final class Watchdog(store: QueueStore, config: Watchdog.Config, queues: Ref[Set
       ZIO.logInfo(
         s"swept $queue: " +
           s"reclaimed=${swept.reclaimed.size} " +
-          s"recovered=${swept.recovered.size}" +
-          s" released=${swept.released.size}"
+          s"released=${swept.released.size}"
       )
 
 

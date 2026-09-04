@@ -17,30 +17,28 @@ import java.time.Instant
 /**
  * The queue over Redis.
  *
- * '''Two kinds of connection, and the difference is not the caller's business.''' Claiming parks in
- * `BLMOVE`, so it borrows a connection of its own through [[Connection.provideBlocking]]; everything else
- * runs on the shared connection, which must never block, because a blocking command there would stall every
- * other caller on it. Both live behind one `QueueStore`, so a use case holds a store like any other and
- * learns nothing about connections.
+ * '''Nothing here blocks in Redis.''' Every operation is a script that answers at once, so they all share
+ * one connection. The only command in the process that parks is the doorbell's `XREAD`, and that belongs to
+ * [[WakeListener]], on a connection of its own.
  *
  * '''Every operation is one script.''' The interleavings between reading a key's state and acting on it are
  * exactly the bugs this design exists to avoid, so nothing here is a sequence of commands — see
  * `docs/research/redis-keyed-queue.md`.
  *
- * '''It remembers which connection announced itself where.''' A claiming connection must be in a queue's
- * worker set before its first `BLMOVE` there, or a key it dies holding can never be recovered — so the
- * store keeps the `(worker, queue)` pairs it has registered and [[beat]] keeps every one of them alive.
+ * '''There is nothing to keep alive.''' A claim is granted in one call, so a key is either queued or
+ * claimed and the lease is the only thing that expires. No connection announces itself, and no registration
+ * has to be renewed on its behalf.
  *
- * @param connection where its connections come from, shared or borrowed
+ * @param connection where its connection comes from
  * @param scripts the loaded script digests
- * @param leaseTtl how long a claim, and a registration, survive without a heartbeat
- * @param known the queues each claiming connection has registered in
+ * @param listener the doorbell, told which queues to hear and asked to wait on them
+ * @param leaseTtl how long a claim survives without a heartbeat
  */
 final class RedisQueueStore(
   connection: Connection,
   scripts: Scripts,
+  listener: WakeListener,
   leaseTtl: Duration,
-  known: Ref[Set[(WorkerId, QueueName)]],
 ) extends QueueStore:
 
   /**
@@ -58,34 +56,66 @@ final class RedisQueueStore(
       scripts.produce.run(Namespace(submission.queue), submission.message)
 
   /**
-   * The only operation that can occupy a connection, so the only one that borrows.
+   * One `consume` call, and — when it finds nothing — a wait on the queue's doorbell.
    *
-   * `BLMOVE` parks for the whole wait, which is why claiming runs on a pooled connection while everything
-   * else shares one: the pool's size is the ceiling on concurrent *parked* claims, and a caller that
-   * cannot get a connection waits for a peer rather than opening another.
+   * '''The claim is a single script, so nothing blocks in Redis.''' A key is either in `ready` or claimed;
+   * there is no instant in which it is neither, which is why this adapter has no holding list, no
+   * per-connection identity and no recovery for one.
    *
-   * '''Patience is a deadline, not a budget that starts when a connection arrives.''' Queueing for a
-   * connection spends a caller's wait as surely as waiting on Redis does, and a caller cannot tell the two
-   * apart — so the clock starts here, and what is left of it becomes the `BLMOVE` timeout. A caller whose
-   * patience went entirely on the queue is answered `None`, which is what a wait that found nothing would
-   * have given it anyway.
+   * '''Waiting costs a fiber, not a connection.''' The listener hears the doorbell for every queue on one
+   * connection, and hands each entry to one waiting caller here.
+   *
+   * '''Patience is a deadline.''' A caller woken by an entry another instance won keeps waiting with what
+   * is left of it, rather than starting again — so a race it loses costs it a round trip, not a full wait.
    *
    * @param demand the queue to claim from, how long to wait, and the most to take
-   * @return the claim, or `None` when the patience elapsed — queueing for a connection or waiting for work
+   * @return the claim, or `None` when the patience elapsed; aborts with `QueueError` when the store fails
    */
   override def claim(demand: Demand): IO[QueueError, Option[Claimed]] =
     val ns = Namespace(demand.queue)
-    Clock.instant.flatMap: asked =>
-      connection.provideBlocking: claimer =>
-        register(ns, claimer) *> remaining(demand.patience, asked).flatMap:
-          case None       => ZIO.none
-          case Some(left) =>
-            ZIO
-              .uninterruptibleMask: restore =>
-                restore(take(ns, claimer, left)).flatMap:
-                  case None      => ZIO.none
-                  case Some(key) => scripts.consume.run(ns, claimer, MessageKey(key), leaseTtl, demand.batch)
-              .onInterrupt(release(ns, claimer))
+    for
+      asked   <- Clock.instant
+      // Before the first attempt, not after: a queue nobody is listening to would go unheard exactly when
+      // this caller starts waiting on it.
+      _       <- listener.watch(demand.queue)
+      claimed <- attempt(ns, demand).flatMap:
+                   case granted @ Some(_) => ZIO.succeed(granted)
+                   case None              => waitFor(ns, demand, asked)
+    yield claimed
+
+  /**
+   * Wait for the doorbell, then try again, until the patience is spent.
+   *
+   * A wake is a hint, not a handover: every instance hears the same entry and one of them wins the claim,
+   * so a caller that finds nothing goes back to waiting rather than reporting empty.
+   *
+   * @param ns the queue being claimed from
+   * @param demand what the caller asked for
+   * @param asked when its call arrived, which is what the patience is measured from
+   * @return the claim, or `None` when the patience elapsed; aborts with `QueueError` when the store fails
+   */
+  private def waitFor(ns: Namespace, demand: Demand, asked: Instant): IO[QueueError, Option[Claimed]] =
+    remaining(demand.patience, asked).flatMap:
+      case None       => ZIO.none
+      case Some(left) =>
+        listener
+          .await(demand.queue, left)
+          .flatMap:
+            case false => ZIO.none
+            case true  =>
+              attempt(ns, demand).flatMap:
+                case granted @ Some(_) => ZIO.succeed(granted)
+                case None              => waitFor(ns, demand, asked)
+
+  /**
+   * Claim whatever is claimable, without waiting.
+   *
+   * @param ns the queue to claim from
+   * @param demand how much to take
+   * @return the claim, or `None` when nothing was claimable; aborts with `QueueError` when the store fails
+   */
+  private def attempt(ns: Namespace, demand: Demand): IO[QueueError, Option[Claimed]] =
+    connection.provide(scripts.consume.run(ns, leaseTtl, demand.batch))
 
   /**
    * What is left of a caller's patience.
@@ -118,9 +148,8 @@ final class RedisQueueStore(
    * One `heartbeat` call '''per queue''', because worker liveness and claims are namespaced by queue while a
    * caller's receipts are not: a consumer holding work in three queues costs three round trips here.
    *
-   * No worker entry is written. A consumer is not a worker: its claims are found by fence token, and the
-   * `workers` set exists to say which *claiming connections* are alive, so that abandoned keys can be
-   * recovered. Registering a caller there would add an entry that never holds a key.
+   * No worker entry is written, because there are none: a consumer is known by its receipts, and its
+   * claims are found by fence token.
    *
    * @param claims every claim the caller still holds, across any number of queues
    * @return the new deadline and the claims already revoked
@@ -129,7 +158,7 @@ final class RedisQueueStore(
     connection.provide:
       ZIO
         .foreach(claims.groupBy(_.queue).toList): (queue, held) =>
-          scripts.heartbeat.run(Namespace(queue), worker = None, leaseTtl, held)
+          scripts.heartbeat.run(Namespace(queue), leaseTtl, held)
         .map: results =>
           val (when, chunk) = results.unzip
           when.maxOption.getOrElse(Instant.EPOCH) -> Chunk.fromIterable(chunk).flatten
@@ -146,99 +175,25 @@ final class RedisQueueStore(
     connection.provide:
       scripts.watchdog.run(Namespace(queue), limit)
 
-  /**
-   * Renew every registration this store is keeping alive.
-   *
-   * '''On the shared connection, for every worker.''' `lua/heartbeat.lua` takes the worker as an argument
-   * and touches only the queue's own keys, so a beat needs no connection in particular — and running them
-   * here keeps them from queueing behind a `BLMOVE` parked on a claiming connection.
-   *
-   * @return noop; a failed beat is ignored because the next one is moments away
-   */
-  def beat: UIO[Unit] =
-    known.get.flatMap: pairs =>
-      ZIO.foreachDiscard(pairs): (claimer, queue) =>
-        connection.provide(scripts.heartbeat.run(Namespace(queue), Some(claimer), leaseTtl, Chunk.empty)).ignore
-
-  /**
-   * Announce a claiming connection in a queue, once.
-   *
-   * '''Before its first `BLMOVE` in that queue, and per worker.''' A connection that claims before it is
-   * known has a claiming list with no liveness entry to expire, so nothing would ever recover a key it dies
-   * holding. The memo is keyed by worker as well as by queue for the same reason: one connection
-   * registering does not make its peers recoverable.
-   *
-   * @param ns the queue to register in
-   * @param claimer the identity of the connection about to claim
-   * @return noop; aborts with `QueueError` when the store fails
-   */
-  private def register(ns: Namespace, claimer: WorkerId): ZIO[Connection.Commands, QueueError, Unit] =
-    known.get.map(_.contains((claimer, ns.queue))).flatMap {
-      case true  => ZIO.unit
-      case false =>
-        scripts.heartbeat.run(ns, Some(claimer), leaseTtl, Chunk.empty)
-          *> known.update(_ + ((claimer, ns.queue))).unit
-    }
-
-  /**
-   * Take a claimable key into this connection's own claiming list.
-   *
-   * @param ns the queue to take from
-   * @param claimer the identity whose claiming list to move into
-   * @param timeout how long to wait
-   * @return the key, or `None` on timeout; aborts with `QueueError` when the store fails
-   */
-  private def take(ns: Namespace, claimer: WorkerId, timeout: Duration): ZIO[Connection.Commands, QueueError, Option[String]] =
-    Connection.use: redis =>
-      ZIO
-        .attemptBlocking {
-          Option:
-            val move = LMoveArgs.Builder.leftRight()
-            val wait = timeout.toMillis.toDouble / 1000.0
-            redis.blmove(ns.ready, ns.claiming(claimer), move, wait)
-        }
-        .mapBoth(LuaScript.failure, _.map(LuaScript.text))
-
-  /**
-   * Hand back whatever this connection was holding mid-claim — at most one key, since a borrowed connection
-   * makes one `BLMOVE` at a time.
-   *
-   * @param ns the queue
-   * @param claimer the identity whose claiming list to drain
-   * @return noop; failures are ignored, because the sweep repairs what this missed
-   */
-  private def release(ns: Namespace, claimer: WorkerId): URIO[Connection.Commands, Unit] =
-    Connection.use: redis =>
-      ZIO
-        .attemptBlocking:
-          val move = LMoveArgs.Builder.rightLeft()
-          redis.lmove(ns.claiming(claimer), ns.ready, move)
-        .ignore
-        .unit
-
 
 object RedisQueueStore:
 
   /**
-   * The store, with its registrations kept alive for the life of the scope.
+   * The store.
    *
-   * The beat is started here rather than in the composition root because it is a property of the store: a
-   * claiming connection that stops announcing itself becomes unrecoverable, whether or not anything else is
-   * running.
+   * Nothing is started here any more: the store holds no registrations to renew, and the doorbell it waits
+   * on is run by whoever owns the listener.
    *
-   * @param connection where its connections come from
+   * @param connection where its connection comes from
    * @param scripts the loaded digests
-   * @param leaseTtl how long a claim, and a registration, survive without a heartbeat
+   * @param listener the doorbell to wait on
+   * @param leaseTtl how long a claim survives without a heartbeat
    * @return the store
    */
   def make(
     connection: Connection,
     scripts: Scripts,
+    listener: WakeListener,
     leaseTtl: Duration,
-  ): ZIO[Scope, Nothing, RedisQueueStore] =
-    for
-      known   <- Ref.make(Set.empty[(WorkerId, QueueName)])
-      store    = RedisQueueStore(connection, scripts, leaseTtl, known)
-      schedule = Schedule.fixed(Duration.fromMillis(leaseTtl.toMillis / 3))
-      _       <- store.beat.repeat(schedule).forkScoped
-    yield store
+  ): UIO[RedisQueueStore] =
+    ZIO.succeed(RedisQueueStore(connection, scripts, listener, leaseTtl))

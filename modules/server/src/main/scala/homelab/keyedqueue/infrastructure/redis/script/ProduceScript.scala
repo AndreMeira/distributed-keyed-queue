@@ -47,10 +47,10 @@ final class ProduceScript(ref: LuaScript.Sha):
    *
    * @param ns the queue to append in
    * @param message the message; the key it carries decides where it lands
-   * @return `ready`, `state`, `msgs`, `payloads`, in the order `lua/produce.lua` reads them
+   * @return `ready`, `state`, `msgs`, `payloads`, `wake`, in the order `lua/produce.lua` reads them
    */
   private def keys(ns: Namespace, message: Message): Array[String] =
-    Array(ns.ready, ns.state, ns.msgs(message.key), ns.payloads(message.key))
+    Array(ns.ready, ns.state, ns.msgs(message.key), ns.payloads(message.key), ns.wake)
 
   /**
    * The key to append under, and the message as it will be stored.

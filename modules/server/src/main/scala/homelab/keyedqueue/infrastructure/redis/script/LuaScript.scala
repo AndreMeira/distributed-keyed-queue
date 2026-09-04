@@ -310,9 +310,13 @@ object LuaScript:
        */
       def orNone: Of[Option[A]] = (path, value) =>
         value match
-          case null                                        => Right(None)
-          case values: java.util.List[?] if values.isEmpty => Right(None)
-          case other                                       => decoder(path, other).map(Some(_))
+          case null                                                                   => Right(None)
+          case values: java.util.List[?] if values.isEmpty                            => Right(None)
+          // A script that answers `nil` inside a MULTI reply arrives as a one-element list holding null,
+          // not as a null. Reading that as a malformed reply would turn "nothing to claim" — the ordinary
+          // answer on an idle queue — into an error.
+          case values: java.util.List[?] if values.size == 1 && values.get(0) == null => Right(None)
+          case other                                                                  => decoder(path, other).map(Some(_))
 
     /**
      * A reply element that was not what the script promised.

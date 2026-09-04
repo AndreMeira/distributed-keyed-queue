@@ -36,7 +36,7 @@ object GrpcSpec extends ZIOSpecDefault:
                          started
                      )(container => ZIO.attemptBlocking(container.stop()).ignore)
         url        = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-        config     = QueueConfig(url, cluster = false, port, 30.seconds, 1.second, 100, 2, 5.seconds, maxBatchLimit = 32)
+        config     = QueueConfig(url, cluster = false, port, 30.seconds, 1.second, 100, 200.millis, 5.seconds, maxBatchLimit = 32)
         _         <- GrpcApplication.serve.provide(ZLayer.succeed(config)).forkScoped
         _         <- ZIO.sleep(1.second) // let the server bind before the client dials
         client    <- KeyedQueueClient.scoped(

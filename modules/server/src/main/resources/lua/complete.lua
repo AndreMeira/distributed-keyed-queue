@@ -9,6 +9,7 @@
 -- KEYS[7] attempts   hash  message id -> delivery count
 -- KEYS[8] ready      list
 -- KEYS[9] delayed    zset  key -> when it may be worked again (unix millis)
+-- KEYS[10] wake      stream  one entry per key made claimable
 -- ARGV[1] key
 -- ARGV[2] token      the token handed out by consume.lua
 -- ARGV[3] retryAfter millis; applied when a nack asks to be held back, 0 for immediately
@@ -23,8 +24,8 @@
 -- token has to stay valid across several calls; what stops a settle applying twice is that settling removes
 -- the id from `owned`, and removing it again finds nothing. The counter moves when the claim ENDS, which is
 -- what invalidates a zombie still holding it.
-local state, claimed, fence, msgs, payloads, owned, attempts, ready, delayed =
-  KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7], KEYS[8], KEYS[9]
+local state, claimed, fence, msgs, payloads, owned, attempts, ready, delayed, wake =
+  KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7], KEYS[8], KEYS[9], KEYS[10]
 local key, token, retryAfter = ARGV[1], tonumber(ARGV[2]), tonumber(ARGV[3])
 
 if tonumber(redis.call('HGET', fence, key) or 0) ~= token then
@@ -75,6 +76,7 @@ redis.call('HSET', state, key, 'queued')
 -- without spinning.
 if redis.call('ZSCORE', delayed, key) == false then
   redis.call('RPUSH', ready, key)
+  redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'key', key)
 end
 
 return 1

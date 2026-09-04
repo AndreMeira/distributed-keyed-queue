@@ -31,8 +31,14 @@ final case class Namespace(queue: QueueName):
   /** message id -> how many times it has been delivered. Per message, since a claim may own several. */
   val attempts: String = s"$prefix:attempts"
 
-  /** worker -> liveness deadline. What makes a claiming list recoverable. */
-  val workers: String = s"$prefix:workers"
+  /**
+   * The doorbell: one entry per key made claimable, appended by the same script that made it so.
+   *
+   * A stream rather than a pub/sub channel because a reader that reconnects resumes from the id it holds
+   * instead of losing what it missed; and per queue rather than global so that append and claimable are one
+   * atomic step even in cluster, where a script may not touch two slots.
+   */
+  val wake: String = s"$prefix:wake"
 
   /** key -> when a failed message may be retried. */
   val delayed: String = s"$prefix:delayed"
@@ -71,11 +77,3 @@ final case class Namespace(queue: QueueName):
    * @return the set name
    */
   def owned(key: MessageKey): String = s"$prefix:owned:$key"
-
-  /**
-   * One worker's in-transition keys: what a `BLMOVE` lands in, and what its death leaves behind.
-   *
-   * @param worker the worker
-   * @return the list name
-   */
-  def claiming(worker: WorkerId): String = s"$prefix:claiming:$worker"

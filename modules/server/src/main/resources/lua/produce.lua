@@ -4,6 +4,7 @@
 -- KEYS[2] state      hash  key -> queued | processing   (absent == idle, so the hash stays small)
 -- KEYS[3] msgs       list  this key's message IDS, oldest first
 -- KEYS[4] payloads   hash  message id -> the message itself
+-- KEYS[5] wake       stream  one entry per key made claimable
 -- ARGV[1] key
 -- ARGV[2] id         the message's id, unique among this key's queued messages
 -- ARGV[3] payload
@@ -16,7 +17,7 @@
 -- '''Ids in the list, messages in a hash.''' The list is what carries order; the hash is what carries cargo.
 -- Splitting them is what lets everything else address a message by name — discard this one, look at the next
 -- three — without Redis having to read inside a payload it cannot parse.
-local ready, state, msgs, payloads = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
+local ready, state, msgs, payloads, wake = KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5]
 local key, id, payload = ARGV[1], ARGV[2], ARGV[3]
 
 -- HSETNX rather than HSET, and the whole append hangs off it: an id already queued for this key is the same
@@ -33,6 +34,9 @@ if redis.call('HSETNX', payloads, id, payload) == 1 then
   if not redis.call('HGET', state, key) then
     redis.call('HSET', state, key, 'queued')
     redis.call('RPUSH', ready, key)
+    -- In the same call that made it claimable: a consumer woken by this entry cannot arrive before the
+    -- work it announces, and a crash cannot land between the two.
+    redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'key', key)
   end
 end
 

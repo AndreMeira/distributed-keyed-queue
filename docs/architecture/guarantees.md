@@ -149,6 +149,10 @@ Stated plainly, because each of these is something a reader might otherwise assu
   not stop its code.
 - **No priority, and no deadline scheduling.** Messages are handed out in the order they were sent, and a
   nack's wait is the only way to delay one.
+- **No fairness promise between consumers.** Waiting consumers are woken by a broadcast and race to
+  claim; the instance that just finished a key is often the one that takes it next. A hot key therefore
+  tends to stay on one instance. Nothing is lost — a key is worked by one consumer at a time regardless —
+  but do not read "several consumers" as "the work is spread across them" for a single key.
 - **No fairness promise between keys.**
 - **Backlog counts are a lower bound, not a snapshot.** Producers may append to a key while it is held, so
   any count of what is queued behind may be larger by the time it is read.

@@ -30,7 +30,7 @@ object Module:
    */
   val connection: ZLayer[QueueConfig, QueueError, Connection] = ZLayer.scoped:
     ZIO.service[QueueConfig].flatMap { config =>
-      Connection.pool(Connection.Config(config.maxWait, config.claimers, config.redisUrl, config.cluster))
+      Connection.pool(Connection.Config(config.maxWait, config.redisUrl, config.cluster))
     }
 
   /**
@@ -52,6 +52,11 @@ object Module:
       connection <- ZIO.service[Connection]
       scripts    <- ZIO.service[Scripts]
       config     <- ZIO.service[QueueConfig]
-      store      <- RedisQueueStore.make(connection, scripts, config.leaseTtl)
+      waiters    <- Waiters.make
+      listener   <- WakeListener.make(connection, waiters, config.wakeBlock)
+      // Forked here rather than in the composition root because the store is unusable without it: a
+      // consumer that finds nothing waits on the doorbell, and an unrun listener never rings it.
+      _          <- listener.run.forkScoped
+      store      <- RedisQueueStore.make(connection, scripts, listener, config.leaseTtl)
     yield store
   }

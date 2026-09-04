@@ -62,6 +62,7 @@ final class CompleteScript(ref: LuaScript.Sha):
       ns.attempts,
       ns.ready,
       ns.delayed,
+      ns.wake,
     )
 
   /**

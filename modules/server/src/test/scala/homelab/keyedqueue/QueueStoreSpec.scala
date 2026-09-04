@@ -6,7 +6,7 @@ import homelab.keyedqueue.domain.model.{ Claim, Claimed, Demand, Message, Settle
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisQueueStore, Scripts }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisQueueStore, Scripts, WakeListener, Waiters }
 import io.lettuce.core.cluster.api.sync.RedisClusterCommands
 import org.testcontainers.containers.GenericContainer
 import zio.*
@@ -41,7 +41,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
                                started
                            )(container => ZIO.attemptBlocking(container.stop()).ignore)
         url              = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-        config           = QueueConfig(url, cluster = false, 0, leaseTtl, 1.second, 100, 1, 5.seconds, maxBatchLimit = 32)
+        config           = QueueConfig(url, cluster = false, 0, leaseTtl, 1.second, 100, 200.millis, 5.seconds, maxBatchLimit = 32)
         (first, pooled) <- store(config)
         (second, _)     <- store(config)
         // To assert on what the adapter wrote. Borrowed from a store's own pool rather than opened here:
@@ -60,10 +60,13 @@ object QueueStoreSpec extends ZIOSpecDefault:
   private def store(config: QueueConfig): ZIO[Scope, QueueError, (QueueStore, Connection)] =
     for
       connection <- Connection.pool(
-                      Connection.Config(config.maxWait, config.claimers, config.redisUrl, config.cluster)
+                      Connection.Config(config.maxWait, config.redisUrl, config.cluster)
                     )
       scripts    <- connection.provide(Scripts.make)
-      store      <- RedisQueueStore.make(connection, scripts, config.leaseTtl)
+      waiters    <- Waiters.make
+      listener   <- WakeListener.make(connection, waiters, config.wakeBlock)
+      _          <- listener.run.forkScoped
+      store      <- RedisQueueStore.make(connection, scripts, listener, config.leaseTtl)
     yield (store, connection)
 
   /** A message whose cargo is `body`: these tests care about order and ownership, not about content. */
@@ -302,23 +305,6 @@ object QueueStoreSpec extends ZIOSpecDefault:
         _                        <- sweeper.sweep(queue, 100)
         ready                    <- ZIO.attemptBlocking(redis.llen("{q:backoff-reclaim}:ready")).orDie
       yield assertTrue(ready == 1L)
-    },
-    test("a claimer registers in the queue it claims from, not somewhere else") {
-      // White-box on purpose, because the failure is invisible from outside: a claimer registered under the
-      // wrong namespace still claims happily, and only the recovery path is broken — its in-transition keys
-      // would be unrecoverable, and nothing would say so until a worker died at exactly the wrong moment.
-      for
-        (worker, _, redis) <- ZIO.service[(QueueStore, QueueStore, RedisClusterCommands[String, Array[Byte]])]
-        queue               = QueueName("registered")
-        _                  <- worker.enqueue(Submission(queue, message(MessageKey("k1"), "x")))
-        claimed            <- worker.claim(Demand(queue, 2.seconds, 1))
-        here               <- ZIO.attemptBlocking(redis.zcard("{q:registered}:workers")).orDie
-        nowhere            <- ZIO.attemptBlocking(redis.zcard("{q:}:workers")).orDie
-      yield assertTrue(
-        claimed.isDefined,
-        here == 1L,   // the claimer announced itself where the sweep of this queue will look
-        nowhere == 0L, // and not in the namespace of a queue that does not exist
-      )
     },
     test("a heartbeat renews what is held and names what is lost") {
       for

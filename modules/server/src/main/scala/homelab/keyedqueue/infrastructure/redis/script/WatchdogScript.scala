@@ -45,11 +45,11 @@ final class WatchdogScript(ref: LuaScript.Sha):
    * fences they advance, worker liveness, and the backoff set.
    *
    * @param ns the queue to repair
-   * @return `claimed`, `state`, `ready`, `fence`, `workers`, `delayed`, in the order `lua/watchdog.lua`
+   * @return `claimed`, `state`, `ready`, `fence`, `delayed`, `wake`, in the order `lua/watchdog.lua`
    *         reads them
    */
   private def keys(ns: Namespace): Array[String] =
-    Array(ns.claimed, ns.state, ns.ready, ns.fence, ns.workers, ns.delayed)
+    Array(ns.claimed, ns.state, ns.ready, ns.fence, ns.delayed, ns.wake)
 
   /**
    * The per-pass cap, and the prefix the sweep rebuilds per-key names from.
@@ -71,7 +71,7 @@ final class WatchdogScript(ref: LuaScript.Sha):
     decoder.decode("watchdog", value)
 
   /**
-   * The shape the script promises: `{reclaimed, recovered, released}`, each an array of bulk strings.
+   * The shape the script promises: `{reclaimed, released}`, each an array of bulk strings.
    *
    * All three arrive as strings and are given their types here, which is the last point at which a message
    * key and a worker id are still the same thing.
@@ -79,16 +79,11 @@ final class WatchdogScript(ref: LuaScript.Sha):
    * @return the decoder
    */
   private def decoder: LuaScript.Decode.Of[QueueStore.Swept] =
-    LuaScript.Decode.sized(3) {
+    LuaScript.Decode.sized(2) {
       for
         reclaimed <- LuaScript.Decode.text.each.at(0)
-        recovered <- LuaScript.Decode.text.each.at(1)
-        released  <- LuaScript.Decode.text.each.at(2)
-      yield QueueStore.Swept(
-        reclaimed.map(MessageKey.apply),
-        recovered.map(WorkerId.apply),
-        released.map(MessageKey.apply),
-      )
+        released  <- LuaScript.Decode.text.each.at(1)
+      yield QueueStore.Swept(reclaimed.map(MessageKey.apply), released.map(MessageKey.apply))
     }
 
 

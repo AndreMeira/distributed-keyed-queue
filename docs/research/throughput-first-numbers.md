@@ -23,8 +23,12 @@ tags: [throughput, measurement, load, e2e, keyed-queue, exploration]
 ## What was measured
 
 The saturation check in `EndToEndSpec` ("under load nothing is lost…") re-run at five shapes, varying key
-count and consumer count. The sweep was **temporary and has been reverted** — the repo carries no throughput
-test. To rebuild it, see [Method](#method) below.
+count and consumer count. It now lives in the repo as `e2e/…/ThroughputSpec.scala`, **off unless asked
+for**, because it costs minutes and the e2e suite is a gate:
+
+```bash
+DKQ_THROUGHPUT=1 sbt "e2e/testOnly *ThroughputSpec"
+```
 
 **The deployment is two instances**, `dkq-a` and `dkq-b` from `docker-compose.e2e.yml`, against one shared
 Valkey; `Deployment` requires exactly two and fails otherwise, so every shape below ran against the same
@@ -109,3 +113,33 @@ Taken on 2026-08-29, immediately after the adapter refactor that removed `Claime
 their registration bookkeeping into `RedisQueueStore`, and moved the heartbeat onto the shared connection.
 That last change was made on reasoning rather than measurement, and the sweep is the only evidence so far
 that it did not cost anything: results are in the same range as the load test's historical figures.
+
+## After the claim path changed
+
+The same sweep, run against the doorbell design — the atomic claim plus a wake stream, which replaced
+`BLMOVE` and the claiming connections (`docs/research/non-blocking-dequeue.md`). Same laptop, same
+afternoon, two sweeps:
+
+| keys | consumers | `BLMOVE` | doorbell (run 1) | doorbell (run 2) |
+|-----:|----------:|---------:|-----------------:|-----------------:|
+| 8    | 8         | 1,552    | 1,200            | 1,364            |
+| 16   | 16        | 1,896    | 2,087            | 2,087            |
+| 64   | 8         | 2,048    | 2,138            | 2,101            |
+| 64   | 16        | 3,160    | 3,288            | 3,380            |
+| 64   | 32        | 4,339    | 4,267            | 4,465            |
+
+**Where keys outnumber consumers, it is a wash.** The four shapes with 16 or more keys land within a few
+percent either way, and the binding constraint is still the consumer count. Throughput was never the point
+of the change — removing the connection ceiling was — so parity is the result worth having.
+
+**The 8-key shape is slower, and there is a mechanism for it.** 1,200–1,364 against 1,552, on a shape whose
+run-to-run spread is about 13%, so the direction is suggestive rather than established. With few keys, more
+of the work is contention on the same key, and a broadcast wake makes *every* instance with a waiter attempt
+each claimable key: one of the two attempts is wasted. `BLMOVE` had Redis hand the key to exactly one
+blocked client, so it did not pay that. This is the redundant-attempt cost named in
+`non-blocking-dequeue.md`, showing up where the design predicted it would.
+
+**What the change bought instead**, and what no sweep here measures: waiting costs a fiber rather than a
+connection, so an instance can serve far more idle consumers and far more queues than `DKQ_CLAIMERS` ever
+allowed. The old ceiling did not appear in these numbers because the sweep never parked more consumers than
+connections on an idle queue — which is precisely the case it bounded.
