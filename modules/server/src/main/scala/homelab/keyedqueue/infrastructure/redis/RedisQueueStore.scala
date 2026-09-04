@@ -100,20 +100,18 @@ final class RedisQueueStore(
    * @return the claim, or `None` when the patience elapsed; aborts with `QueueError` when the store fails
    */
   private def pursue(ns: Namespace, demand: Demand, asked: Instant): IO[QueueError, Option[Claimed]] =
-    waiters
-      .subscribe(demand.queue)
-      .flatMap: bell =>
-        attempt(ns, demand).flatMap:
-          case granted @ Some(_) => ZIO.succeed(granted)
-          case None              =>
-            remaining(demand.patience, asked).flatMap:
-              case None       => ZIO.none
-              case Some(left) =>
-                bell
-                  .await(left)
-                  .flatMap:
-                    case true  => pursue(ns, demand, asked)
-                    case false => ZIO.none
+    waiters.subscribe(demand.queue).flatMap { bell =>
+      attempt(ns, demand).flatMap:
+        case granted @ Some(_) => ZIO.succeed(granted)
+        case None              =>
+          remaining(demand.patience, asked).flatMap:
+            case None       => ZIO.none
+            case Some(left) =>
+              bell.await(left).flatMap {
+                case true  => pursue(ns, demand, asked)
+                case false => ZIO.none
+              }
+    }
 
   /**
    * Claim whatever is claimable, without waiting.

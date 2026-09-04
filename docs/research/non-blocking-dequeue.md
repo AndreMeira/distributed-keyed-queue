@@ -79,6 +79,9 @@ Per instance, in memory:
 
 - `waiters: Map[QueueName, FIFO[Promise]]` — who is waiting, oldest first
 - `pending: Set[QueueName]` — a doorbell rang with nobody waiting
+
+  > Both were replaced by a single promise per queue — the round's bell — for the reasons in
+  > *What shipped* below.
 - `lastId: Map[QueueName, StreamId]` — where the listener has read up to
 
 ## How states move
@@ -229,14 +232,29 @@ Two things turned out differently from the design above:
   [`../architecture/guarantees.md`](../architecture/guarantees.md). The instance that just settled a key is
   already claiming while the others are being woken, so a hot key tends to stay put.
 
-One question the design left open answered itself, then reopened: **the safety poll was not needed for the
-reason it was proposed, and was built for another.** With the doorbell appended inside the script that makes
-a key claimable, there is no window in which work exists and no entry was written — nothing for a poll to
-catch in Redis. The window that does exist is in the *consumer*, not the substrate: a wake is carried back
-to it as a returned value, and a fiber interrupted between taking one and returning it drops the value
-where no finalizer can see. The key stays claimable and that instance's consumers stay asleep beside it.
+One question the design left open answered itself, then reversed twice, and the reversals are the most
+useful part of this note.
 
-So a listening turn that hears nothing now rings whoever is parked — one look per parked queue, only while
-the doorbell is silent, which is to say only while the queue is idle anyway. Measured back to back, the
-sweep is unchanged. The mechanics, and why nothing local to the consumer can close the window, are in
+**The safety poll was not needed for the reason it was proposed.** With the doorbell appended inside the
+script that makes a key claimable, there is no window in which work exists and no entry was written —
+nothing for a poll to catch in Redis.
+
+**A window did exist, in the consumer.** The registry above hands a wake to one waiter, and that waiter
+carries it back to its caller as a returned value. ZIO discards a value returned to a fiber that has
+already been asked to die, and no finalizer sees it happen, so a consumer interrupted at the wrong instant
+took the wake with it: the key stayed claimable with every consumer on that instance asleep beside it. That
+was defended with a hand-back inside the mask plus a listener backstop that rang parked queues on a silent
+turn — two mechanisms guarding one handover, which is what prompted the rethink.
+
+**So the handover went instead.** `pending`, the FIFO of promises, the hand-back and the backstop are all
+gone. Each queue has a bell — a promise for the current round — and a ring completes it and installs a
+fresh one, waking everyone holding it. Nothing is consumed, so nothing can be taken away by a caller that
+dies; timing out and being interrupted both cost the system nothing. The `pending` flag is unnecessary for
+the same reason it was necessary before: a consumer takes its bell *before* it claims, so a ring arriving
+during the attempt completes the bell it already holds.
+
+The price is that every consumer waiting on a queue wakes per ring rather than one of them. Measured
+against the registry over the throughput sweep and the idle-consumer wake path, the difference is inside
+run-to-run noise — the redundant attempts fall on consumers that are idle by definition. The mechanics, and
+the measurements behind every claim here, are in
 [`../learning-material/interruption-and-lost-wakes.md`](../learning-material/interruption-and-lost-wakes.md).

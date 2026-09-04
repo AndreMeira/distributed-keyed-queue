@@ -3,27 +3,28 @@ title: "Interruption, returned values, and the wake that vanishes"
 type: learning-material
 status: current
 updated: 2026-09-04
-tags: [zio, interruption, fibers, concurrency, wakes, debugging]
+tags: [zio, interruption, fibers, concurrency, queues, wakes, debugging]
 ---
 
 # Interruption, returned values, and the wake that vanishes
 
 A CI failure in `WaitersSpec` — *"a wake is never lost when a caller dies around it"* — turned out to be a
-real hole, and closing it needed a property of ZIO interruption that is easy to state and easy to miss:
+real hole, and the search for a fix ended in a different design. The property underneath is easy to state
+and easy to miss:
 
 > **A value returned from an uninterruptible region to a fiber that has already been asked to die is
 > discarded, and no finalizer in the effect chain sees it happen.**
 
-Anything that hands ownership to a fiber and takes it back as a *returned value* inherits that hole. In dkq
-the thing being handed over is a wake — "a key on this queue became claimable, go and look" — and losing
-one means a consumer sleeps beside work it asked for.
+Anything that hands ownership to a fiber and takes it back as a *returned value* inherits that hole. Here
+the thing handed over was a wake — "a key on this queue became claimable, go and look" — and losing one
+meant a consumer asleep beside work it had asked for.
 
-## The mechanism, in three experiments
+## The mechanism, in four experiments
 
 ### 1. Interruption inside a mask is deferred, not dropped
 
-`ZIO.uninterruptibleMask` lets a region declare that it may not be killed mid-way. Interruption requested
-during that region is *recorded* and delivered when the region ends:
+`ZIO.uninterruptibleMask` lets a region declare it may not be killed mid-way. Interruption requested during
+that region is *recorded* and delivered when the region ends:
 
 ```scala
 ZIO.uninterruptibleMask: restore =>
@@ -63,63 +64,88 @@ ZIO.descriptorWith(descriptor => ... descriptor.interrupters.nonEmpty ...)
 ```
 
 That check has to sit **inside** the mask. Outside, the pending interrupt is delivered first and the check
-never runs — a distinction that showed up immediately in measurement: the same fix moved from 3 losses in
-2,000 rounds to 0 by moving one line inside the mask.
+never runs — a distinction that showed up immediately in measurement: moving one line inside the mask took
+the same fix from 3 losses in 2,000 rounds to 0.
 
-## Why this is a lost wake, not a lost dequeue
+### 4. `queue.take.timeout(d)` drops elements
 
-`Waiters.waitFor` answers `true` when a wake was taken. Two ways of taking one:
+A ZIO `Queue` looks like the way out: `take` hands an element to exactly one taker, so let the queue own the
+race. It does — until a deadline is added. Same race, two shapes, 20,000 rounds each:
 
-- from `pending` — a wake that arrived with nobody waiting, taken at registration;
-- from a delivered promise — a wake handed to this caller while it was parked.
+```
+masked take, no timeout      LOST=0      of 20,000
+masked take + timeout        LOST=19,397 of 20,000
+```
 
-Both mark the wake as consumed *before* the caller can return it. If the caller is interrupted in between —
-a client disconnecting, a deadline elapsing, the pod shutting down — the wake dies with it. The key is still
-in `ready`; no other waiter was told; nothing else is going to say so. The consumers on that instance sleep
-out their patience beside claimable work, which is precisely the latency the doorbell design exists to
-avoid.
+`timeout` forks the take into a **child fiber**, which the parent's mask does not protect. Interrupt the
+parent and the child dies holding the element. So a `Queue` is safe as a handover only while the wait is
+unbounded — which is why `homelab-toolkit-zio`'s `KeyedQueue` is safe: its `takeWith` never times out, and
+it acts on the key inside the mask rather than returning it.
 
-Note the shape of the problem is not specific to `Waiters`. The same gap sits between `waitFor` answering
-and `RedisQueueStore.claim` acting on the answer. **Any** repair local to the dying fiber is repairing one
-link of a chain that has the same flaw at every link.
+The rule this leaves: **a timed wait needs an atomic decision between "I was given it" and "I gave up".** A
+`Promise` has that CAS — `succeed` and `interrupt` each report whether *they* completed it. A `Queue` does
+not expose one.
 
-## The two-part fix
+## Three designs, and where each put the half-finished state
 
-**Hand it back while you still can.** `Waiters.surrender` runs inside the mask, checks `interrupters`, and
-rings the doorbell again if this caller took a wake it will never return. A wake means "look again", so a
-spurious one costs a look, never correctness. This catches every interrupt requested before the check —
-which is nearly all of them, because the caller spends its time parked in `await` or queued on the state
-ref:
+The hole is not really about ZIO. It is about a handover having an instant where the thing is neither here
+nor there, and what happens if the holder dies in that instant. dkq has answered it three ways:
 
-| shape | without `surrender` | with `surrender` |
-|---|---|---|
-| woken while parked, then interrupted (the CI test) | fails ~1 run in 100 | 0 in 15,000 rounds |
-| wake taken from `pending`, interrupted immediately | 11 in 20,000 | 1 in 20,000 |
+| | blocking (`BLMOVE`) | doorbell + registry | broadcast bell |
+|---|---|---|---|
+| half-finished state | `claiming:<worker>` list, **in Redis** | a wake in a fiber's hands, **in memory** | none |
+| hand-back | `LMOVE claiming → ready` — positional, asks nothing about the outcome | `surrender` — must ask ZIO whether it is dying, and in a narrow window the answer comes too late | not needed |
+| swept recovery | `watchdog.lua` sweep 2, over durable state | listener backstop, over in-memory `parked` | not needed |
+| price | a `WorkerId`, a box per connection, a `workers` liveness set, a third sweep | two mechanisms guarding one handover | one look each per ring |
 
-**Then let somebody outside notice.** The residual — interruption requested after the check, in a window a
-few instructions wide — cannot be closed from inside the fiber, by the argument above. So `WakeListener`
-does it from outside: a listening turn that heard nothing rings every queue somebody is parked on. A lost
-wake then costs a wait of `DKQ_WAKE_BLOCK` rather than lasting until the queue next sees traffic.
+The blocking design was **immune** to everything in the four experiments above, and not by luck: `release`
+never asked what had happened, it said *"drain my box, whatever is in it"* — a query against durable state
+rather than a value that could be discarded. Its expensive machinery was buying exactly that durability.
 
-The backstop only fires while the doorbell is silent — that is, while the queue is idle — so it costs
-nothing when there is work. Measured back to back over the throughput sweep, the two versions are
-indistinguishable.
+Removing the machinery (a claim became one script, so there was no box to sweep) moved the same half-second
+of ambiguity out of Redis and into fiber-local memory, where neither positional recovery nor sweeping is
+possible. That is when the hole appeared, and the two in-memory mechanisms that defended it — `surrender`
+and the listener backstop — were the old two ideas rebuilt, less exactly.
+
+## What shipped: no handover at all
+
+Each queue has a **bell**: a `Promise` for the current round. `subscribe` takes it, a ring completes it and
+installs a fresh one, and everyone holding it wakes. Nothing is consumed, so no caller can take a ring from
+another, and a caller that times out, is interrupted, or dies mid-claim removes nothing from the system.
+
+The ordering is what makes it sound, and it is the one thing to keep right:
+
+```
+subscribe → attempt the claim → wait on the bell
+```
+
+A ring landing while the attempt is in flight completes the bell the caller is already holding. Look first
+and subscribe after, and exactly that ring is lost. There is no `pending` flag to forgive it, and no test
+can time the window — the ordering is documented at both ends instead.
+
+The price is that every consumer waiting on a queue wakes per ring, and one of them wins. Measured against
+the registry over the throughput sweep and the idle-consumer wake path, the difference is inside
+run-to-run noise: the redundant attempts fall on consumers that are idle by definition, and a woken consumer
+leaves the waiting set, so the fan-out does not compound under load.
 
 ## The rule to take away
 
-If a fiber can be interrupted, do not model handover as *take, then return*. Either:
+If a fiber can be interrupted, do not model handover as *take, then return*. In order of preference:
 
-- make the transfer a state change that a finalizer can undo (`Waiters.settle` does this: it hands the wake
-  on inside the same `modifyZIO` that removes the registration, so interruption of the wait is safe); or
-- accept that a returned value can vanish, and put a bounded external check behind it.
+- **Do not transfer ownership.** Signal instead — a broadcast takes nothing from anyone, so interruption
+  cannot destroy it. This is the only option with nothing left to defend.
+- **Act on it inside the same uninterruptible step** rather than returning it, as `KeyedQueue.takeWith`
+  does. Sound, but it forbids a deadline on the wait.
+- **Put the half-finished state somewhere durable and sweep it**, as the `BLMOVE` design did. Sound at any
+  granularity, and the price is the bookkeeping.
 
 What you cannot do is close it with a finalizer, however carefully attached. The value is gone before any
 finalizer is asked.
 
 ## Where to look in the code
 
-- `Waiters.waitFor` / `Waiters.surrender` — the mask, and the hand-back while the fiber can still act
-- `Waiters.settle` — the interruption-safe half, where the transfer is state rather than a value
-- `WakeListener.wake` — the silent-turn backstop
-- `WaitersSpec` — the interleaving invariant, 200 rounds of racing a wake against an interrupt
-- `QueueStoreSpec`, *"a consumer parked while the doorbell is silent is roused anyway"* — the backstop
+- `Waiters` — the bell, and `subscribe`'s contract
+- `RedisQueueStore.pursue` — subscribe, look, wait, in that order and for that reason
+- `WaitersSpec` — the semantics, plus 500 rounds racing a ring against an interrupt
+- `docs/research/non-blocking-dequeue.md` — the design this replaced, and why
+- `docs/learning-material/claiming-identity.md` — the `BLMOVE` design's box, and what it cost

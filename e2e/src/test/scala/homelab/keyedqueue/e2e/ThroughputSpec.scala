@@ -31,6 +31,39 @@ object ThroughputSpec extends ZIOSpecDefault:
   private val rounds = 3
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("indicators")(
+    test("how long the first message waits on a queue the instance has only just started watching") {
+      // The listener's read names the streams it was issued with, so a queue watched while a read is in
+      // flight is not heard until that read returns. This measures what that costs, against a control
+      // where the queue has been watched long enough to be in the current read.
+      val rounds  = 8
+      val waiters = 4
+
+      def probe(tag: String, label: String, grace: Duration) =
+        ZIO
+          .foreach(0 until rounds): round =>
+            val queue = s"cold-$tag-$round" // a queue no instance has ever watched
+            for
+              seen     <- Ref.make(Chunk.empty[Consumer.Handled])
+              dkq      <- ZIO.service[Deployment]
+              draining <- ZIO
+                            .foreachParDiscard(0 until waiters): index =>
+                              Consumer.drain(dkq(index), queue, 3.seconds, Duration.Zero, seen)
+                            .fork
+              _        <- ZIO.sleep(grace) // parked; the listener may or may not have picked the queue up
+              now      <- Clock.instant
+              _        <- dkq(0).enqueue(queue, "k", now.toEpochMilli.toString)
+              _        <- draining.join
+              handled  <- seen.get
+            yield handled.map(one => one.claimedAt.toEpochMilli - one.body.toLong).minOption.getOrElse(-1L)
+          .map(timings => summary(label, Chunk.fromIterable(timings).sorted))
+
+      for
+        cold <- probe("a", "cold queue, message sent 50ms after parking", 50.millis)
+        warm <- probe("b", "warm queue, message sent 1s after parking ", 1.second)
+        _    <- Console.printLine(cold)
+        _    <- Console.printLine(warm)
+      yield assertTrue(true)
+    },
     test("a sweep over key and consumer counts") {
       for
         dkq     <- ZIO.service[Deployment]
