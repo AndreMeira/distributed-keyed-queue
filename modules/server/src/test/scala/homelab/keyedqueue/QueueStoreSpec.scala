@@ -59,7 +59,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
    */
   private def store(config: QueueConfig): ZIO[Scope, QueueError, (QueueStore, Connection)] =
     for
-      connection <- Connection.pool(
+      connection <- Connection.make(
                       Connection.Config(config.maxWait, config.redisUrl, config.cluster)
                     )
       scripts    <- connection.provide(Scripts.make)

@@ -60,12 +60,15 @@ final class WakeListener(
   /**
    * Wait for this queue's doorbell, for at most `patience`.
    *
+   * Does not watch the queue: a caller watches before its first claim attempt, because a queue nobody is
+   * listening to would go unheard exactly when the caller starts waiting on it. Watching here as well
+   * would be a second place to look for that ordering, and only one of them can be the reason.
+   *
    * @param queue what to wait for work on
    * @param patience the longest to wait
-   * @return whether a wake arrived; aborts with `QueueError` when the queue cannot be listened to
+   * @return whether a wake arrived
    */
-  def await(queue: QueueName, patience: Duration): IO[QueueError, Boolean] =
-    watch(queue) *> waiters.waitFor(queue, patience)
+  def await(queue: QueueName, patience: Duration): UIO[Boolean] = waiters.waitFor(queue, patience)
 
   /**
    * Read the doorbells forever, waking one consumer per entry.
@@ -92,15 +95,15 @@ final class WakeListener(
     watched.get.flatMap: current =>
       if current.isEmpty then ZIO.sleep(block).as(Chunk.empty)
       else
-        val streams = current.map((queue, id) => Namespace(queue).wake -> (queue, id))
-        val offsets = streams.map((stream, cursor) => StreamOffset.from(stream, cursor._2)).toArray
+        val watching = current.toList.map((queue, id) => (queue, Namespace(queue).wake, id))
+        val offsets  = watching.map((_, stream, id) => StreamOffset.from(stream, id)).toArray
+        val queueOf  = watching.map((queue, stream, _) => stream -> queue).toMap
         connection
           .listening(entries(offsets))
           .flatMap: delivered =>
-            val advanced = delivered.foldLeft(Map.empty[QueueName, String]):
-              case (seen, (stream, id)) => streams.get(stream).fold(seen)((queue, _) => seen.updated(queue, id))
-            watched.update(current => current.map((queue, id) => queue -> advanced.getOrElse(queue, id)))
-              *> ZIO.succeed(Chunk.fromIterable(delivered.flatMap((stream, _) => streams.get(stream).map(_._1))))
+            val rung  = Chunk.fromIterable(delivered.flatMap((stream, _) => queueOf.get(stream)))
+            val ahead = delivered.flatMap((stream, id) => queueOf.get(stream).map(_ -> id)).toMap
+            watched.update(_.map((queue, id) => queue -> ahead.getOrElse(queue, id))).as(rung)
 
   /**
    * The raw read, as stream/id pairs.

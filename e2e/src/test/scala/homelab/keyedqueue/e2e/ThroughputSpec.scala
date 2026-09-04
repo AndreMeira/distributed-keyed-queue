@@ -78,8 +78,10 @@ object ThroughputSpec extends ZIOSpecDefault:
         handled   <- seen.get
         latencies  = handled.map(one => one.claimedAt.toEpochMilli - one.body.toLong).sorted
         enqueues  <- sends.get.map(_.sorted)
-        _         <- Console.printLine(summary(latencies))
-        _         <- Console.printLine(summary(enqueues).replace("wake latency", "enqueue round trip"))
+        _         <- Console.printLine(summary("wake latency", latencies))
+        // Printed beside it because it is *inside* it: what is left after subtracting this is what the
+        // doorbell and the claim actually cost.
+        _         <- Console.printLine(summary("enqueue round trip", enqueues))
       yield assertTrue(
         handled.size == messages,                                  // a lost wake would show up as a lost message
         handled.map(_.body).distinct.size == messages,             // and a double wake as a duplicate
@@ -130,16 +132,17 @@ object ThroughputSpec extends ZIOSpecDefault:
   private def median(rates: Seq[Double]): Double = rates.sorted.apply(rates.size / 2)
 
   /**
-   * Print how long messages waited, in the terms that matter for a doorbell: the middle, the tail, the worst.
+   * Print a set of timings in the terms that matter here: the middle, the tail, the worst.
    *
-   * @param latencies each message's enqueue-to-claim delay in millis, sorted
+   * @param label what was measured
+   * @param timings the measurements in millis, sorted
    * @return the line to print
    */
-  private def summary(latencies: Chunk[Long]): String =
-    if latencies.isEmpty then "wake latency: nothing handled"
+  private def summary(label: String, timings: Chunk[Long]): String =
+    if timings.isEmpty then s"$label: nothing measured"
     else
-      val at = (percent: Int) => latencies(math.min(latencies.size - 1, latencies.size * percent / 100))
-      f"wake latency over ${latencies.size} messages: median ${at(50)}ms, p95 ${at(95)}ms, max ${latencies.last}ms"
+      val at = (percent: Int) => timings(math.min(timings.size - 1, timings.size * percent / 100))
+      f"$label over ${timings.size} messages: median ${at(50)}ms, p95 ${at(95)}ms, max ${timings.last}ms"
 
   /**
    * Print the sweep as a table, so two runs can be diffed by eye.

@@ -23,10 +23,13 @@ import java.time.Duration as JavaDuration
  * The connection arrives in the environment as [[Connection.Commands]]: an effect asks for one by type, and
  * this decides which one it gets.
  */
-trait Connection:
+final case class Connection(sync: Connection.Commands, wake: Connection.Commands):
 
   /**
-   * Run an effect that will not occupy its connection.
+   * Run an effect on the shared connection.
+   *
+   * Everything except the doorbell answers immediately — a claim is one script, a settle is one script — so
+   * one connection serves all of it.
    *
    * @param effect what to run, needing a connection
    * @tparam R what it needs besides a connection
@@ -34,13 +37,16 @@ trait Connection:
    * @tparam A what it produces
    * @return the same effect, its connection supplied
    */
-  def provide[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A]
+  def provide[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A] =
+    effect.provideSomeEnvironment[R](env => env ++ ZEnvironment(sync))
 
   /**
    * Run an effect on the connection reserved for listening.
    *
    * '''One connection, one listener.''' A blocking `XREAD` owns its connection for the whole wait, so it
-   * gets one of its own — sharing would put every claim and settle behind the doorbell.
+   * gets one of its own — sharing would put every claim and settle behind the doorbell. Nothing guards it,
+   * because there is exactly one listener: a second caller would park behind the first one's block, which
+   * is a bug in the caller rather than something to serialise here.
    *
    * @param effect what to run, needing a connection
    * @tparam R what it needs besides a connection
@@ -48,7 +54,8 @@ trait Connection:
    * @tparam A what it produces
    * @return the same effect, its connection supplied
    */
-  def listening[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A]
+  def listening[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A] =
+    effect.provideSomeEnvironment[R](env => env ++ ZEnvironment(wake))
 
 
 /**
@@ -123,7 +130,7 @@ object Connection:
 
   /**
    * Two connections, closed with the scope: one shared by everything that answers immediately, and one
-   * reserved for the doorbell.
+   * reserved for the doorbell. Named  for what it replaced; there is nothing to pool any more.
    *
    * Two rather than a pool because nothing else blocks any more — a claim is a single script that returns
    * at once, so the only long-lived wait in the process is the listener's `XREAD`.
@@ -131,12 +138,12 @@ object Connection:
    * @param config where Redis is, and the longest wait to honour
    * @return the connections; aborts with `QueueError` when one cannot be opened
    */
-  def pool(config: Config): ZIO[Scope, QueueError, Connection] =
+  def make(config: Config): ZIO[Scope, QueueError, Connection] =
     for
       client <- client(config)
       sync   <- open(client, config.maxWait)
       wake   <- open(client, config.maxWait + listeningSlack)
-    yield Pool(sync, wake)
+    yield Connection(sync, wake)
 
   /**
    * The client the pool will open its connections from — the one place the two backends are chosen between.
@@ -242,42 +249,3 @@ object Connection:
         connection.setTimeout(JavaDuration.ofMillis(commandTimeout.toMillis))
         connection.sync()
       .mapError(error => QueueError.StoreUnavailable(s"cannot open a connection: ${error.getMessage}"))
-
-  /**
-   * The two connections a running instance holds.
-   *
-   * '''Separate, not pooled.''' Everything except the doorbell answers immediately — a claim is one script,
-   * a settle is one script — so one connection serves all of it. The listener's `XREAD` is the only command
-   * that parks, and it parks for as long as it is told, which is why it gets its own.
-   *
-   * @param sync the connection shared by everything that returns at once
-   * @param wake the connection reserved for the blocking read of the doorbell
-   */
-  case class Pool(sync: Connection.Commands, wake: Connection.Commands) extends Connection:
-
-    /**
-     * Hand the effect the shared connection.
-     *
-     * @param effect what to run
-     * @tparam R what it needs besides a connection
-     * @tparam E how it fails
-     * @tparam A what it produces
-     * @return the same effect, its connection supplied
-     */
-    def provide[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A] =
-      effect.provideSomeEnvironment[R](env => env ++ ZEnvironment(sync))
-
-    /**
-     * Hand the effect the listening connection.
-     *
-     * Nothing guards it, because there is exactly one listener: a second caller would park behind the
-     * first one's block, which is a bug in the caller rather than something to serialise here.
-     *
-     * @param effect what to run
-     * @tparam R what it needs besides a connection
-     * @tparam E how it fails
-     * @tparam A what it produces
-     * @return the same effect, its connection supplied
-     */
-    def listening[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A] =
-      effect.provideSomeEnvironment[R](env => env ++ ZEnvironment(wake))

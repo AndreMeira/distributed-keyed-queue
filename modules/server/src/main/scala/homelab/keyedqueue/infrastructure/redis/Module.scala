@@ -30,7 +30,7 @@ object Module:
    */
   val connection: ZLayer[QueueConfig, QueueError, Connection] = ZLayer.scoped:
     ZIO.service[QueueConfig].flatMap { config =>
-      Connection.pool(Connection.Config(config.maxWait, config.redisUrl, config.cluster))
+      Connection.make(Connection.Config(config.maxWait, config.redisUrl, config.cluster))
     }
 
   /**
