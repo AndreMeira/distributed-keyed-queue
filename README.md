@@ -89,7 +89,8 @@ Settings are HOCON with an environment override for every key
 | `DKQ_LEASE_TTL` | `30 seconds` | how long a claim survives without a heartbeat |
 | `DKQ_MAX_WAIT` | `30 seconds` | the longest `Dequeue` wait honoured |
 | `DKQ_MAX_BATCH_LIMIT` | `32` | the most messages one claim may take |
-| `DKQ_CLAIMERS` | `8` | connections that may be parked in a waiting `Dequeue` at once — one per queue being waited on |
+| `DKQ_WAKE_BLOCK` | `1 second` | how long one read of the wake streams waits before going round again |
+| `DKQ_WAKE_BUCKETS` | `1` | how many wake streams the queues are spread over — and so how many hash tags. Permanent for a deployment |
 | `DKQ_SWEEP_INTERVAL` | `5 seconds` | how often each instance runs repair |
 | `DKQ_SWEEP_LIMIT` | `100` | entries one sweep handles, per kind |
 
@@ -135,12 +136,10 @@ Known gaps:
   message cycles rather than wedging its key, so this is not urgent — what is missing is somewhere to put
   it once the count is too high.
 - **One queue per `Dequeue`.** A consumer spanning queues needs a connection each.
-- **Waiting costs a Redis connection.** `DKQ_CLAIMERS` bounds how many `Dequeue` calls can be parked *on
-  Redis* at once; further callers wait in-process for a connection, so nothing is refused and no work goes
-  unclaimed while a queue is being watched. Because a wait covers one queue, this binds on the number of
-  queues an instance serves rather than on the number of consumers — see
-  [`docs/research/dequeue-connection-model.md`](docs/research/dequeue-connection-model.md) for what would
-  replace it.
+- **A hot key stays on one instance.** Waiting consumers are woken by a broadcast and race to claim, and
+  the instance that just settled a key is already claiming while the others are being woken. Nothing is
+  lost — a key is worked by one consumer at a time regardless — but "several consumers" does not mean the
+  work for one key is spread across them.
 - **No persistence.** The POC runs Valkey with saving off; durability is a later phase.
 
 ## Docs

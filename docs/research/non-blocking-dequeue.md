@@ -1,15 +1,15 @@
 ---
 title: "Dequeue without holding a connection"
 type: research
-status: draft
-updated: 2026-09-01
+status: current
+updated: 2026-09-04
 tags: [dequeue, redis, streams, xread, claiming, cluster, design]
 ---
 
 # Dequeue without holding a connection
 
-Not built. This is the design that replaces `BLMOVE` — what it deletes, what it adds, and the states
-everything moves through.
+**Built.** This is the design that replaced `BLMOVE` — what it deletes, what it adds, and the states
+everything moves through. What actually shipped follows it, with two deviations recorded at the end.
 
 ## The idea, in one picture
 
@@ -21,9 +21,9 @@ The proposal keeps the phone metaphor but changes who holds the line:
 
 - **Taking work becomes one atomic step.** A consumer asks "give me a key and its messages" and either gets
   a claim or gets nothing. No holding, no waiting inside Redis.
-- **Each queue gets a doorbell.** Anything that makes a key claimable rings it, in the same atomic step that
+- **Each queue gets a wake stream.** Anything that makes a key claimable appends to it, in the same atomic step that
   made it claimable.
-- **One listener per instance hears every doorbell** and taps the shoulder of one consumer waiting for that
+- **One listener per instance reads every wake stream** and taps the shoulder of one consumer waiting for that
   queue. Waiting is now a fiber and a promise, not a connection.
 
 The consumer's own loop is unchanged in shape: ask, and if there is nothing, wait until told or until its
@@ -78,7 +78,10 @@ append bounds it: entries are read within milliseconds or not at all.
 Per instance, in memory:
 
 - `waiters: Map[QueueName, FIFO[Promise]]` — who is waiting, oldest first
-- `pending: Set[QueueName]` — a doorbell rang with nobody waiting
+- `pending: Set[QueueName]` — a wake arrived with nobody waiting
+
+  > Both were replaced by a single promise per queue — the round's signal — for the reasons in
+  > *What shipped* below.
 - `lastId: Map[QueueName, StreamId]` — where the listener has read up to
 
 ## How states move
@@ -108,7 +111,7 @@ registered ──patience elapsed──▶ empty response
 ```
 
 with one rule at registration: **if the queue's `pending` flag is set, clear it and go straight back to
-`ask`** instead of waiting. That closes the race where a doorbell rings between a consumer finding nothing
+`ask`** instead of waiting. That closes the race where a wake arrives between a consumer finding nothing
 and putting its name down.
 
 **The listener** moves through:
@@ -132,12 +135,12 @@ One script, replacing `BLMOVE` + `consume.lua`:
 The current script's first line — `LREM claiming 1 key`, which fails the claim if someone else drained the
 box — has nothing left to guard and goes away with the box.
 
-### The doorbell
+### The wake stream
 
 Every script that pushes a key onto `ready` appends one entry to `wake` in the same script: `produce.lua`
 when it queues a message for an idle key, `complete.lua` when a settled claim leaves messages behind, and
-each of the watchdog's sweeps when it returns a key. A nacked key parked in `delayed` rings *nothing* — its
-doorbell comes later, from the sweep that releases it.
+each of the watchdog's sweeps when it returns a key. A nacked key parked in `delayed` announces *nothing* —
+its wake comes later, from the sweep that releases it.
 
 **One entry per key made claimable.** The cardinality is the point: an entry means "one key is claimable",
 so a listener wakes exactly one consumer for it. Waking all of them would give one claim and N−1 wasted
@@ -216,3 +219,42 @@ because one `XREAD` can name every stream.
    nobody touches keeps up to 1000 entries indefinitely — small, but it is state with no owner.
 4. **Does `Dequeue` still need `max_wait` at all?** Waiting no longer costs a connection, so the ceiling
    exists only to bound how long a client's RPC hangs.
+
+## What shipped, and where it differs
+
+Two things turned out differently from the design above:
+
+- **`XREADGROUP` was never in question, but redundant attempts are real and measurable.** With few keys,
+  every instance with a waiter attempts each claimable key and one attempt in two is wasted; the sweep in
+  [`throughput-first-numbers.md`](throughput-first-numbers.md) shows it as a slower 8-key shape. Where keys
+  outnumber consumers it does not show at all.
+- **Cross-instance fairness went, and is now documented as absent** in
+  [`../architecture/guarantees.md`](../architecture/guarantees.md). The instance that just settled a key is
+  already claiming while the others are being woken, so a hot key tends to stay put.
+
+One question the design left open answered itself, then reversed twice, and the reversals are the most
+useful part of this note.
+
+**The safety poll was not needed for the reason it was proposed.** With the wake appended inside the
+script that makes a key claimable, there is no window in which work exists and no entry was written —
+nothing for a poll to catch in Redis.
+
+**A window did exist, in the consumer.** The registry above hands a wake to one waiter, and that waiter
+carries it back to its caller as a returned value. ZIO discards a value returned to a fiber that has
+already been asked to die, and no finalizer sees it happen, so a consumer interrupted at the wrong instant
+took the wake with it: the key stayed claimable with every consumer on that instance asleep beside it. That
+was defended with a hand-back inside the mask plus a listener backstop that rang parked queues on a silent
+turn — two mechanisms guarding one handover, which is what prompted the rethink.
+
+**So the handover went instead.** `pending`, the FIFO of promises, the hand-back and the backstop are all
+gone. Each queue has a signal — a promise for the current round — and raising it completes that one and
+installs a fresh one, waking everyone holding it. Nothing is consumed, so nothing can be taken away by a caller that
+dies; timing out and being interrupted both cost the system nothing. The `pending` flag is unnecessary for
+the same reason it was necessary before: a consumer takes its signal *before* it claims, so a wake arriving
+during the attempt completes the signal it already holds.
+
+The price is that every consumer waiting on a queue wakes for every wake rather than one of them. Measured
+against the registry over the throughput sweep and the idle-consumer wake path, the difference is inside
+run-to-run noise — the redundant attempts fall on consumers that are idle by definition. The mechanics, and
+the measurements behind every claim here, are in
+[`../learning-material/interruption-and-lost-wakes.md`](../learning-material/interruption-and-lost-wakes.md).

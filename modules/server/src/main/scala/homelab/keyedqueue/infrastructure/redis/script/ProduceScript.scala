@@ -37,20 +37,21 @@ final class ProduceScript(ref: LuaScript.Sha):
   def run(ns: Namespace, message: Message): ZIO[Connection.Commands, QueueError, Long] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns, message), args(message)*))
+        .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns, message), args(ns, message)*))
         .mapError(LuaScript.failure)
         .flatMap(reply => ZIO.fromEither(read(reply)))
 
   /**
-   * The three lists and hashes an append touches: where claimable keys queue, where their state is kept,
-   * and where this key's own messages accumulate.
+   * The five structures an append touches: where claimable keys queue, where their state is kept, where
+   * this key's own messages and payloads accumulate, and the wake stream it appends to when the key becomes
+   * claimable.
    *
    * @param ns the queue to append in
    * @param message the message; the key it carries decides where it lands
-   * @return `ready`, `state`, `msgs`, `payloads`, in the order `lua/produce.lua` reads them
+   * @return `ready`, `state`, `msgs`, `payloads`, `wake`, in the order `lua/produce.lua` reads them
    */
   private def keys(ns: Namespace, message: Message): Array[String] =
-    Array(ns.ready, ns.state, ns.msgs(message.key), ns.payloads(message.key))
+    Array(ns.ready, ns.state, ns.msgs(message.key), ns.payloads(message.key), ns.wake)
 
   /**
    * The key to append under, and the message as it will be stored.
@@ -58,11 +59,12 @@ final class ProduceScript(ref: LuaScript.Sha):
    * @param message the message to serialise
    * @return `key`, `id`, `payload`, in the order `lua/produce.lua` reads them
    */
-  private def args(message: Message): Array[Array[Byte]] =
+  private def args(ns: Namespace, message: Message): Array[Array[Byte]] =
     Array(
       LuaScript.utf8(message.key),
       LuaScript.utf8(message.messageId),
       StoredMessage.toBytes(message).toArray,
+      LuaScript.utf8(ns.queue),
     )
 
   /**

@@ -41,9 +41,9 @@ services:
       # does not. Short enough to test, long enough that an idle handler does not lose its claim.
       DKQ_LEASE_TTL: 5 seconds
       DKQ_SWEEP_INTERVAL: 2 seconds
-      # Every parked Dequeue holds a connection for its whole wait, and the load test parks several per
-      # instance at once — this is the ceiling on how many it can serve concurrently.
-      DKQ_CLAIMERS: 16
+      # The doorbell's read goes round quickly here so that a queue an instance has only just started
+      # serving is heard about within a test's patience rather than a second later.
+      DKQ_WAKE_BLOCK: 200 millis
     depends_on:
       redis:
         condition: service_healthy

@@ -68,10 +68,12 @@ object EndToEndSpec extends ZIOSpecDefault:
         seen    <- Ref.make(Chunk.empty[Consumer.Handled])
         _       <- ZIO.foreachParDiscard(0 until 4)(index => Consumer.drain(dkq(index), dkq.queue("order"), 5.seconds, Duration.Zero, seen))
         handled <- seen.get
-      yield assertTrue(
-        handled.map(_.body) == bodies,             // FIFO, though four consumers on two instances competed
-        handled.map(_.instance).distinct.size == 2, // and both instances really served some of it
-      )
+      yield assertTrue(handled.map(_.body) == bodies) // FIFO, though four consumers on two instances competed
+      // Deliberately not asserting that both instances served some of it. Waiting consumers are woken by a
+      // broadcast and race to claim, and the instance that just settled a message is already claiming while
+      // the others are still being woken — so one hot key tends to stay where it is. Nothing is lost by
+      // that: a key is worked by one consumer at a time whatever happens, so the work could not have been
+      // spread anyway. See docs/architecture/guarantees.md on fairness.
     },
     test("one key is never worked by two consumers at once") {
       // The invariant the whole design exists for. Each consumer holds its message for 300ms, so if the

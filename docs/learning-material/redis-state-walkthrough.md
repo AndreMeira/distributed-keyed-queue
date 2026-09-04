@@ -2,7 +2,7 @@
 title: "Every request, and what it does to Redis"
 type: learning-material
 status: current
-updated: 2026-08-30
+updated: 2026-09-04
 tags: [redis, walkthrough, state, lua, claims, debugging]
 ---
 
@@ -14,7 +14,7 @@ what the service promises is [`../architecture/guarantees.md`](../architecture/g
 the middle: the mechanics in motion.
 
 Throughout: queue `orders`, key `k1`, worker `w1`. Names are shortened — every one really carries the
-`{q:orders}` prefix. Empty structures are omitted.
+`{w:0}:q:orders` prefix — bucket 0, the single-bucket default. Empty structures are omitted.
 
 ## Where we start
 
@@ -62,31 +62,11 @@ once acknowledged, the id is free again.
 
 ## Dequeue
 
-Two steps, and the gap between them is the interesting part.
-
-**Step 1 — take the key** (a blocking move, not a script):
-
-```
-ready        []                the key leaves
-claiming:w1  [k1]              …and lands here
-```
-
-The key now belongs to nobody: it is off `ready` but no claim exists. Two things depend on this list:
-
-- **If `w1` dies right here**, only `claiming:w1` records that `k1` was taken. No lease exists, so the
-  lapsed-claim sweep cannot see it; recovery is the dead-worker sweep, which is why a worker registers its
-  liveness *before* its first blocking move. A worker that claimed without registering would strand the key
-  for ever.
-- **If `w1` merely stalls** long enough to be declared dead, the sweep gives the key back and another
-  consumer may claim it. When `w1` finally wakes, step 2 finds the key gone from `claiming:w1` and
-  **refuses to claim** — returning nothing, as if the wait had timed out. Without that check `w1` would
-  claim messages another consumer is already working: its settles would be refused, but both would have run
-  the handler.
-
-**Step 2 — turn it into a claim**, provided the key is still in `claiming:w1`. `Dequeue(orders, max_batch=2)`:
+One call. The key leaves `ready` and the claim exists in the same script, so there is no moment in which it
+belongs to nobody:
 
 ```
-claiming:w1  []                       the key is accounted for
+ready        []                       the key leaves, inside the script
 msgs:k1      [m1, m2, m3]             UNCHANGED — claimed messages do not move
 owned:k1     {m1, m2}                 the claim holds the first two
 state        {k1: processing}
@@ -95,11 +75,19 @@ fence        {k1: 1}                  the token this claim will settle with
 attempts     {m1: 1, m2: 1}           one delivery each
 ```
 
-The response carries the receipt (the token), both messages, the lease deadline, and `backlog_depth: 1` —
-m3, still queued behind the batch.
+This used to be two steps — a blocking move into a per-connection holding list, then a script — and the gap
+between them was the most delicate thing in the design: a key off `ready` with no lease, recoverable only by
+tracking each connection's liveness. Making the claim atomic deleted the gap, the holding list, the worker
+identities, and the sweep that recovered them.
 
-**A second consumer asking for `orders` now** blocks: `ready` is empty. It is not told the key is busy;
-there is simply nothing to take.
+**If the consumer dies now**, `claimed` holds the lease and the lapsed-claim sweep is the whole recovery
+story. Nothing else can be holding a key.
+
+**If nothing was claimable**, the script answers with nothing and the caller waits on the queue's signal,
+which is raised when an entry naming that queue arrives on its bucket's `wake` stream — appended by whatever
+next makes a key claimable. That wait costs a fiber, not a connection: one listener per instance reads every
+bucket on one connection, from startup, so a queue nobody has asked for yet is heard as promptly as a busy
+one.
 
 ---
 
@@ -154,15 +142,14 @@ and is refused. Nothing changes.
 **`Heartbeat([receipt])`**
 
 ```
-workers      {w1: <now+lease>}        this consumer is alive
 claimed      {k1: <now+lease>}        the lease is pushed out — only if the token still matches
 ```
 
 A receipt whose token no longer matches is reported back as stale rather than renewed: the claim was
 revoked while the consumer was not listening. Nothing else changes — a heartbeat never moves a message.
 
-**Registration and renewal are the same call.** A consumer with nothing held still beats, because a claiming
-connection that stops announcing itself cannot be recovered.
+**A consumer holding nothing has nothing to beat for.** It is known by its receipts, not by a registration,
+so there is no liveness of its own to keep alive.
 
 ---
 
@@ -170,7 +157,8 @@ connection that stops announcing itself cannot be recovered.
 
 Run by every instance, on a timer, without coordination.
 
-**Lapsed claim** — `claimed` says the deadline passed:
+**Lapsed claim** — `claimed` says the deadline passed. With the claim granted in one call, this is the
+only kind of death there is:
 
 ```
 owned:k1     {}                       ownership forgotten
@@ -182,16 +170,6 @@ msgs:k1      unchanged                nothing to restore: nothing had moved
 payloads:k1  unchanged
 attempts     unchanged                a reclaim IS a delivery that did not finish, and it shows
 ```
-
-**Dead worker** — `workers` says a consumer went silent, and its `claiming` list is not empty:
-
-```
-claiming:w1  []                       drained back
-ready        [k1, …]                  in the order they were taken
-workers      {}                       forgotten
-```
-
-This is the only thing that recovers a key lost between the blocking move and the claim.
 
 **Elapsed backoff** — `delayed` says the wait is over:
 

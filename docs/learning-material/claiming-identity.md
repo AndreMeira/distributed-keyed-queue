@@ -1,12 +1,20 @@
 ---
 title: "What a WorkerId is, and why it is called that"
 type: learning-material
-status: current
+status: superseded
 updated: 2026-08-31
 tags: [redis, blmove, claiming, identity, recovery, naming]
 ---
 
 # What a WorkerId is, and why it is called that
+
+> **Superseded.** `WorkerId`, the claiming lists and the `workers` set were removed when the claim became a
+> single script: there is no longer a moment between taking a key and claiming it, so there is nothing to
+> address, keep alive or recover. Kept because the reasoning is the clearest statement of *why* that
+> intermediate state was expensive — and because the same question arises for any design that blocks on a
+> queue. The current layout is
+> [`../architecture/redis-data-structures.md`](../architecture/redis-data-structures.md); what replaced it is
+> [`../research/non-blocking-dequeue.md`](../research/non-blocking-dequeue.md).
 
 ## The definition
 

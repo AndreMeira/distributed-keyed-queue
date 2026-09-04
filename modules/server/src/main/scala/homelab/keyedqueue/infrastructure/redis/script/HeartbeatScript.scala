@@ -13,16 +13,9 @@ import java.time.Instant
 
 
 /**
- * Write a worker's liveness, and push forward the claims it names — `lua/heartbeat.lua`.
+ * Push the deadline forward on the claims a consumer still holds — `lua/heartbeat.lua`.
  *
- * '''Registration and renewal are the same call.''' A claiming connection with nothing held beats with
- * `held` empty purely to stay in its queue's worker set, because a registration that lapses makes the next
- * claim unrecoverable; a consumer beats with the claims it is working. The script cannot tell the two
- * apart, and neither does this.
- *
- * The namespace is a parameter rather than derived from `held`, since an empty `held` names no queue.
- *
- * @param ref the digest this script was loaded under, from [[Scripts]]
+ * '''Renewal only.''' A consumer with nothing held has nothing to send, and beats with
  */
 final class HeartbeatScript(ref: LuaScript.Sha):
 
@@ -30,55 +23,49 @@ final class HeartbeatScript(ref: LuaScript.Sha):
   private val output: ScriptOutputType = ScriptOutputType.MULTI
 
   /**
-   * Push forward the claims named, and write a worker's liveness when there is one to write.
+   * Push forward the claims named.
    *
-   * `worker` is optional because the two callers want different halves: a claiming connection registers
-   * itself before its first `BLMOVE` and renews nothing, while a consumer's heartbeat renews claims found
-   * by fence token and has no liveness of its own — it is not a worker, it is a caller.
+   * A consumer is not a worker with a registration of its own: its claims are found by fence token, so
+   * there is nothing here to announce and nothing to expire but the leases themselves.
    *
-   * @param ns the queue whose worker set to write to, and whose claims to renew
-   * @param worker whose liveness to write, or `None` to renew claims only
+   * @param ns the queue whose claims to renew
    * @param leaseTtl how long the registration, and each renewed claim, survive without another beat
-   * @param held the claims to renew alongside it, all in that queue; empty for a bare registration
+   * @param held the claims to renew, all in that queue
    * @return the new deadline and the claims already revoked; aborts with `QueueError` when the store fails
    *         or the reply cannot be read
    */
   def run(
     ns: Namespace,
-    worker: Option[WorkerId],
     leaseTtl: Duration,
     held: Chunk[Claim],
   ): ZIO[Connection.Commands, QueueError, (Instant, Chunk[Claim])] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns), args(worker, leaseTtl, held)*))
+        .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns), args(leaseTtl, held)*))
         .mapError(LuaScript.failure)
         .flatMap(reply => ZIO.fromEither(read(held)(reply)))
 
   /**
-   * The leases to push forward, the fences that say whether a claim is still the caller's, and the worker
-   * set this registration lives in.
+   * The leases to push forward, and the fences that say whether a claim is still the caller's.
    *
-   * @param ns the queue whose worker set to write to, and whose claims to renew
-   * @return `claimed`, `fence`, `workers`, in the order `lua/heartbeat.lua` reads them
+   * @param ns the queue whose claims to renew
+   * @return `claimed`, `fence`, in the order `lua/heartbeat.lua` reads them
    */
-  private def keys(ns: Namespace): Array[String] = Array(ns.claimed, ns.fence, ns.workers)
+  private def keys(ns: Namespace): Array[String] = Array(ns.claimed, ns.fence)
 
   /**
-   * The lease length and the worker's identity — empty when there is none — then the held claims
-   * flattened into key-and-token pairs.
+   * The lease length, then the held claims flattened into key-and-token pairs.
    *
    * The token travels with each key because a beat must not renew a claim the caller no longer owns: the
    * script checks it against the fence and reports the key as lost instead.
    *
-   * @param worker whose liveness to write, or `None` to renew claims only
    * @param leaseTtl how long the registration, and each renewed claim, survive without another beat
-   * @param held the claims to renew alongside it; empty for a bare registration
-   * @return `ttl`, `worker`, then `key`, `token` repeated, in the order `lua/heartbeat.lua` reads them
+   * @param held the claims to renew
+   * @return `ttl`, then `key`, `token` repeated, in the order `lua/heartbeat.lua` reads them
    */
-  private def args(worker: Option[WorkerId], leaseTtl: Duration, held: Chunk[Claim]): Array[Array[Byte]] =
+  private def args(leaseTtl: Duration, held: Chunk[Claim]): Array[Array[Byte]] =
     val pairs = held.flatMap(claim => Chunk(LuaScript.utf8(claim.key), LuaScript.utf8(claim.token.toString)))
-    (Chunk(LuaScript.utf8(leaseTtl.toMillis.toString), LuaScript.utf8(worker.getOrElse(WorkerId("")))) ++ pairs).toArray
+    (Chunk(LuaScript.utf8(leaseTtl.toMillis.toString)) ++ pairs).toArray
 
   /**
    * Read the new deadline and the claims that were already gone.

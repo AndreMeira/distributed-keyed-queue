@@ -81,7 +81,7 @@ consumer dies holding one.
 
 That is the right shape for a work queue, and the wrong shape for a notification bus — with a group, a
 notification can be delivered to an instance that has nobody waiting, and sit in its PEL while another
-instance's consumer waits. Plain `XREAD` gives every reader every entry, which is what a doorbell needs.
+instance's consumer waits. Plain `XREAD` gives every reader every entry, which is what a notification needs.
 
 ## Lettuce
 
@@ -140,7 +140,7 @@ for the claiming connections and why a stream reader wants the same treatment, o
 
 `RedisAdvancedClusterCommands` accepts the same calls, but a multi-stream `XREAD` across different slots
 fails with `CROSSSLOT`. Group streams by slot — and remember that keys sharing a hash tag share a slot, so
-`{q:orders}:wake` is in the same slot as `{q:orders}:ready` and can be written by the same Lua script.
+`{w:0}:wake` is in the same slot as `{w:0}:q:orders:ready` and can be written by the same Lua script.
 
 ### From Lua
 

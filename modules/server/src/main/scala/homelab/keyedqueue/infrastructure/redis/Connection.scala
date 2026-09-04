@@ -2,7 +2,6 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.keyedqueue.domain.error.QueueError
-import homelab.keyedqueue.domain.types.WorkerId
 import io.lettuce.core.cluster.RedisClusterClient
 import io.lettuce.core.cluster.api.sync.RedisClusterCommands
 import io.lettuce.core.codec.{ ByteArrayCodec, RedisCodec, StringCodec }
@@ -15,19 +14,22 @@ import java.time.Duration as JavaDuration
 /**
  * Where an effect gets a connection from.
  *
- * '''The caller declares whether it may block, and is given a connection accordingly.''' `BLMOVE` occupies
- * its connection for the whole wait, so an effect that parks must not run on one other callers are sharing —
- * and an effect that never parks should not have to wait for a free connection. Which of the two an operation
- * is, is known where it is written and nowhere else, so it is declared there rather than guessed at by
- * whatever holds the connections.
+ * '''Only one thing in this process blocks, and it gets its own connection.''' Every operation on the queue
+ * is a script that answers at once, so they all share one; the listener's `XREAD` parks for as long as it is
+ * told, so sharing would put every claim and settle behind that read. Which of the two an effect is, is
+ * known where it is written and nowhere else, so it is declared there rather than guessed at by whatever
+ * holds the connections.
  *
  * The connection arrives in the environment as [[Connection.Commands]]: an effect asks for one by type, and
  * this decides which one it gets.
  */
-trait Connection:
+final case class Connection(sync: Connection.Commands, wake: Connection.Commands):
 
   /**
-   * Run an effect that will not occupy its connection.
+   * Run an effect on the shared connection.
+   *
+   * Everything except the listener answers immediately — a claim is one script, a settle is one script — so
+   * one connection serves all of it.
    *
    * @param effect what to run, needing a connection
    * @tparam R what it needs besides a connection
@@ -35,22 +37,25 @@ trait Connection:
    * @tparam A what it produces
    * @return the same effect, its connection supplied
    */
-  def provide[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A]
+  def provide[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A] =
+    effect.provideSomeEnvironment[R](env => env ++ ZEnvironment(sync))
 
   /**
-   * Run an effect that may park its connection for as long as it likes.
+   * Run an effect on the connection reserved for listening.
    *
-   * '''It is handed the connection's identity as well as the connection.''' A claim leaves its key in
-   * `claiming:<worker>` between the `BLMOVE` and the script that finishes it, and only that worker's own
-   * liveness can recover it — so the identity has to be the borrowed connection's, not the caller's.
+   * '''One connection, one listener.''' A blocking `XREAD` owns its connection for the whole wait, so it
+   * gets one of its own — sharing would put every claim and settle behind that read. Nothing guards it,
+   * because there is exactly one listener: a second caller would park behind the first one's block, which
+   * is a bug in the caller rather than something to serialise here.
    *
-   * @param effect what to run, given the borrowed connection's identity and needing the connection itself
+   * @param effect what to run, needing a connection
    * @tparam R what it needs besides a connection
    * @tparam E how it fails
    * @tparam A what it produces
    * @return the same effect, its connection supplied
    */
-  def provideBlocking[R, E, A](effect: WorkerId => ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A]
+  def listening[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A] =
+    effect.provideSomeEnvironment[R](env => env ++ ZEnvironment(wake))
 
 
 /**
@@ -61,17 +66,17 @@ trait Connection:
  * what the mixed codec below buys, and it is why this adapter does not apply a client that encodes keys
  * through a schema codec.
  *
- * '''An idle connection is exclusive.''' `BLMOVE` occupies its connection for the whole wait, so a
- * claimer owns one outright rather than borrowing from a pool.
+ * '''The listening connection is exclusive.''' A blocking `XREAD` occupies its connection for the whole
+ * wait, so the listener owns one outright rather than sharing.
  */
 object Connection:
 
   /**
-   * A claiming connection's command ceiling must exceed the longest wait it will be asked to make, or
-   * Lettuce abandons a `BLMOVE` that is doing exactly what it was told to. Derived here rather than passed
+   * The listening connection's command ceiling must exceed the longest block it will be asked to make, or
+   * Lettuce abandons an `XREAD` that is doing exactly what it was told to. Derived here rather than passed
    * in, because nothing outside can get it right without knowing that.
    */
-  private val claimingSlack: Duration = 10.seconds
+  private val listeningSlack: Duration = 10.seconds
 
   /** Keys as UTF-8 strings, values as raw bytes. */
   private val codec: RedisCodec[String, Array[Byte]] = RedisCodec.of(StringCodec.UTF8, ByteArrayCodec.INSTANCE)
@@ -114,67 +119,38 @@ object Connection:
     ZIO.serviceWithZIO[Connection.Commands](effect)
 
   /**
-   * A connection reserved for claiming, and the identity that makes its death recoverable.
-   *
-   * The two travel together because `claiming:<worker>` is per worker: a key sits there between the
-   * `BLMOVE` that took it and the script that finishes the claim, and the sweep that would recover it reads
-   * the queue's worker set. Give two connections one identity and they share a claiming list — an
-   * interrupted claim on one would hand back a key the other is still granting.
-   *
-   * @param commands the connection
-   * @param worker what it announces itself as, unique to it and stable for its life
-   */
-  final case class Claiming(commands: Commands, worker: WorkerId)
-
-  /**
-   * What the pool needs to reach Redis, and to size and time itself.
+   * What is needed to reach Redis, and to time the connections.
    *
    * @param maxWait the longest wait a caller may ask for; both command ceilings are derived from it
-   * @param claimers how many connections may be occupied by a wait at once
    * @param redisUrl where the substrate lives — one server, or a seed node of a cluster
    * @param cluster whether `redisUrl` names a cluster; Lettuce has no URL scheme that tells the two apart,
    *                so it is said here
    */
-  final case class Config(maxWait: Duration, claimers: Int, redisUrl: String, cluster: Boolean)
+  final case class Config(maxWait: Duration, redisUrl: String, cluster: Boolean)
 
   /**
-   * One shared connection and `config.claimers` claiming connections, all closed with the scope.
-   * 
-   * @param config the longest wait to honour, and how many connections may be occupied by one
-   * @return the pool; aborts with `QueueError` when a connection cannot be opened
+   * Two connections, closed with the scope: one shared by everything that answers immediately, and one
+   * reserved for the listener.
+   *
+   * Two rather than a pool because only one thing blocks — a claim is a single script that returns at once,
+   * so the listener's `XREAD` is the sole long-lived wait in the process.
+   *
+   * @param config where Redis is, and the longest wait to honour
+   * @return the connections; aborts with `QueueError` when one cannot be opened
    */
-  def pool(config: Config): ZIO[Scope, QueueError, Connection] =
+  def make(config: Config): ZIO[Scope, QueueError, Connection] =
     for
-      client   <- client(config)
-      sync     <- open(client, config.maxWait)
-      wait      = config.maxWait + claimingSlack
-      claiming <- ZIO.foreach(0 until config.claimers): index =>
-                    (open(client, wait) <*> identity(index)).map(Claiming.apply)
-      idle     <- Queue.bounded[Claiming](config.claimers)
-      _        <- idle.offerAll(claiming)
-    yield Pool(sync, idle)
+      client <- client(config)
+      sync   <- open(client, config.maxWait)
+      wake   <- open(client, config.maxWait + listeningSlack)
+    yield Connection(sync, wake)
 
   /**
-   * A worker id that is unique per connection and stable for its life.
+   * The client both connections are opened from — the one place the two backends are chosen between.
    *
-   * The host name makes it legible in `workers` when something is stuck; the random suffix keeps two pods
-   * with the same name — or two runs of one pod — from colliding.
-   *
-   * @param index which claiming connection within this process
-   * @return the id
-   */
-  private def identity(index: Int): UIO[WorkerId] =
-    for
-      host   <- System.env("HOSTNAME").orDie.map(_.getOrElse("local"))
-      random <- Random.nextIntBounded(1 << 16)
-    yield WorkerId(f"$host-$index-$random%04x")
-
-  /**
-   * The client the pool will open its connections from — the one place the two backends are chosen between.
-   *
-   * One per pool, not one per connection: a client owns Netty event loops and a timer wheel and is what
+   * One per instance, not one per connection: a client owns Netty event loops and a timer wheel and is what
    * `shutdown` releases, while a connection is a socket taken from it. Creating one per connection would
-   * multiply the threads by [[Config.claimers]] to no purpose.
+   * double those threads to no purpose.
    *
    * @param config where the substrate lives, and whether it is a cluster
    * @return the client, shut down with the scope; aborts with `QueueError` when the URL is unusable
@@ -220,7 +196,7 @@ object Connection:
   /**
    * A connection from whichever client [[redis]] returned.
    *
-   * The union is what keeps the choice of backend out of the pool: from here on a connection is a
+   * The union is what keeps the choice of backend in one place: from here on a connection is a
    * [[Commands]] whichever side it came from, because every key a script touches carries its queue's
    * `{q:<queue>}` hash tag and so lands in one slot either way.
    *
@@ -236,9 +212,9 @@ object Connection:
   /**
    * A connection for the life of the scope.
    *
-   * The command timeout has to exceed the longest idle wait, or Lettuce gives up on a `BLMOVE` that is
-   * doing exactly what it was asked to. It is set generously here and bounded in practice by the caller's
-   * own deadline.
+   * The command timeout has to exceed the longest block it will be asked to make, or Lettuce gives up on an
+   * `XREAD` that is doing exactly what it was asked to. It is set generously here; the shared connection
+   * never blocks at all.
    *
    * @param client the client to connect with
    * @param commandTimeout the ceiling for any single command
@@ -273,50 +249,3 @@ object Connection:
         connection.setTimeout(JavaDuration.ofMillis(commandTimeout.toMillis))
         connection.sync()
       .mapError(error => QueueError.StoreUnavailable(s"cannot open a connection: ${error.getMessage}"))
-
-  /**
-   * One shared connection, and a fixed set of connections that may each be occupied by one caller at a time.
-   *
-   * '''The `idle` queue is the bound.''' A borrower takes a connection out of it and puts it back when the
-   * effect finishes, so the queue's size is the ceiling on concurrent occupying calls, and a caller that
-   * cannot get one waits for a peer rather than opening another. A `Queue` rather than a semaphore over an
-   * array is what makes that waiting free: `take` parks the fiber until a connection is returned.
-   *
-   * @param sync the connection shared by everything that will not occupy it
-   * @param idle the connections free to be handed out, one caller at a time, each with its identity
-   */
-  case class Pool(sync: Connection.Commands, idle: Queue[Connection.Claiming]) extends Connection:
-
-    /**
-     * Hand the effect the shared connection, without borrowing.
-     *
-     * Nothing is taken from `idle`, which is the point: an effect that will not occupy its connection must
-     * never queue behind one that will, or a burst of claims parked in `BLMOVE` would stall work that needed
-     * no connection of its own.
-     *
-     * @param effect what to run
-     * @tparam R what it needs besides a connection
-     * @tparam E how it fails
-     * @tparam A what it produces
-     * @return the same effect, its connection supplied
-     */
-    def provide[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A] =
-      effect.provideSomeEnvironment[R](env => env ++ ZEnvironment(sync))
-
-    /**
-     * Borrow a connection for the effect, and return it when the effect finishes.
-     *
-     * The borrow is an `acquireRelease` in its own scope, so the connection goes back on failure and on
-     * interruption as much as on success — a connection lost here would shrink the pool for the life of the
-     * process.
-     *
-     * @param effect what to run
-     * @tparam R what it needs besides a connection
-     * @tparam E how it fails
-     * @tparam A what it produces
-     * @return the same effect, its connection supplied
-     */
-    def provideBlocking[R, E, A](effect: WorkerId => ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A] =
-      ZIO.scoped(ZIO.acquireRelease(idle.take)(idle.offer).flatMap { borrowed =>
-        effect(borrowed.worker).provideSomeEnvironment[R](env => env ++ ZEnvironment(borrowed.commands))
-      })

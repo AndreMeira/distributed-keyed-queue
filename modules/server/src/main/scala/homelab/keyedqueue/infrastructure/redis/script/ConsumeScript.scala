@@ -13,11 +13,11 @@ import java.time.Instant
 
 
 /**
- * Turn possession of a key into a claim over a batch of its messages — `lua/consume.lua`.
+ * Take the next claimable key and claim a batch of its messages — `lua/consume.lua`.
  *
- * Runs '''after''' the `BLMOVE` that put the key in this worker's claiming list, since the blocking part
- * cannot live in a script. The worker is therefore a parameter and not an incidental one: it names the
- * claiming list to finish from, and a wrong one would leave the key stranded where nothing looks for it.
+ * '''The whole claim, including choosing the key.''' The script pops `ready` itself, so there is no moment
+ * in which a key has left the queue and is not yet claimed — which is why the reply has to say *which* key
+ * was claimed: the caller does not know until it is told.
  *
  * @param ref the digest this script was loaded under, from [[Scripts]]
  */
@@ -27,64 +27,50 @@ final class ConsumeScript(ref: LuaScript.Sha):
   private val output: ScriptOutputType = ScriptOutputType.MULTI
 
   /**
-   * Claim what `BLMOVE` made available.
+   * Claim the next key with work, if there is one.
    *
-   * @param ns the queue being claimed from
-   * @param worker the identity whose claiming list holds the key
-   * @param key the key already taken by `BLMOVE`
+   * Does not block: nothing claimable answers `None` at once, and waiting for something to become
+   * claimable is the caller's business.
+   *
+   * @param ns the queue to claim from
    * @param leaseTtl how long the resulting claim survives without a heartbeat
    * @param maxBatch the most messages to take at once
-   * @return the claim, or `None` when the key had nothing left; aborts with `QueueError` when the store
-   *         fails or the reply cannot be read
+   * @return the claim, or `None` when nothing was claimable; aborts with `QueueError` when the store fails
+   *         or the reply cannot be read
    */
-  def run(
-    ns: Namespace,
-    worker: WorkerId,
-    key: MessageKey,
-    leaseTtl: Duration,
-    maxBatch: Int,
-  ): ZIO[Connection.Commands, QueueError, Option[Claimed]] =
+  def run(ns: Namespace, leaseTtl: Duration, maxBatch: Int): ZIO[Connection.Commands, QueueError, Option[Claimed]] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking(
-          redis.evalsha[Any](ref, output, keys(ns, worker, key), args(key, leaseTtl, maxBatch)*)
-        )
+        .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns), args(ns, leaseTtl, maxBatch)*))
         .mapError(LuaScript.failure)
-        .flatMap(reply => ZIO.fromEither(read(ns, key)(reply)))
+        .flatMap(reply => ZIO.fromEither(read(ns)(reply)))
 
   /**
-   * The claiming list to finish from, and everything a claim writes: the key's state, its lease, its fence,
-   * its messages and their payloads, what the claim owns, and the delivery counts.
+   * Where a claim comes from and everything it writes: the queue's ready list, the key's state, its lease,
+   * its fence, and the delivery counts.
    *
-   * @param ns the queue being claimed from
-   * @param worker the identity whose claiming list holds the key
-   * @param key the key already taken by `BLMOVE`
-   * @return `claiming`, `state`, `claimed`, `fence`, `msgs`, `payloads`, `owned`, `attempts`, in the order
-   *         `lua/consume.lua` reads them
+   * The key's own structures — `msgs`, `payloads`, `owned` — are absent because their names depend on the
+   * key, which the script chooses. It builds them from the prefix, which is legal because every one shares
+   * the queue's hash tag and therefore its slot.
+   *
+   * @param ns the queue to claim from
+   * @return `ready`, `state`, `claimed`, `fence`, `attempts`, in the order `lua/consume.lua` reads them
    */
-  private def keys(ns: Namespace, worker: WorkerId, key: MessageKey): Array[String] =
-    Array(
-      ns.claiming(worker),
-      ns.state,
-      ns.claimed,
-      ns.fence,
-      ns.msgs(key),
-      ns.payloads(key),
-      ns.owned(key),
-      ns.attempts,
-    )
+  private def keys(ns: Namespace): Array[String] =
+    Array(ns.ready, ns.state, ns.claimed, ns.fence, ns.attempts)
 
   /**
-   * The key being claimed, how long its lease should run, and how many of its messages to take.
+   * The namespace to build the key's own structures from, how long the lease should run, and how many
+   * messages to take.
    *
-   * @param key the key already taken by `BLMOVE`
+   * @param ns the queue to claim from
    * @param leaseTtl how long the claim survives without a heartbeat
    * @param maxBatch the most messages to take at once
-   * @return `key`, `ttl`, `batch`, in the order `lua/consume.lua` reads them
+   * @return `prefix`, `ttl`, `batch`, in the order `lua/consume.lua` reads them
    */
-  private def args(key: MessageKey, leaseTtl: Duration, maxBatch: Int): Array[Array[Byte]] =
+  private def args(ns: Namespace, leaseTtl: Duration, maxBatch: Int): Array[Array[Byte]] =
     Array(
-      LuaScript.utf8(key),
+      LuaScript.utf8(ns.prefix),
       LuaScript.utf8(leaseTtl.toMillis.toString),
       LuaScript.utf8(maxBatch.toString),
     )
@@ -96,13 +82,12 @@ final class ConsumeScript(ref: LuaScript.Sha):
    * layer further as bytes nobody above this adapter should have to think about.
    *
    * @param ns the queue being claimed from
-   * @param key the key that was claimed
    * @param value the raw reply
-   * @return the claim, or `None` when the key turned out to have nothing left; `MalformedReply` when the
-   *         reply, or a message in it, cannot be read
+   * @return the claim, or `None` when nothing was claimable; `MalformedReply` when the reply, or a message
+   *         in it, cannot be read
    */
-  private def read(ns: Namespace, key: MessageKey)(value: Any): Either[QueueError, Option[Claimed]] =
-    decoder(ns, key).decode("consume", value)
+  private def read(ns: Namespace)(value: Any): Either[QueueError, Option[Claimed]] =
+    decoder(ns).decode("consume", value)
 
   /**
    * Line the three parallel arrays back up into one message each.
@@ -137,30 +122,30 @@ final class ConsumeScript(ref: LuaScript.Sha):
       case None           => LuaScript.Decode.fail(QueueError.MalformedReply("consume granted a claim over no messages"))
 
   /**
-   * The shape the script promises: `{token, deadline, backlog, ids, messages, attempts}` when it granted a
-   * claim, and absence when the key had nothing left.
+   * The shape the script promises: `{key, token, deadline, backlog, ids, messages, attempts}` when it
+   * granted a claim, and absence when nothing was claimable.
    *
    * The last three are parallel arrays — one entry per message, in producer order — which is why they are
    * zipped rather than read as a list of triples: Lua has no record to return, so the alignment is the
    * contract.
    *
    * @param ns the queue being claimed from
-   * @param key the key that was claimed
    * @return the decoder
    */
-  private def decoder(ns: Namespace, key: MessageKey): LuaScript.Decode.Of[Option[Claimed]] =
+  private def decoder(ns: Namespace): LuaScript.Decode.Of[Option[Claimed]] =
     LuaScript.Decode
-      .sized(6) {
+      .sized(7) {
         for
-          token    <- LuaScript.Decode.long.at(0)
-          deadline <- LuaScript.Decode.long.at(1)
-          backlog  <- LuaScript.Decode.long.at(2)
-          ids      <- LuaScript.Decode.text.each.at(3)
-          messages <- LuaScript.Decode.bytes.emap(StoredMessage.fromBytes).each.at(4)
-          attempts <- LuaScript.Decode.long.each.at(5)
+          key      <- LuaScript.Decode.text.at(0)
+          token    <- LuaScript.Decode.long.at(1)
+          deadline <- LuaScript.Decode.long.at(2)
+          backlog  <- LuaScript.Decode.long.at(3)
+          ids      <- LuaScript.Decode.text.each.at(4)
+          messages <- LuaScript.Decode.bytes.emap(StoredMessage.fromBytes).each.at(5)
+          attempts <- LuaScript.Decode.long.each.at(6)
           batch    <- nonEmpty(owned(ids, messages, attempts))
         yield Claimed(
-          Claim(ns.queue, key, Token(token)),
+          Claim(ns.queue, MessageKey(key), Token(token)),
           batch,
           Instant.ofEpochMilli(deadline),
           backlog.toInt,

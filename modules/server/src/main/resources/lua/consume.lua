@@ -1,41 +1,39 @@
--- Finish a claim that BLMOVE already started, and hand back a batch of this key's messages to work on.
+-- Take the next claimable key and hand back a batch of its messages to work on.
 --
--- Runs *after* `BLMOVE ready claiming:<worker> LEFT RIGHT <timeout>` — the blocking part cannot live in a
--- script, so the key sits in the worker's claiming list for the instant between the two. A worker that dies
--- there is recovered by the watchdog's worker-liveness sweep.
---
--- KEYS[1] claiming   list  this worker's in-transition keys
+-- KEYS[1] ready      list  keys with work and nobody working them
 -- KEYS[2] state      hash  key -> queued | processing (absent == idle)
 -- KEYS[3] claimed    zset  key -> deadline (unix millis); the lease
 -- KEYS[4] fence      hash  key -> monotonic claim counter
--- KEYS[5] msgs       list  this key's message ids, producer order, until acknowledged
--- KEYS[6] payloads   hash  message id -> the message itself
--- KEYS[7] owned      set   the ids this claim owns and has not settled
--- KEYS[8] attempts   hash  message id -> how many times it has been delivered
--- ARGV[1] key
+-- KEYS[5] attempts   hash  message id -> how many times it has been delivered
+-- ARGV[1] prefix     key namespace, e.g. {q:orders} — see the note on cluster hash tags
 -- ARGV[2] ttl        millis
 -- ARGV[3] batch      the most messages to hand over; at least 1
--- returns            {token, deadline, backlog, ids, messages, attempts}, or nil when the key had nothing
+-- returns            {key, token, deadline, backlog, ids, messages, attempts}, or nil when nothing is
+--                    claimable
 --
--- '''Claimed messages do not move.''' They stay in `msgs`, in producer order, and `owned` records which of
--- them this claim holds. That is what makes a nack free — there is nothing to put back — and what makes the
--- watchdog's recovery a matter of forgetting the claim rather than repairing a list.
-local claiming, state, claimed, fence, msgs, payloads, owned, attempts =
-  KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7], KEYS[8]
-local key, ttl, batch = ARGV[1], tonumber(ARGV[2]), tonumber(ARGV[3])
+-- '''The whole claim is one call.''' The key leaves `ready` and the lease is written in the same script, so
+-- there is no instant in which a key is out of the queue and not yet claimed — and therefore nothing to
+-- recover, no per-connection holding list, and no liveness to keep for one. That is the difference between
+-- this and a blocking `BLMOVE` followed by a second call: the blocking version cannot run logic before the
+-- key has already moved.
+--
+-- `msgs`, `payloads` and `owned` are built here rather than declared in KEYS, because which key is claimed
+-- is not known until the pop. That is only safe because every name shares the `prefix` hash tag and
+-- therefore one cluster slot.
+local ready, state, claimed, fence, attempts = KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5]
+local prefix, ttl, batch = ARGV[1], tonumber(ARGV[2]), tonumber(ARGV[3])
 
--- The key is in this worker's claiming list because this worker's BLMOVE put it there, and the only other
--- thing that touches that list is the watchdog draining it after the worker's liveness lapsed. So a removal
--- that finds nothing means exactly one thing: this worker was declared dead while it was away, the key has
--- been given back, and somebody else may already hold it.
---
--- Refusing here is what stops two workers running handlers for one key at the same time. Without it, a
--- worker that stalled past its liveness — a long GC pause, a partition — would wake and claim messages
--- another worker is already working. The fence would refuse its settles, but the work would have happened
--- twice, concurrently, which is the one thing this design exists to prevent.
-if redis.call('LREM', claiming, 1, key) == 0 then
+-- The head, oldest first: RPUSH on the way in and LPOP here is FIFO across keys, so a key that has waited
+-- longest is served first.
+local key = redis.call('LPOP', ready)
+
+if not key then
   return nil
 end
+
+local msgs     = prefix .. ':msgs:' .. key
+local payloads = prefix .. ':payloads:' .. key
+local owned    = prefix .. ':owned:' .. key
 
 -- The head of the list, oldest first. RPUSH in produce.lua plus reading from index 0 here is FIFO; reading
 -- from the tail would make it a stack and silently reverse the per-key ordering this design guarantees.
@@ -68,4 +66,4 @@ local messages = redis.call('HMGET', payloads, unpack(ids))
 -- What is still queued behind the batch: everything in the list the caller was not given.
 local backlog = redis.call('LLEN', msgs) - #ids
 
-return { redis.call('HINCRBY', fence, key, 1), now + ttl, backlog, ids, messages, counts }
+return { key, redis.call('HINCRBY', fence, key, 1), now + ttl, backlog, ids, messages, counts }

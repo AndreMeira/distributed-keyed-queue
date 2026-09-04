@@ -2,8 +2,8 @@
 title: "What dkq keeps in Redis, and what each structure is for"
 type: architecture
 status: current
-updated: 2026-08-30
-tags: [redis, keys, data-structures, lua, claims, ordering]
+updated: 2026-09-04
+tags: [redis, keys, data-structures, lua, claims, ordering, streams]
 ---
 
 # What dkq keeps in Redis
@@ -12,31 +12,34 @@ Every piece of state lives in Redis; dkq pods hold nothing but connections. This
 each structure has the type it has, and which script touches it.
 
 `Namespace` is the single place these names are built. Nothing else in the codebase constructs a key name,
-apart from `watchdog.lua`, which rebuilds three of them at runtime — see [Cluster](#one-queue-one-slot).
+apart from `consume.lua` and `watchdog.lua`, which rebuild the per-key ones at runtime — see
+[Cluster](#one-queue-one-slot).
 
 ## The layout
 
-Everything a queue owns is prefixed `{q:<queue>}`. Seven structures belong to the queue, four to something
-inside it:
+Everything a queue owns is prefixed `{w:<bucket>}:q:<queue>`, where the bucket is
+`hash(queue) % DKQ_WAKE_BUCKETS` and decides which cluster slot the queue lives in. Six structures belong to
+the queue and three to a key inside it; the seventh, `wake`, belongs to the bucket and is shared by every
+queue in it. `{Q}` below is one queue's prefix, `{W}` its bucket's:
 
 | key | type | maps | written by |
 |---|---|---|---|
-| `{q:Q}:ready` | list | keys with work and nobody working them | produce, complete, watchdog |
-| `{q:Q}:state` | hash | key → `queued` \| `processing` (absent = idle) | produce, consume, complete, watchdog |
-| `{q:Q}:claimed` | zset | key → lease deadline, unix millis | consume, complete, watchdog |
-| `{q:Q}:fence` | hash | key → claim counter | consume, complete, watchdog |
-| `{q:Q}:attempts` | hash | **message id** → delivery count | consume, complete |
-| `{q:Q}:workers` | zset | worker → liveness deadline | heartbeat, watchdog |
-| `{q:Q}:delayed` | zset | key → when it may be worked again | complete, watchdog |
-| `{q:Q}:msgs:<key>` | list | that key's message ids, producer order | produce, complete |
-| `{q:Q}:payloads:<key>` | hash | message id → the message | produce, consume, complete |
-| `{q:Q}:owned:<key>` | set | ids the live claim holds and has not settled | consume, complete, watchdog |
-| `{q:Q}:claiming:<worker>` | list | keys in transition between `BLMOVE` and `consume.lua` | consume, watchdog |
+| `{Q}:ready` | list | keys with work and nobody working them | produce, complete, watchdog |
+| `{Q}:state` | hash | key → `queued` \| `processing` (absent = idle) | produce, consume, complete, watchdog |
+| `{Q}:claimed` | zset | key → lease deadline, unix millis | consume, complete, watchdog |
+| `{Q}:fence` | hash | key → claim counter | consume, complete, watchdog |
+| `{Q}:attempts` | hash | **message id** → delivery count | consume, complete |
+| `{Q}:delayed` | zset | key → when it may be worked again | complete, watchdog |
+| `{W}:wake` | **stream** | one entry per key made claimable, naming its queue | produce, complete, watchdog |
+| `{Q}:msgs:<key>` | list | that key's message ids, producer order | produce, complete |
+| `{Q}:payloads:<key>` | hash | message id → the message | produce, consume, complete |
+| `{Q}:owned:<key>` | set | ids the live claim holds and has not settled | consume, complete, watchdog |
 
 ## Why the types are what they are
 
-**`ready` is a list, not a set** — because `BLMOVE` is what makes a dequeue block without polling, and it
-only works on lists. That single command is the reason the whole design is built around lists at all.
+**`ready` is a list** because it is a FIFO across keys: `RPUSH` on the way in, `LPOP` in `consume.lua`, so
+the key that has waited longest is claimed first. It was originally a list because `BLMOVE` needed one; that
+reason is gone, and the ordering one remains.
 
 **`msgs` holds ids, `payloads` holds messages.** The split is what lets a script address a message by name:
 Redis cannot read inside a serialised protobuf, so if the list held payloads then "drop this message" could
@@ -54,9 +57,14 @@ climbs on redelivery, which is what makes a poison message visible.
 **`claimed` and `delayed` are sorted sets** because both are swept by "everything due before now", which is
 `ZRANGEBYSCORE` — the operation they exist to serve.
 
-**`claiming` is per worker** because it is the only record that a key was taken from `ready` but not yet
-claimed. If the worker dies in that instant, nothing else knows the key exists; the watchdog finds it by
-draining the list of a worker whose liveness has lapsed.
+**`wake` is a stream, and there is one per queue.** A stream rather than pub/sub because a reader that
+reconnects resumes from the id it holds, where a subscriber would simply have missed whatever arrived while
+it was away — and a missed wake is a consumer asleep beside claimable work. Per queue rather than one global
+stream because a script may not touch two cluster slots: sharing the queue's hash tag is what lets the entry
+be appended *in the same call* that made the key claimable, so no crash can land between the two.
+
+Entries are trimmed with `MAXLEN ~ 1000` on every append and carry the key as their only field — for a human
+reading `XRANGE`, since a consumer claims whatever is at the head rather than the key it was told about.
 
 ## What a message's life touches
 
@@ -64,9 +72,11 @@ draining the list of a worker whose liveness has lapsed.
 `HSET state queued` + `RPUSH ready key`. The `HSETNX` is what makes a repeated enqueue idempotent: the same
 id twice for one key is one message, for as long as it is queued.
 
-**Claim** — `BLMOVE ready → claiming:<worker>` blocks; then `consume.lua` takes the first N ids with
+**Claim** — one call. `consume.lua` does `LPOP ready` itself, then takes the first N ids with
 `LRANGE msgs 0 n-1`, `SADD`s them to `owned`, sets `state processing`, writes the lease into `claimed`,
-advances `fence`, counts an attempt each, and reads the payloads with `HMGET`.
+advances `fence`, counts an attempt each, and reads the payloads with `HMGET`. Because the pop and the grant
+are one script, **a key is either in `ready` or claimed** — there is no in-between state for anything to
+recover, which is why there is no per-connection holding list here any more.
 
 **Claimed messages do not move.** They stay in `msgs`, in producer order, with `owned` recording which of
 them the claim holds. That is the load-bearing decision here, and three things fall out of it: a nack has
@@ -77,6 +87,10 @@ which a consumer settles.
 acknowledged, `LREM msgs` + `HDEL payloads` + `HDEL attempts`. A nack removes only the ownership, and may
 `ZADD delayed GT` to ask the key to wait. When `owned` is empty the claim is over: `fence` advances,
 `claimed` is cleared, and the key goes back to `ready`, into `delayed`, or idle.
+
+**Every push to `ready` appends a wake.** `produce.lua`, `complete.lua` and both watchdog sweeps append to
+`wake` in the same script, and only where they actually pushed — a nacked key parked in `delayed` announces
+nothing, because its wake comes later, from the sweep that releases it.
 
 ## Two rules that are easy to break
 
@@ -91,21 +105,25 @@ while the claim is still alive, so both `complete.lua`'s claim-end and the watch
 consumers claim it — the fence stops the loser corrupting anything, but it works for nothing.
 `QueueStoreSpec` has a regression test for exactly this.
 
-## The watchdog's three sweeps
+## The watchdog's two sweeps
 
 1. **Lapsed claims** — `ZRANGEBYSCORE claimed -inf now`: `DEL owned:<key>`, advance `fence`, clear the
    lease, and re-ready the key unless `delayed` says otherwise. Nothing moves, because nothing had moved.
-2. **Dead workers** — `ZRANGEBYSCORE workers -inf now`: drain that worker's `claiming` list back to `ready`
-   and forget the worker. This is the only thing that can recover a key lost between `BLMOVE` and
-   `consume.lua`.
-3. **Elapsed backoffs** — `ZRANGEBYSCORE delayed -inf now`: back onto `ready`.
+2. **Elapsed backoffs** — `ZRANGEBYSCORE delayed -inf now`: back onto `ready`.
 
-## One queue, one slot
+There used to be a third, draining the holding list of a connection that died mid-claim. With the claim in
+one script there is no such list and no such moment: **the lease is the only thing that expires.**
 
-Every name above carries the `{q:<queue>}` hash tag, so a queue's keys hash to one cluster slot and a script
-may touch them all. `watchdog.lua` builds `owned:<key>` and `claiming:<worker>` at runtime from `prefix`
-rather than receiving them in `KEYS` — legal only because the tag guarantees the same slot, which is why the
-sweep takes `prefix` as an argument at all.
+## One bucket, one slot
+
+Every name above carries its bucket's `{w:<bucket>}` hash tag, so a queue's keys — and the wake stream that
+announces them — hash to one cluster slot and a script may touch them all. `consume.lua` and `watchdog.lua`
+build `msgs:<key>`, `payloads:<key>` and `owned:<key>` at runtime from `prefix` rather than receiving them
+in `KEYS` — legal only because the tag guarantees the same slot, and unavoidable for `consume.lua`, which
+does not know which key it has until it pops one. That is why both take `prefix` as an argument.
+
+The same rule is what forced `wake` to be per queue: a global stream would be a different slot, so the
+append could not share a script with the push that made the key claimable.
 
 The consequence is that **a queue lives on one node**: sharding spreads queues, never one queue. See
 [`redis-cluster.md`](redis-cluster.md).

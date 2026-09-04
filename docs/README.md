@@ -20,9 +20,14 @@ What is specific to this repo:
     even while the thing it tests is not.
 
   And in `learning-material/`:
+  - [`claiming-identity.md`](learning-material/claiming-identity.md) — *superseded*: why a claim taken in
+    two steps needed an identity, and what removing the second step removed with it.
   - [`redis-state-walkthrough.md`](learning-material/redis-state-walkthrough.md) — every request traced
     through the structures it touches; the page for when something is stuck and you are looking at a live
     instance.
+  - [`interruption-and-lost-wakes.md`](learning-material/interruption-and-lost-wakes.md) — why a value
+    returned to a dying fiber vanishes without any finalizer seeing it, and what a handover has to do
+    instead.
   - [`using-the-contract-as-a-dependency.md`](learning-material/using-the-contract-as-a-dependency.md) —
     what another service depends on to talk to dkq, and what it still has to write itself.
   - [`proto-generation.md`](learning-material/proto-generation.md) — how two published artifacts are

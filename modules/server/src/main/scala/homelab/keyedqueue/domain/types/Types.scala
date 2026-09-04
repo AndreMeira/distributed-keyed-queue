@@ -64,22 +64,6 @@ object Token:
   def apply(value: Long): Type = value
 
 
-/** One idle connection's identity. Registered before it claims anything, expires if it stops beating. */
-type WorkerId = WorkerId.Type
-
-
-object WorkerId:
-  opaque type Type <: String = String
-
-  /**
-   * A worker id, trusted.
-   *
-   * @param value the id
-   * @return the worker id
-   */
-  def apply(value: String): Type = value
-
-
 /** The opaque handle a consumer holds while it works a message: a [[Claim]] it cannot read. */
 type ClaimRef = ClaimRef.Type
 

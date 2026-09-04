@@ -25,7 +25,7 @@ object QueueConfigSpec extends ZIOSpecDefault:
         config.leaseTtl == 30.seconds, // "30 seconds" in HOCON, a zio.Duration here
         config.sweepInterval == 5.seconds,
         config.sweepLimit == 100,
-        config.claimers == 8,
+        config.wakeBlock == 1.second,
         config.maxWait == 30.seconds,
         config.maxBatchLimit == 32,
       )
@@ -37,7 +37,7 @@ object QueueConfigSpec extends ZIOSpecDefault:
       yield assertTrue(
         config.leaseTtl > config.sweepInterval,
         config.maxWait <= config.leaseTtl,
-        config.claimers > 0,
+        config.wakeBlock.toMillis > 0,
         config.sweepLimit > 0,
       )
     },
