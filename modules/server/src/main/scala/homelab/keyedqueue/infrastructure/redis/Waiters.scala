@@ -65,10 +65,7 @@ final class Waiters(state: Ref.Synchronized[Waiters.State]):
    * @return noop
    */
   def wake(queue: QueueName): UIO[Unit] =
-    state.updateZIO: current =>
-      deliver(current.waiting.getOrElse(queue, Chunk.empty)).map:
-        case Some(rest) => current.copy(waiting = current.waiting.updated(queue, rest))
-        case None       => Waiters.State(current.waiting - queue, current.pending + queue)
+    state.updateZIO(handOn(_, queue))
 
   /**
    * How many callers are waiting on a queue, live or given up.
@@ -112,6 +109,11 @@ final class Waiters(state: Ref.Synchronized[Waiters.State]):
    * race is holding a wake it can no longer use, and dropping it would leave a key claimable with nobody
    * looking — so it delivers it onwards, exactly as the listener would.
    *
+   * '''One transition, not three.''' Removing the registration, deciding the race and handing the wake on
+   * all happen inside a single `modifyZIO`, because they are one change to one piece of state. Done as
+   * separate updates, a concurrent [[wake]] could set `pending` between the removal and the hand-on and
+   * have it overwritten — a lost wake that appears once in a few hundred interleavings.
+   *
    * Runs on every exit, including interruption, which is why it is attached with `onExit` rather than
    * written after the await.
    *
@@ -120,31 +122,49 @@ final class Waiters(state: Ref.Synchronized[Waiters.State]):
    * @param exit how the wait ended
    * @return noop
    */
-  private def settle(queue: QueueName, promise: Promise[Nothing, Unit], exit: Exit[Nothing, Boolean]): UIO[Unit] = {
-    val handOn = exit match
-      case Exit.Success(true) => ZIO.unit // woken, and the wake was used
-      case _                  => promise.interrupt.flatMap(won => ZIO.unless(won)(wake(queue))).unit
-    forget(queue, promise) *> handOn
-  }
+  private def settle(queue: QueueName, promise: Promise[Nothing, Unit], exit: Exit[Nothing, Boolean]): UIO[Unit] =
+    state.updateZIO: current =>
+      val without = forget(current, queue, promise)
+      exit match
+        case Exit.Success(true) => ZIO.succeed(without) // woken, and the wake was used
+        case _                  =>
+          promise.interrupt.flatMap:
+            case true  => ZIO.succeed(without) // we ended the wait first; nothing was delivered to us
+            case false => handOn(without, queue)
 
   /**
-   * Drop a registration.
+   * Drop a registration from a state.
    *
    * Deliveries skip completed promises anyway, so this is tidying rather than correctness — it keeps a
    * queue that is waited on often from accumulating spent registrations between wakes.
    *
+   * @param current the state to remove from
    * @param queue the queue waited on
    * @param promise the registration to drop
-   * @return noop
+   * @return the state without it
    */
-  private def forget(queue: QueueName, promise: Promise[Nothing, Unit]): UIO[Unit] =
-    state.update: current =>
-      current.waiting.get(queue) match
-        case None       => current
-        case Some(held) =>
-          val rest = held.filterNot(_ == promise)
-          if rest.isEmpty then current.copy(waiting = current.waiting - queue)
-          else current.copy(waiting = current.waiting.updated(queue, rest))
+  private def forget(current: Waiters.State, queue: QueueName, promise: Promise[Nothing, Unit]): Waiters.State =
+    current.waiting.get(queue) match
+      case None       => current
+      case Some(held) =>
+        val rest = held.filterNot(_ == promise)
+        if rest.isEmpty then current.copy(waiting = current.waiting - queue)
+        else current.copy(waiting = current.waiting.updated(queue, rest))
+
+  /**
+   * Give a wake nobody used to the next waiter, or remember it.
+   *
+   * The same operation [[wake]] performs, reached from the other side: a caller that lost the race for its
+   * own promise is holding a wake, and holding is the one thing it must not do.
+   *
+   * @param current the state to deliver within
+   * @param queue the queue the wake was for
+   * @return the state after the hand-on
+   */
+  private def handOn(current: Waiters.State, queue: QueueName): UIO[Waiters.State] =
+    deliver(current.waiting.getOrElse(queue, Chunk.empty)).map:
+      case Some(rest) => current.copy(waiting = current.waiting.updated(queue, rest))
+      case None       => Waiters.State(current.waiting - queue, current.pending + queue)
 
   /**
    * Give the wake to the first waiter still willing to take it.

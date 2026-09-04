@@ -64,11 +64,16 @@ object WaitersSpec extends ZIOSpecDefault:
             waiters <- Waiters.make
             caller  <- waiters.waitFor(queue, 5.seconds).fork
             _       <- waitUntil(waiters, 1)
-            _       <- waiters.wake(queue).fork
+            ringing <- waiters.wake(queue).fork
             exit    <- caller.interrupt
             used     = exit match
                          case Exit.Success(woken) => woken
                          case _                   => false
+            // Joined before asking, not because the ordering matters — it is the point of the test — but
+            // because the invariant is about the state once both have happened. Without this the wake can
+            // still be queued when the question is asked, and a slow scheduler answers "neither" for a
+            // wake that simply had not been rung yet.
+            _       <- ringing.join
             later   <- waiters.waitFor(queue, 50.millis)
           yield assertTrue(used || later)
         .map(_.reduce(_ && _))

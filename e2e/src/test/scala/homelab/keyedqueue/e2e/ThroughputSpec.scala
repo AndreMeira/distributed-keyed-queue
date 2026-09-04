@@ -30,7 +30,7 @@ object ThroughputSpec extends ZIOSpecDefault:
   /** Runs per shape; the median is reported, because the slowest run is usually something else on the box. */
   private val rounds = 3
 
-  def spec: Spec[TestEnvironment & Scope, Any] = suite("throughput")(
+  def spec: Spec[TestEnvironment & Scope, Any] = suite("indicators")(
     test("a sweep over key and consumer counts") {
       for
         dkq     <- ZIO.service[Deployment]
@@ -42,6 +42,49 @@ object ThroughputSpec extends ZIOSpecDefault:
                        .map(rates => (keys, consumers, median(rates)))
         _       <- report(results)
       yield assertTrue(results.forall((_, _, rate) => rate > 0.0))
+    },
+    test("how long a message waits when every consumer is already idle") {
+      // The other half of the picture, and the half the sweep cannot see. There, consumers claim work that
+      // is already queued and the doorbell is barely used; here nothing is queued, every consumer is parked
+      // on a promise, and what is being measured is how long an enqueue takes to reach one of them.
+      //
+      // The shape is also the one the old design could not serve: 64 consumers across two instances is 32
+      // parked per instance, where `DKQ_CLAIMERS` allowed 16 — the rest would have queued for a connection
+      // rather than waiting on the queue.
+      val consumers = 64
+      val messages  = 20
+      val gap       = 200.millis
+      val patience  = 15.seconds
+      for
+        dkq       <- ZIO.service[Deployment]
+        queue      = dkq.queue("idle")
+        seen      <- Ref.make(Chunk.empty[Consumer.Handled])
+        // Parked first, and given a moment to actually be waiting, so every message meets an idle consumer
+        // rather than one that has not arrived yet.
+        draining  <- ZIO.foreachParDiscard(0 until consumers)(index => Consumer.drain(dkq(index), queue, patience, Duration.Zero, seen)).fork
+        _         <- ZIO.sleep(1.second)
+        // One at a time, each carrying the moment it was sent: the body is the measurement.
+        sends     <- Ref.make(Chunk.empty[Long])
+        _         <- ZIO.foreachDiscard(0 until messages): index =>
+                       Clock.instant.flatMap: now =>
+                         dkq(index)
+                           .enqueue(queue, s"k$index", now.toEpochMilli.toString)
+                           .timed
+                           // The enqueue round trip is inside every latency below, so it is measured too:
+                           // what is left after subtracting it is what the doorbell and the claim cost.
+                           .flatMap((took, _) => sends.update(_ :+ took.toMillis))
+                       *> ZIO.sleep(gap)
+        _         <- draining.join
+        handled   <- seen.get
+        latencies  = handled.map(one => one.claimedAt.toEpochMilli - one.body.toLong).sorted
+        enqueues  <- sends.get.map(_.sorted)
+        _         <- Console.printLine(summary(latencies))
+        _         <- Console.printLine(summary(enqueues).replace("wake latency", "enqueue round trip"))
+      yield assertTrue(
+        handled.size == messages,                                  // a lost wake would show up as a lost message
+        handled.map(_.body).distinct.size == messages,             // and a double wake as a duplicate
+        latencies.lift(latencies.size * 95 / 100).exists(_ < 2000), // p95 well inside the doorbell's block
+      )
     }
   ).provideSomeShared[Scope](Deployment.layer)
     @@ TestAspect.withLiveClock
@@ -85,6 +128,18 @@ object ThroughputSpec extends ZIOSpecDefault:
    * @return the median
    */
   private def median(rates: Seq[Double]): Double = rates.sorted.apply(rates.size / 2)
+
+  /**
+   * Print how long messages waited, in the terms that matter for a doorbell: the middle, the tail, the worst.
+   *
+   * @param latencies each message's enqueue-to-claim delay in millis, sorted
+   * @return the line to print
+   */
+  private def summary(latencies: Chunk[Long]): String =
+    if latencies.isEmpty then "wake latency: nothing handled"
+    else
+      val at = (percent: Int) => latencies(math.min(latencies.size - 1, latencies.size * percent / 100))
+      f"wake latency over ${latencies.size} messages: median ${at(50)}ms, p95 ${at(95)}ms, max ${latencies.last}ms"
 
   /**
    * Print the sweep as a table, so two runs can be diffed by eye.
