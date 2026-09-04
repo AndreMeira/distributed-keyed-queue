@@ -78,7 +78,7 @@ object ThroughputSpec extends ZIOSpecDefault:
     },
     test("how long a message waits when every consumer is already idle") {
       // The other half of the picture, and the half the sweep cannot see. There, consumers claim work that
-      // is already queued and the doorbell is barely used; here nothing is queued, every consumer is parked
+      // is already queued and the wake path is barely used; here nothing is queued, every consumer is parked
       // on a promise, and what is being measured is how long an enqueue takes to reach one of them.
       //
       // The shape is also the one the old design could not serve: 64 consumers across two instances is 32
@@ -104,7 +104,7 @@ object ThroughputSpec extends ZIOSpecDefault:
                            .enqueue(queue, s"k$index", now.toEpochMilli.toString)
                            .timed
                            // The enqueue round trip is inside every latency below, so it is measured too:
-                           // what is left after subtracting it is what the doorbell and the claim cost.
+                           // what is left after subtracting it is what the wake path and the claim cost.
                            .flatMap((took, _) => sends.update(_ :+ took.toMillis))
                        *> ZIO.sleep(gap)
         _         <- draining.join
@@ -113,12 +113,12 @@ object ThroughputSpec extends ZIOSpecDefault:
         enqueues  <- sends.get.map(_.sorted)
         _         <- Console.printLine(summary("wake latency", latencies))
         // Printed beside it because it is *inside* it: what is left after subtracting this is what the
-        // doorbell and the claim actually cost.
+        // wake path and the claim actually cost.
         _         <- Console.printLine(summary("enqueue round trip", enqueues))
       yield assertTrue(
         handled.size == messages,                                  // a lost wake would show up as a lost message
         handled.map(_.body).distinct.size == messages,             // and a double wake as a duplicate
-        latencies.lift(latencies.size * 95 / 100).exists(_ < 2000), // p95 well inside the doorbell's block
+        latencies.lift(latencies.size * 95 / 100).exists(_ < 2000), // p95 well inside the listener's block
       )
     }
   ).provideSomeShared[Scope](Deployment.layer)

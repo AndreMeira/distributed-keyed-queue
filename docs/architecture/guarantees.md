@@ -126,8 +126,8 @@ one message. Where several nacks in a claim ask for different waits, the longest
 
 **C7. One outstanding `Dequeue` per consumer is the intended shape.** Not a rule the service enforces, and
 nothing breaks if it is ignored — but a consumer parallelises by processing claims concurrently, not by
-polling concurrently: claim a key, hand it to your own executor, poll again. A ring wakes *every* consumer
-waiting on that queue, so the redundant attempts a ring costs are proportional to how many polls are parked
+polling concurrently: claim a key, hand it to your own executor, poll again. A wake reaches *every* consumer
+waiting on that queue, so the redundant attempts one costs are proportional to how many polls are parked
 on it. One poll per consumer keeps that proportional to your deployment rather than to your concurrency.
 
 ## Recovery
@@ -155,8 +155,8 @@ Stated plainly, because each of these is something a reader might otherwise assu
   not stop its code.
 - **No priority, and no deadline scheduling.** Messages are handed out in the order they were sent, and a
   nack's wait is the only way to delay one.
-- **No fairness promise between consumers.** A ring is a broadcast twice over — every instance hears every
-  entry, and every consumer waiting on that queue hears its instance's bell — so waiting consumers race to
+- **No fairness promise between consumers.** A wake reaches everyone twice over — every instance reads every
+  entry, and every consumer waiting on that queue holds its instance's signal — so waiting consumers race to
   claim; the instance that just finished a key is often the one that takes it next. A hot key therefore
   tends to stay on one instance. Nothing is lost — a key is worked by one consumer at a time regardless —
   but do not read "several consumers" as "the work is spread across them" for a single key.

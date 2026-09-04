@@ -7,59 +7,59 @@ import zio.test.*
 
 
 /**
- * The invariants a bell has to hold.
+ * The invariants a signal has to hold.
  *
- * The one that matters most: '''a ring reaches everybody who was listening for it'''. Work is claimable
- * the moment it is announced, so a consumer that misses a ring is asleep beside work it asked for.
+ * The one that matters most: '''a wake reaches everybody who was listening for it'''. Work is claimable
+ * the moment it is announced, so a consumer that misses one is asleep beside work it asked for.
  */
 object WaitersSpec extends ZIOSpecDefault:
 
   private val queue = QueueName("orders")
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("Waiters")(
-    test("a ring reaches every caller holding the bell") {
+    test("a wake reaches every caller holding the signal") {
       for
         waiters <- Waiters.make
         first   <- waiters.subscribe(queue)
         second  <- waiters.subscribe(queue)
-        _       <- waiters.wake(queue)
+        _       <- waiters.raise(queue)
         one     <- first.await(5.seconds)
         two     <- second.await(5.seconds)
       yield assertTrue(one, two)
     },
-    test("a caller that subscribes after a ring waits for the next one") {
-      // Not a lost ring: a consumer subscribes before it claims, so whatever this ring announced is found
+    test("a caller that subscribes after a wake waits for the next one") {
+      // Not a lost wake: a consumer subscribes before it claims, so whatever this one announced is found
       // by the attempt that follows. Remembering it would wake the next caller for work it already saw.
       for
         waiters <- Waiters.make
-        _       <- waiters.wake(queue)
+        _       <- waiters.raise(queue)
         late    <- waiters.subscribe(queue)
         rang    <- late.await(20.millis)
       yield assertTrue(!rang)
     },
-    test("a bell rings once; the round after it is a new bell") {
+    test("a signal is raised once; the round after it is a new signal") {
       for
         waiters <- Waiters.make
-        bell    <- waiters.subscribe(queue)
-        _       <- waiters.wake(queue)
-        rang    <- bell.await(5.seconds)
+        signal  <- waiters.subscribe(queue)
+        _       <- waiters.raise(queue)
+        raised  <- signal.await(5.seconds)
         next    <- waiters.subscribe(queue)
         again   <- next.await(20.millis)
-      yield assertTrue(rang, !again)
+      yield assertTrue(raised, !again)
     },
-    test("a ring on one queue leaves another queue's callers waiting") {
+    test("a wake on one queue leaves another queue's callers waiting") {
       for
         waiters <- Waiters.make
         mine    <- waiters.subscribe(queue)
         other   <- waiters.subscribe(QueueName("elsewhere"))
-        _       <- waiters.wake(queue)
-        rang    <- mine.await(5.seconds)
+        _       <- waiters.raise(queue)
+        raised  <- mine.await(5.seconds)
         quiet   <- other.await(20.millis)
-      yield assertTrue(rang, !quiet)
+      yield assertTrue(raised, !quiet)
     },
-    test("a caller dying around a ring takes nothing from anybody") {
+    test("a caller dying around a wake takes nothing from anybody") {
       // The failure the old registry had to work for: there, a wake was handed to one caller, so a caller
-      // that died holding one destroyed it. Here a ring is a broadcast, so a dying caller cannot remove
+      // that died holding one destroyed it. Here it reaches everyone, so a dying caller cannot remove
       // anything — driven from both sides, hard, to show there is no ordering in which it can.
       ZIO
         .foreach(1 to 500): _ =>
@@ -68,20 +68,20 @@ object WaitersSpec extends ZIOSpecDefault:
             doomed   <- waiters.subscribe(queue)
             survivor <- waiters.subscribe(queue)
             waiting  <- doomed.await(5.seconds).fork
-            ringing  <- waiters.wake(queue).fork
+            raising  <- waiters.raise(queue).fork
             _        <- waiting.interrupt
-            _        <- ringing.join
+            _        <- raising.join
             heard    <- survivor.await(5.seconds)
           yield assertTrue(heard)
         .map(_.reduce(_ && _))
     },
-    test("under concurrency every caller holding the bell hears one ring") {
+    test("under concurrency every caller holding the signal hears one wake") {
       val callers = 50
       for
         waiters <- Waiters.make
-        bells   <- ZIO.foreachPar(1 to callers)(_ => waiters.subscribe(queue))
-        waiting <- ZIO.foreachPar(bells)(_.await(30.seconds)).fork
-        _       <- waiters.wake(queue)
+        signals <- ZIO.foreachPar(1 to callers)(_ => waiters.subscribe(queue))
+        waiting <- ZIO.foreachPar(signals)(_.await(30.seconds)).fork
+        _       <- waiters.raise(queue)
         heard   <- waiting.join
       yield assertTrue(heard.forall(identity), heard.size == callers)
     },

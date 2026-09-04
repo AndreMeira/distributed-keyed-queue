@@ -17,21 +17,23 @@ apart from `consume.lua` and `watchdog.lua`, which rebuild the per-key ones at r
 
 ## The layout
 
-Everything a queue owns is prefixed `{q:<queue>}`. Six structures belong to the queue, three to a key
-inside it:
+Everything a queue owns is prefixed `{w:<bucket>}:q:<queue>`, where the bucket is
+`hash(queue) % DKQ_WAKE_BUCKETS` and decides which cluster slot the queue lives in. Six structures belong to
+the queue and three to a key inside it; the seventh, `wake`, belongs to the bucket and is shared by every
+queue in it. `{Q}` below is one queue's prefix, `{W}` its bucket's:
 
 | key | type | maps | written by |
 |---|---|---|---|
-| `{q:Q}:ready` | list | keys with work and nobody working them | produce, complete, watchdog |
-| `{q:Q}:state` | hash | key → `queued` \| `processing` (absent = idle) | produce, consume, complete, watchdog |
-| `{q:Q}:claimed` | zset | key → lease deadline, unix millis | consume, complete, watchdog |
-| `{q:Q}:fence` | hash | key → claim counter | consume, complete, watchdog |
-| `{q:Q}:attempts` | hash | **message id** → delivery count | consume, complete |
-| `{q:Q}:delayed` | zset | key → when it may be worked again | complete, watchdog |
-| `{q:Q}:wake` | **stream** | one entry per key made claimable | produce, complete, watchdog |
-| `{q:Q}:msgs:<key>` | list | that key's message ids, producer order | produce, complete |
-| `{q:Q}:payloads:<key>` | hash | message id → the message | produce, consume, complete |
-| `{q:Q}:owned:<key>` | set | ids the live claim holds and has not settled | consume, complete, watchdog |
+| `{Q}:ready` | list | keys with work and nobody working them | produce, complete, watchdog |
+| `{Q}:state` | hash | key → `queued` \| `processing` (absent = idle) | produce, consume, complete, watchdog |
+| `{Q}:claimed` | zset | key → lease deadline, unix millis | consume, complete, watchdog |
+| `{Q}:fence` | hash | key → claim counter | consume, complete, watchdog |
+| `{Q}:attempts` | hash | **message id** → delivery count | consume, complete |
+| `{Q}:delayed` | zset | key → when it may be worked again | complete, watchdog |
+| `{W}:wake` | **stream** | one entry per key made claimable, naming its queue | produce, complete, watchdog |
+| `{Q}:msgs:<key>` | list | that key's message ids, producer order | produce, complete |
+| `{Q}:payloads:<key>` | hash | message id → the message | produce, consume, complete |
+| `{Q}:owned:<key>` | set | ids the live claim holds and has not settled | consume, complete, watchdog |
 
 ## Why the types are what they are
 
@@ -86,9 +88,9 @@ acknowledged, `LREM msgs` + `HDEL payloads` + `HDEL attempts`. A nack removes on
 `ZADD delayed GT` to ask the key to wait. When `owned` is empty the claim is over: `fence` advances,
 `claimed` is cleared, and the key goes back to `ready`, into `delayed`, or idle.
 
-**Every push to `ready` rings the doorbell.** `produce.lua`, `complete.lua` and both watchdog sweeps append
-to `wake` in the same script, and only where they actually pushed — a nacked key parked in `delayed` rings
-nothing, because its doorbell comes later from the sweep that releases it.
+**Every push to `ready` appends a wake.** `produce.lua`, `complete.lua` and both watchdog sweeps append to
+`wake` in the same script, and only where they actually pushed — a nacked key parked in `delayed` announces
+nothing, because its wake comes later, from the sweep that releases it.
 
 ## Two rules that are easy to break
 
@@ -112,13 +114,13 @@ consumers claim it — the fence stops the loser corrupting anything, but it wor
 There used to be a third, draining the holding list of a connection that died mid-claim. With the claim in
 one script there is no such list and no such moment: **the lease is the only thing that expires.**
 
-## One queue, one slot
+## One bucket, one slot
 
-Every name above carries the `{q:<queue>}` hash tag, so a queue's keys hash to one cluster slot and a script
-may touch them all. `consume.lua` and `watchdog.lua` build `msgs:<key>`, `payloads:<key>` and `owned:<key>`
-at runtime from `prefix` rather than receiving them in `KEYS` — legal only because the tag guarantees the
-same slot, and unavoidable for `consume.lua`, which does not know which key it has until it pops one. That
-is why both take `prefix` as an argument.
+Every name above carries its bucket's `{w:<bucket>}` hash tag, so a queue's keys — and the wake stream that
+announces them — hash to one cluster slot and a script may touch them all. `consume.lua` and `watchdog.lua`
+build `msgs:<key>`, `payloads:<key>` and `owned:<key>` at runtime from `prefix` rather than receiving them
+in `KEYS` — legal only because the tag guarantees the same slot, and unavoidable for `consume.lua`, which
+does not know which key it has until it pops one. That is why both take `prefix` as an argument.
 
 The same rule is what forced `wake` to be per queue: a global stream would be a different slot, so the
 append could not share a script with the push that made the key claimable.

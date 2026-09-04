@@ -16,7 +16,7 @@ import java.time.Duration as JavaDuration
  *
  * '''Only one thing in this process blocks, and it gets its own connection.''' Every operation on the queue
  * is a script that answers at once, so they all share one; the listener's `XREAD` parks for as long as it is
- * told, so sharing would put every claim and settle behind the doorbell. Which of the two an effect is, is
+ * told, so sharing would put every claim and settle behind that read. Which of the two an effect is, is
  * known where it is written and nowhere else, so it is declared there rather than guessed at by whatever
  * holds the connections.
  *
@@ -28,7 +28,7 @@ final case class Connection(sync: Connection.Commands, wake: Connection.Commands
   /**
    * Run an effect on the shared connection.
    *
-   * Everything except the doorbell answers immediately — a claim is one script, a settle is one script — so
+   * Everything except the listener answers immediately — a claim is one script, a settle is one script — so
    * one connection serves all of it.
    *
    * @param effect what to run, needing a connection
@@ -44,7 +44,7 @@ final case class Connection(sync: Connection.Commands, wake: Connection.Commands
    * Run an effect on the connection reserved for listening.
    *
    * '''One connection, one listener.''' A blocking `XREAD` owns its connection for the whole wait, so it
-   * gets one of its own — sharing would put every claim and settle behind the doorbell. Nothing guards it,
+   * gets one of its own — sharing would put every claim and settle behind that read. Nothing guards it,
    * because there is exactly one listener: a second caller would park behind the first one's block, which
    * is a bug in the caller rather than something to serialise here.
    *
@@ -130,7 +130,7 @@ object Connection:
 
   /**
    * Two connections, closed with the scope: one shared by everything that answers immediately, and one
-   * reserved for the doorbell.
+   * reserved for the listener.
    *
    * Two rather than a pool because only one thing blocks — a claim is a single script that returns at once,
    * so the listener's `XREAD` is the sole long-lived wait in the process.

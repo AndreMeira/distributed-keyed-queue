@@ -8,7 +8,8 @@
 -- KEYS[5] delayed    zset  key -> when it may be worked again
 -- KEYS[6] wake       stream  one entry per key made claimable
 -- ARGV[1] limit      most entries to handle per sweep
--- ARGV[2] prefix     key namespace, e.g. {q:orders} — see the note on cluster hash tags
+-- ARGV[2] prefix     key namespace, e.g. {w:3}:q:orders — see the note on cluster hash tags
+-- ARGV[3] queue      named in the wake entries, because the stream is shared by the whole bucket
 -- returns            {reclaimed keys, released keys}
 --
 -- Idempotent, so every pod can run it and no leader election is needed. Bounded by `limit` because a script
@@ -23,7 +24,7 @@
 -- cluster slot.
 local claimed, state, ready, fence, delayed, wake =
   KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]
-local limit, prefix = tonumber(ARGV[1]), ARGV[2]
+local limit, prefix, queue = tonumber(ARGV[1]), ARGV[2], ARGV[3]
 
 local now = redis.call('TIME')
 now = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
@@ -52,7 +53,7 @@ for _, key in ipairs(expired) do
   -- claimers, and although the fence stops the loser corrupting anything, it does the work for nothing.
   if redis.call('ZSCORE', delayed, key) == false then
     redis.call('RPUSH', ready, key)
-    redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'key', key)
+    redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'queue', queue, 'key', key)
   end
 end
 
@@ -63,7 +64,7 @@ local due = redis.call('ZRANGEBYSCORE', delayed, '-inf', now, 'LIMIT', 0, limit)
 for _, key in ipairs(due) do
   redis.call('ZREM', delayed, key)
   redis.call('RPUSH', ready, key)
-  redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'key', key)
+  redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'queue', queue, 'key', key)
 end
 
 return { expired, due }

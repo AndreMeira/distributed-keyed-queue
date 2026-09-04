@@ -91,12 +91,12 @@ not expose one.
 The hole is not really about ZIO. It is about a handover having an instant where the thing is neither here
 nor there, and what happens if the holder dies in that instant. dkq has answered it three ways:
 
-| | blocking (`BLMOVE`) | doorbell + registry | broadcast bell |
+| | blocking (`BLMOVE`) | wake stream + registry | wake stream + signal |
 |---|---|---|---|
 | half-finished state | `claiming:<worker>` list, **in Redis** | a wake in a fiber's hands, **in memory** | none |
 | hand-back | `LMOVE claiming → ready` — positional, asks nothing about the outcome | `surrender` — must ask ZIO whether it is dying, and in a narrow window the answer comes too late | not needed |
 | swept recovery | `watchdog.lua` sweep 2, over durable state | listener backstop, over in-memory `parked` | not needed |
-| price | a `WorkerId`, a box per connection, a `workers` liveness set, a third sweep | two mechanisms guarding one handover | one look each per ring |
+| price | a `WorkerId`, a box per connection, a `workers` liveness set, a third sweep | two mechanisms guarding one handover | one look each per wake |
 
 The blocking design was **immune** to everything in the four experiments above, and not by luck: `release`
 never asked what had happened, it said *"drain my box, whatever is in it"* — a query against durable state
@@ -109,21 +109,22 @@ and the listener backstop — were the old two ideas rebuilt, less exactly.
 
 ## What shipped: no handover at all
 
-Each queue has a **bell**: a `Promise` for the current round. `subscribe` takes it, a ring completes it and
-installs a fresh one, and everyone holding it wakes. Nothing is consumed, so no caller can take a ring from
-another, and a caller that times out, is interrupted, or dies mid-claim removes nothing from the system.
+Each queue has a **signal**: a `Promise` for the current round. `subscribe` takes it, raising it completes
+that one and installs a fresh one, and everyone holding it wakes. Nothing is consumed, so no caller can take
+a wake from another, and a caller that times out, is interrupted, or dies mid-claim removes nothing from the
+system.
 
 The ordering is what makes it sound, and it is the one thing to keep right:
 
 ```
-subscribe → attempt the claim → wait on the bell
+subscribe → attempt the claim → wait on the signal
 ```
 
-A ring landing while the attempt is in flight completes the bell the caller is already holding. Look first
-and subscribe after, and exactly that ring is lost. There is no `pending` flag to forgive it, and no test
+A wake landing while the attempt is in flight completes the signal the caller is already holding. Look first
+and subscribe after, and exactly that wake is lost. There is no `pending` flag to forgive it, and no test
 can time the window — the ordering is documented at both ends instead.
 
-The price is that every consumer waiting on a queue wakes per ring, and one of them wins. Measured against
+The price is that every consumer waiting on a queue wakes for every wake, and one of them wins. Measured against
 the registry over the throughput sweep and the idle-consumer wake path, the difference is inside
 run-to-run noise: the redundant attempts fall on consumers that are idle by definition, and a woken consumer
 leaves the waiting set, so the fan-out does not compound under load.
@@ -144,8 +145,8 @@ finalizer is asked.
 
 ## Where to look in the code
 
-- `Waiters` — the bell, and `subscribe`'s contract
-- `RedisQueueStore.pursue` — subscribe, look, wait, in that order and for that reason
-- `WaitersSpec` — the semantics, plus 500 rounds racing a ring against an interrupt
+- `Waiters` — the signal, and `subscribe`'s contract
+- `RedisQueueStore.claimWithin` — subscribe, look, wait, in that order and for that reason
+- `WaitersSpec` — the semantics, plus 500 rounds racing a wake against an interrupt
 - `docs/research/non-blocking-dequeue.md` — the design this replaced, and why
 - `docs/learning-material/claiming-identity.md` — the `BLMOVE` design's box, and what it cost

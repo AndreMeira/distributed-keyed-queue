@@ -42,7 +42,7 @@ final class WatchdogScript(ref: LuaScript.Sha):
 
   /**
    * Everything the sweeps read or repair: leases, key state, the ready list they push back onto, the fences
-   * they advance, the backoff set, and the doorbell they ring when a key becomes claimable again.
+   * they advance, the backoff set, and the wake stream they append to when a key becomes claimable again.
    *
    * @param ns the queue to repair
    * @return `claimed`, `state`, `ready`, `fence`, `delayed`, `wake`, in the order `lua/watchdog.lua`
@@ -59,7 +59,7 @@ final class WatchdogScript(ref: LuaScript.Sha):
    * @return `limit`, `prefix`, in the order `lua/watchdog.lua` reads them
    */
   private def args(ns: Namespace, limit: Int): Array[Array[Byte]] =
-    Array(LuaScript.utf8(limit.toString), LuaScript.utf8(ns.prefix))
+    Array(LuaScript.utf8(limit.toString), LuaScript.utf8(ns.prefix), LuaScript.utf8(ns.queue))
 
   /**
    * Read the two lists the sweep reports, in the order the script returns them.

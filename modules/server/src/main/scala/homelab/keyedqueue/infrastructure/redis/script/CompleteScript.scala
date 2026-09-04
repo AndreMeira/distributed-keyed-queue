@@ -34,10 +34,10 @@ final class CompleteScript(ref: LuaScript.Sha):
    *                   backoff a failure asked for — several in one claim leave the longest wait standing
    * @return whether it applied; aborts with `QueueError` when the store fails or the reply cannot be read
    */
-  def run(settlement: Settlement): ZIO[Connection.Commands, QueueError, Boolean] =
+  def run(ns: Namespace, settlement: Settlement): ZIO[Connection.Commands, QueueError, Boolean] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking(redis.evalsha[Any](ref, output, keys(settlement.claimed), args(settlement)*))
+        .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns, settlement.claimed), args(settlement)*))
         .mapError(LuaScript.failure)
         .flatMap(reply => ZIO.fromEither(read(reply)))
 
@@ -46,12 +46,12 @@ final class CompleteScript(ref: LuaScript.Sha):
    * what the claim still owns, the delivery counts, the ready list it may return to, and the backoff a nack
    * may park it in.
    *
-   * @param claim the claim being settled against, which names the queue these keys belong to
+   * @param ns the queue these keys belong to
+   * @param claim the claim being settled against, which names the key
    * @return `state`, `claimed`, `fence`, `msgs`, `payloads`, `owned`, `attempts`, `ready`, `delayed`, in the
    *         order `lua/complete.lua` reads them
    */
-  private def keys(claim: Claim): Array[String] =
-    val ns = Namespace(claim.queue)
+  private def keys(ns: Namespace, claim: Claim): Array[String] =
     Array(
       ns.state,
       ns.claimed,
@@ -84,6 +84,7 @@ final class CompleteScript(ref: LuaScript.Sha):
       LuaScript.utf8(claim.key),
       LuaScript.utf8(claim.token.toString),
       LuaScript.utf8(settlement.retryAfter.fold(0L)(_.toMillis).toString),
+      LuaScript.utf8(claim.queue),
     ) ++ settlement.outcomes.toChunk.flatMap { outcome =>
       Chunk(
         LuaScript.utf8(outcome.messageId),

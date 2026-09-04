@@ -22,8 +22,15 @@ import zio.*
  * @param leaseTtl how long a claim survives without a heartbeat
  * @param sweepInterval how often each instance runs the repair sweeps
  * @param sweepLimit the most entries one sweep handles per kind, so a script cannot block the server
- * @param wakeBlock how long the doorbell's read waits before going round again — also the longest a queue
- *                  this instance has just started serving can go unheard
+ * @param wakeBlock how long one read of the wake streams waits before going round again. Not a latency
+ *                  bound: a read returns the moment an entry lands, and the streams it names are fixed, so
+ *                  nothing waits on this. It bounds how long a half-open connection goes unnoticed
+ *                  and how long a stopping instance waits out a read it cannot cancel
+ * @param wakeBuckets how many wake streams the deployment is divided into, and therefore how many hash
+ *                    tags its keys are spread over. Permanent for a deployment: changing it moves
+ *                    queues between tags and strands what was written under the old one. One is the
+ *                    single-node answer — one stream, one slot; above one, queues spread across
+ *                    slots and each bucket carries its own
  * @param maxWait the longest a caller may ask to wait, and the connection's command timeout
  * @param maxBatchLimit the most messages this service will hand over in one claim
  */
@@ -35,6 +42,7 @@ final case class QueueConfig(
   sweepInterval: Duration,
   sweepLimit: Int,
   wakeBlock: Duration,
+  wakeBuckets: Int,
   maxWait: Duration,
   maxBatchLimit: Int,
 ) derives ConfigReader

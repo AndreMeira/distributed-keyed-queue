@@ -18,21 +18,33 @@ Everything downstream is unchanged.
 
 ## Why the key layout was ready first
 
-Every key belongs to one queue and carries that queue's hash tag. `Namespace` builds all eleven from
-`prefix = "{q:<queue>}"`:
+Every key belongs to one queue, and carries the hash tag of the **bucket** that queue falls in. `Namespace`
+builds all eleven from `prefix = "{w:<bucket>}:q:<queue>"`, with the wake stream tagged but not scoped to
+the queue:
 
 ```
-{q:orders}:ready        {q:orders}:fence       {q:orders}:msgs:<key>
-{q:orders}:state        {q:orders}:attempts    {q:orders}:payloads:<key>
-{q:orders}:claimed      {q:orders}:delayed     {q:orders}:owned:<key>
-                        {q:orders}:wake
+{w:0}:q:orders:ready      {w:0}:q:orders:fence      {w:0}:q:orders:msgs:<key>
+{w:0}:q:orders:state      {w:0}:q:orders:attempts   {w:0}:q:orders:payloads:<key>
+{w:0}:q:orders:claimed    {w:0}:q:orders:delayed    {w:0}:q:orders:owned:<key>
+                          {w:0}:wake                ← shared by every queue in bucket 0
 ```
 
-What each of them is for is [`redis-data-structures.md`](redis-data-structures.md); what matters here is
-only that they all carry the same tag.
+`bucket = hash(queue) % DKQ_WAKE_BUCKETS`, fixed for the deployment's life. What each structure is for is
+[`redis-data-structures.md`](redis-data-structures.md); what matters here is only that everything a script
+touches carries the same tag.
 
-One queue's keys hash to one slot, and **every script touches exactly one queue** — which is what makes the
-Lua legal at all, since a script may only reach keys in a single slot.
+A bucket's keys hash to one slot, and **every script touches exactly one queue, whose keys are all in its
+bucket's slot** — which is what makes the Lua legal at all, since a script may only reach keys in a single
+slot. The wake stream is in that slot too, which is the whole reason the tag is the bucket rather than the
+queue: a stream tagged differently from the keys it announces could not be appended by the script that made
+them claimable, and a separate append is a crash window where work exists and nobody is told.
+
+**The bucket count is a permanent deployment parameter**, like a partition count. Changing it moves queues
+between tags and strands whatever was written under the old one, so it is fixed at first use; changing it
+means drain and restart. At one bucket the whole service is one slot — right for a single node, and no use
+in a cluster. Above one, buckets spread across nodes and queues spread across buckets, which is where the
+sharding actually happens: [`../research/bucketed-wake-streams.md`](../research/bucketed-wake-streams.md)
+has the reasoning and what it cost.
 
 Two consequences are easy to undo by accident:
 
@@ -40,7 +52,8 @@ Two consequences are easy to undo by accident:
   siblings — without declaring them in `KEYS`. Reaching an undeclared key is only safe because the tag
   guarantees the same slot. That is why both take `prefix` as an argument at all, and it is unavoidable in
   `consume.lua`, which does not know which key it holds until it has popped one.
-- **The `wake` stream is per queue for the same reason.** A global doorbell would be a different slot, so
+- **The `wake` stream carries the bucket's tag for the same reason.** A stream tagged differently from the
+  keys it announces would be a different slot, so
   the entry could not be appended by the script that made the key claimable — and a separate append is a
   crash window where work exists and nobody is told.
 - **`renew` groups claims by queue** and issues one call per queue rather than one for a caller's whole

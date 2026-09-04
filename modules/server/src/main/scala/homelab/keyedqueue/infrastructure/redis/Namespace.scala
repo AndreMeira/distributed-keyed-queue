@@ -1,20 +1,38 @@
 package homelab.keyedqueue.infrastructure.redis
 
+
 import homelab.keyedqueue.domain.types.*
+import zio.{ Chunk, NonEmptyChunk }
 
 
 /**
- * Every Redis key one queue owns, derived from its name.
+ * Every Redis key one queue owns, derived from its name and the bucket it falls in.
  *
- * The single `{q:<queue>}` hash tag is load-bearing: a LuaScript script may only touch keys in one cluster slot,
- * and the sweep builds some of its key names at runtime from `prefix`, so they all have to hash together.
+ * '''The hash tag is the bucket, not the queue.''' A Lua script may only touch keys in one cluster slot,
+ * and the scripts build some of their key names at runtime from `prefix`, so everything a script touches
+ * has to hash together — including the stream that announces them. Tagging by bucket puts a queue's keys and the
+ * stream that announces them in one slot, exactly as tagging by queue did, while letting many queues share
+ * one wake stream.
+ *
+ * '''Why share a wake stream at all.''' A listener's `XREAD` names the streams it was issued with, so a
+ * per-queue stream means the set of streams grows as queues are served, and a queue added while a read is
+ * in flight goes unheard until that read returns. A fixed set of buckets is heard from the first read
+ * onwards, which takes the block off the latency path entirely.
+ *
+ * At `buckets == 1` there is one tag, one wake stream and one slot — the simplest deployment, and the
+ * whole service on one node. Above 1, queues spread across slots and each bucket carries its own stream.
  *
  * @param queue the queue these keys belong to
+ * @param buckets how many buckets the deployment is divided into; fixed for its life, since changing it
+ *                moves queues between tags and strands whatever was written under the old one
  */
-final case class Namespace(queue: QueueName):
+final case class Namespace(queue: QueueName, buckets: Int):
 
-  /** The tag every key shares, and what the sweep rebuilds the per-key names from. */
-  val prefix: String = s"{q:$queue}"
+  /** Which bucket this queue falls in, and therefore which slot and which wake stream it uses. */
+  val bucket: Int = Namespace.bucketOf(queue, buckets)
+
+  /** The tag every key shares, and what the scripts rebuild the per-key names from. */
+  val prefix: String = s"${Namespace.tag(bucket)}:q:$queue"
 
   /** Keys with work and nobody working them. The only place anything blocks. */
   val ready: String = s"$prefix:ready"
@@ -32,13 +50,14 @@ final case class Namespace(queue: QueueName):
   val attempts: String = s"$prefix:attempts"
 
   /**
-   * The doorbell: one entry per key made claimable, appended by the same script that made it so.
+   * The stream this queue announces on: one entry per key made claimable, appended by the same script
+   * that made it so, and shared with every other queue in the bucket.
    *
    * A stream rather than a pub/sub channel because a reader that reconnects resumes from the id it holds
-   * instead of losing what it missed; and per queue rather than global so that append and claimable are one
-   * atomic step even in cluster, where a script may not touch two slots.
+   * instead of losing what it missed. Entries name the queue they concern, because the stream no longer
+   * does.
    */
-  val wake: String = s"$prefix:wake"
+  val wake: String = Namespace.wake(bucket)
 
   /** key -> when a failed message may be retried. */
   val delayed: String = s"$prefix:delayed"
@@ -77,3 +96,48 @@ final case class Namespace(queue: QueueName):
    * @return the set name
    */
   def owned(key: MessageKey): String = s"$prefix:owned:$key"
+
+
+object Namespace:
+
+  /**
+   * The hash tag a bucket's keys share.
+   *
+   * @param bucket the bucket
+   * @return the tag, braces included, so Redis hashes only what is inside them
+   */
+  def tag(bucket: Int): String = s"{w:$bucket}"
+
+  /**
+   * A bucket's wake stream.
+   *
+   * @param bucket the bucket
+   * @return the stream name
+   */
+  def wake(bucket: Int): String = s"${tag(bucket)}:wake"
+
+  /**
+   * Which bucket a queue falls in.
+   *
+   * `String`'s hash is specified by the JVM rather than left to an implementation, so every instance of the
+   * service agrees on where a queue lives without being told — which is the only property this needs, since
+   * nothing outside the service computes it. `floorMod` rather than `%` because a negative hash would
+   * otherwise produce a negative bucket.
+   *
+   * @param queue the queue
+   * @param buckets how many buckets the deployment is divided into
+   * @return the bucket
+   */
+  def bucketOf(queue: QueueName, buckets: Int): Int = Math.floorMod(queue.toString.hashCode, buckets)
+
+  /**
+   * Every wake stream in the deployment — the fixed set a listener reads.
+   *
+   * Fixed is the point: the set is known before any queue is served, so no read is ever re-issued because
+   * a consumer arrived for a queue nobody had asked for yet.
+   *
+   * @param buckets how many buckets the deployment is divided into; at least one
+   * @return the stream names, in bucket order
+   */
+  def wakeStreams(buckets: Int): NonEmptyChunk[String] =
+    NonEmptyChunk.fromChunk(Chunk.fromIterable(0 until buckets).map(wake)).getOrElse(NonEmptyChunk(wake(0)))

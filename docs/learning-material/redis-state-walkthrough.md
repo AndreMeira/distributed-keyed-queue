@@ -14,7 +14,7 @@ what the service promises is [`../architecture/guarantees.md`](../architecture/g
 the middle: the mechanics in motion.
 
 Throughout: queue `orders`, key `k1`, worker `w1`. Names are shortened — every one really carries the
-`{q:orders}` prefix. Empty structures are omitted.
+`{w:0}:q:orders` prefix — bucket 0, the single-bucket default. Empty structures are omitted.
 
 ## Where we start
 
@@ -83,9 +83,11 @@ identities, and the sweep that recovered them.
 **If the consumer dies now**, `claimed` holds the lease and the lapsed-claim sweep is the whole recovery
 story. Nothing else can be holding a key.
 
-**If nothing was claimable**, the script answers with nothing and the caller waits on the queue's doorbell —
-`wake`, a stream appended to by whatever next makes a key claimable. That wait costs a fiber; the entry is
-read by one listener per instance, on one connection, for every queue it serves.
+**If nothing was claimable**, the script answers with nothing and the caller waits on the queue's signal,
+which is raised when an entry naming that queue arrives on its bucket's `wake` stream — appended by whatever
+next makes a key claimable. That wait costs a fiber, not a connection: one listener per instance reads every
+bucket on one connection, from startup, so a queue nobody has asked for yet is heard as promptly as a busy
+one.
 
 ---
 

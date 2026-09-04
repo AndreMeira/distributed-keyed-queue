@@ -45,18 +45,21 @@ object Module:
   /**
    * The queue itself, as the port.
    *
+   * Fallible now that the listener resolves where each wake stream stands before its first read — a position
+   * that cannot be read is a store that cannot be built.
+   *
    * @return the layer
    */
-  val store: ZLayer[Connection & Scripts & QueueConfig, Nothing, QueueStore] = ZLayer.scoped {
+  val store: ZLayer[Connection & Scripts & QueueConfig, QueueError, QueueStore] = ZLayer.scoped {
     for
       connection <- ZIO.service[Connection]
       scripts    <- ZIO.service[Scripts]
       config     <- ZIO.service[QueueConfig]
       waiters    <- Waiters.make
-      listener   <- WakeListener.make(connection, waiters, config.wakeBlock)
+      listener   <- WakeListener.make(connection, waiters, config.wakeBuckets, config.wakeBlock)
       // Forked here rather than in the composition root because the store is unusable without it: a
-      // consumer that finds nothing waits on the doorbell, and an unrun listener never rings it.
+      // consumer that finds nothing waits on a signal, and an unrun listener never raises one.
       _          <- listener.run.forkScoped
-      store      <- RedisQueueStore.make(connection, scripts, listener, waiters, config.leaseTtl)
+      store      <- RedisQueueStore.make(connection, scripts, waiters, config.leaseTtl, config.wakeBuckets)
     yield store
   }

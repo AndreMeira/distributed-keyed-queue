@@ -8,6 +8,7 @@
 -- ARGV[1] key
 -- ARGV[2] id         the message's id, unique among this key's queued messages
 -- ARGV[3] payload
+-- ARGV[4] queue      named in the wake entry, because the stream is shared by the whole bucket
 -- returns            the key's queue depth after the append
 --
 -- The state guard is the whole point: a key already `queued` is in `ready` (or held back in `delayed`) and
@@ -18,7 +19,7 @@
 -- Splitting them is what lets everything else address a message by name — discard this one, look at the next
 -- three — without Redis having to read inside a payload it cannot parse.
 local ready, state, msgs, payloads, wake = KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5]
-local key, id, payload = ARGV[1], ARGV[2], ARGV[3]
+local key, id, payload, queue = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
 
 -- HSETNX rather than HSET, and the whole append hangs off it: an id already queued for this key is the same
 -- message arriving twice — a producer retrying an at-least-once send — and enqueuing it again would deliver
@@ -36,7 +37,7 @@ if redis.call('HSETNX', payloads, id, payload) == 1 then
     redis.call('RPUSH', ready, key)
     -- In the same call that made it claimable: a consumer woken by this entry cannot arrive before the
     -- work it announces, and a crash cannot land between the two.
-    redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'key', key)
+    redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'queue', queue, 'key', key)
   end
 end
 

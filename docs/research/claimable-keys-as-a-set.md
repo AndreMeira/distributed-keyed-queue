@@ -75,9 +75,9 @@ peers take the head, so the two claims are for different keys and do not contend
 is an O(N) `LREM` over every claimable key, which rules it out at any interesting size. See the stickiness
 discussion in [`dequeue-connection-model.md`](dequeue-connection-model.md).
 
-## Why not in the doorbell PR
+## Why not in the wake-stream PR
 
-Independent: the doorbell design works identically over a list or a zset, so bundling them produces one
+Independent: the wake-stream design works identically over a list or a zset, so bundling them produces one
 change that reworks both how a claim is *taken* and how claimable keys are *stored* — with no way to
 bisect between them later.
 

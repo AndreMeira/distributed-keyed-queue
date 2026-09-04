@@ -18,7 +18,7 @@ import java.time.Instant
  * The queue over Redis.
  *
  * '''Nothing here blocks in Redis.''' Every operation is a script that answers at once, so they all share
- * one connection. The only command in the process that parks is the doorbell's `XREAD`, and that belongs to
+ * one connection. The only command in the process that parks is the listener's `XREAD`, and that belongs to
  * [[WakeListener]], on a connection of its own.
  *
  * '''Every operation is one script.''' The interleavings between reading a key's state and acting on it are
@@ -31,16 +31,15 @@ import java.time.Instant
  *
  * @param connection where its connection comes from
  * @param scripts the loaded script digests
- * @param listener the doorbell, told which queues to hear
  * @param waiters where a caller waits when there is nothing to claim
  * @param leaseTtl how long a claim survives without a heartbeat
  */
 final class RedisQueueStore(
   connection: Connection,
   scripts: Scripts,
-  listener: WakeListener,
   waiters: Waiters,
   leaseTtl: Duration,
+  buckets: Int,
 ) extends QueueStore:
 
   /**
@@ -55,17 +54,17 @@ final class RedisQueueStore(
    */
   override def enqueue(submission: Submission): IO[QueueError, Long] =
     connection.provide:
-      scripts.produce.run(Namespace(submission.queue), submission.message)
+      scripts.produce.run(Namespace(submission.queue, buckets), submission.message)
 
   /**
-   * One `consume` call, and — when it finds nothing — a wait on the queue's doorbell.
+   * One `consume` call, and — when it finds nothing — a wait on the queue's signal.
    *
    * '''The claim is a single script, so nothing blocks in Redis.''' A key is either in `ready` or claimed;
    * there is no instant in which it is neither, which is why this adapter has no holding list, no
    * per-connection identity and no recovery for one.
    *
-   * '''Waiting costs a fiber, not a connection.''' The listener hears the doorbell for every queue on one
-   * connection, and rings the bell every caller waiting on that queue is holding.
+   * '''Waiting costs a fiber, not a connection.''' The listener reads every wake stream in the deployment
+   * on one connection, and raises the signal every caller waiting on the named queue is holding.
    *
    * '''Patience is a deadline.''' A caller woken by an entry another instance won keeps waiting with what
    * is left of it, rather than starting again — so a race it loses costs it a round trip, not a full wait.
@@ -76,39 +75,36 @@ final class RedisQueueStore(
   override def claim(demand: Demand): IO[QueueError, Option[Claimed]] =
     for
       asked   <- Clock.instant
-      // Before the first attempt, not after: a queue nobody is listening to would go unheard exactly when
-      // this caller starts waiting on it.
-      _       <- listener.watch(demand.queue)
-      claimed <- pursue(Namespace(demand.queue), demand, asked)
+      claimed <- claimWithin(Namespace(demand.queue, buckets), demand, asked)
     yield claimed
 
   /**
-   * Take a bell, look, and — finding nothing — wait for it, until the patience is spent.
+   * Take a signal, look, and — finding nothing — wait on it, until the patience is spent.
    *
-   * '''The bell is taken before the look, and that ordering is the whole mechanism.''' A ring that lands
-   * while the claim attempt is in flight completes the bell this caller is already holding, so it is
-   * waited on and returns immediately. Looking first and subscribing after would drop exactly that ring,
+   * '''The signal is taken before the look, and that ordering is the whole mechanism.''' A wake that lands
+   * while the claim attempt is in flight completes the signal this caller is already holding, so it is
+   * waited on and returns immediately. Looking first and subscribing after would drop exactly that wake,
    * and the consumer would sleep out its patience beside claimable work.
    *
-   * A ring is a hint, not a handover: every instance hears the same entry, and every consumer waiting on
-   * this one hears its bell, so a caller that finds nothing goes back to waiting rather than reporting
-   * empty.
+   * A wake is a hint, not a handover: every instance reads the same entry, and every consumer waiting on
+   * this queue holds the same signal, so a caller that finds nothing goes back to waiting rather than
+   * reporting empty.
    *
    * @param ns the queue being claimed from
    * @param demand what the caller asked for
    * @param asked when its call arrived, which is what the patience is measured from
    * @return the claim, or `None` when the patience elapsed; aborts with `QueueError` when the store fails
    */
-  private def pursue(ns: Namespace, demand: Demand, asked: Instant): IO[QueueError, Option[Claimed]] =
-    waiters.subscribe(demand.queue).flatMap { bell =>
+  private def claimWithin(ns: Namespace, demand: Demand, asked: Instant): IO[QueueError, Option[Claimed]] =
+    waiters.subscribe(demand.queue).flatMap { signal =>
       attempt(ns, demand).flatMap:
         case granted @ Some(_) => ZIO.succeed(granted)
         case None              =>
-          remaining(demand.patience, asked).flatMap:
+          remainingTime(demand.patience, asked).flatMap:
             case None       => ZIO.none
             case Some(left) =>
-              bell.await(left).flatMap {
-                case true  => pursue(ns, demand, asked)
+              signal.await(left).flatMap {
+                case true  => claimWithin(ns, demand, asked)
                 case false => ZIO.none
               }
     }
@@ -130,7 +126,7 @@ final class RedisQueueStore(
    * @param asked when its call reached this adapter
    * @return the time still to wait, or `None` when the patience is already spent
    */
-  private def remaining(patience: Duration, asked: Instant): UIO[Option[Duration]] =
+  private def remainingTime(patience: Duration, asked: Instant): UIO[Option[Duration]] =
     Clock.instant.map: now =>
       val left = patience.minus(Duration.fromInterval(asked, now))
       Option.when(left.toMillis > 0)(left)
@@ -148,7 +144,7 @@ final class RedisQueueStore(
    */
   override def settle(settlement: Settlement): IO[QueueError, Boolean] =
     connection.provide:
-      scripts.complete.run(settlement)
+      scripts.complete.run(Namespace(settlement.claimed.queue, buckets), settlement)
 
   /**
    * One `heartbeat` call '''per queue''', because claims are namespaced by queue while a caller's receipts
@@ -164,7 +160,7 @@ final class RedisQueueStore(
     connection.provide:
       ZIO
         .foreach(claims.groupBy(_.queue).toList): (queue, held) =>
-          scripts.heartbeat.run(Namespace(queue), leaseTtl, held)
+          scripts.heartbeat.run(Namespace(queue, buckets), leaseTtl, held)
         .map: results =>
           val (when, chunk) = results.unzip
           when.maxOption.getOrElse(Instant.EPOCH) -> Chunk.fromIterable(chunk).flatten
@@ -179,7 +175,7 @@ final class RedisQueueStore(
    */
   override def sweep(queue: QueueName, limit: Int): IO[QueueError, QueueStore.Swept] =
     connection.provide:
-      scripts.watchdog.run(Namespace(queue), limit)
+      scripts.watchdog.run(Namespace(queue, buckets), limit)
 
 
 object RedisQueueStore:
@@ -187,21 +183,21 @@ object RedisQueueStore:
   /**
    * The store.
    *
-   * Nothing is started here any more: the store holds no registrations to renew, and the doorbell it waits
+   * Nothing is started here any more: the store holds no registrations to renew, and the streams it waits
    * on is run by whoever owns the listener.
    *
    * @param connection where its connection comes from
    * @param scripts the loaded digests
-   * @param listener the doorbell
    * @param waiters where a caller waits
+   * @param buckets how many wake streams the deployment has, which decides every key's hash tag
    * @param leaseTtl how long a claim survives without a heartbeat
    * @return the store
    */
   def make(
     connection: Connection,
     scripts: Scripts,
-    listener: WakeListener,
     waiters: Waiters,
     leaseTtl: Duration,
+    buckets: Int,
   ): UIO[RedisQueueStore] =
-    ZIO.succeed(RedisQueueStore(connection, scripts, listener, waiters, leaseTtl))
+    ZIO.succeed(RedisQueueStore(connection, scripts, waiters, leaseTtl, buckets))

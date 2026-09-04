@@ -116,11 +116,11 @@ that it did not cost anything: results are in the same range as the load test's 
 
 ## After the claim path changed
 
-The same sweep, run against the doorbell design — the atomic claim plus a wake stream, which replaced
+The same sweep, run against the wake-stream design — the atomic claim plus a wake stream, which replaced
 `BLMOVE` and the claiming connections (`docs/research/non-blocking-dequeue.md`). Same laptop, same
 afternoon, two sweeps:
 
-| keys | consumers | `BLMOVE` | doorbell (run 1) | doorbell (run 2) |
+| keys | consumers | `BLMOVE` | wake stream (run 1) | wake stream (run 2) |
 |-----:|----------:|---------:|-----------------:|-----------------:|
 | 8    | 8         | 1,552    | 1,200            | 1,364            |
 | 16   | 16        | 1,896    | 2,087            | 2,087            |
