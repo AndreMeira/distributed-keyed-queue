@@ -22,6 +22,10 @@ import java.time.Duration as JavaDuration
  *
  * The connection arrives in the environment as [[Connection.Commands]]: an effect asks for one by type, and
  * this decides which one it gets.
+ *
+ * Why the client is synchronous, and what that costs — Redis executes a script in about four microseconds,
+ * a blocking-pool hop costs a third of one, and a waiting consumer holds no thread at all — is measured in
+ * `docs/architecture/redis-connections.md`.
  */
 final case class Connection(sync: Connection.Commands, wake: Connection.Commands):
 
