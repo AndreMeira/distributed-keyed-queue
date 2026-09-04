@@ -190,7 +190,9 @@ side effect the handler was about to perform.
 - **Batch dequeue.** One message per call. Batching interacts with per-key ordering in ways worth designing
   once, not twice.
 - **Multi-queue subscribe.** One queue per `Dequeue`, because `BLMOVE` takes one source
-  ([`redis-keyed-queue.md` §3b](./redis-keyed-queue.md)).
+  ([`redis-keyed-queue.md` §3b](./redis-keyed-queue.md)). *The reason has since expired — the claim is a
+  script and the wait is a signal, neither of which is limited to one queue — but the constraint stands
+  until someone designs the multi-queue shape.*
 - **Priorities, delayed enqueue, scheduled messages.** All plausible, none needed to answer phase 1's
   question.
 
@@ -206,7 +208,8 @@ message they will never see again — so it belongs in this document before the 
 
 1. Does `Enqueue` need to be idempotent on `message_id`? (Redis has no unique index; it would need a
    `seen:<key>` set with a TTL, which is a real cost.)
-2. Should `Dequeue` accept several queues now, knowing `BLMOVE` cannot? Deciding it here avoids a breaking
+2. Should `Dequeue` accept several queues now, knowing `BLMOVE` cannot? (Answered by events rather than by
+   this note: `BLMOVE` is gone, and nothing in the current mechanism forbids it.) Deciding it here avoids a breaking
    change when phase 2 arrives.
 3. `Heartbeat` naming a receipt whose lease has already expired: always report it `stale`, or revive it when
    the key has not been re-claimed since? Reporting it is simpler to reason about and matches `Settle`.

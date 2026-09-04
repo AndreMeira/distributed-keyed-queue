@@ -1,12 +1,19 @@
 ---
 title: "A keyed queue on Redis — idle pops, per-key exclusivity, and what it costs"
 type: research
-status: draft
-updated: 2026-08-30
+status: superseded
+updated: 2026-09-05
 tags: [connection, keyed-queue, idle, lease, heartbeat, lua, postgres, exploration]
 ---
 
 # A keyed queue on Redis
+
+> **Superseded in its mechanism, kept for its reasoning.** Everything below about *what a keyed queue has to
+> guarantee* still holds; how it is done no longer does. `BLMOVE` and the claiming lists are gone — a claim
+> is one atomic script, a waiting consumer holds neither thread nor connection, and the wake path is a
+> stream per bucket read by one listener. See [`non-blocking-dequeue.md`](non-blocking-dequeue.md) and
+> [`bucketed-wake-streams.md`](bucketed-wake-streams.md), with the current layout in
+> [`../architecture/redis-data-structures.md`](../architecture/redis-data-structures.md).
 
 > **Exploration, not a decision.** The commands and pseudo-code below are worked out far enough to expose the
 > hazards; none of it is a committed API, and Postgres remains the alternative (§6). What this note is for is

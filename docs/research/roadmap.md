@@ -28,9 +28,9 @@ gRPC, across more than one pod.
 **Locks in:** the state machine (`idle` / `queued` / `processing`), the lease-and-heartbeat model, the
 fencing token, and the shape of the message.
 
-**Must not lock in:** anything Redis-specific above the port boundary. `BLMOVE` and a deadline ZSET are one
-implementation of "claim a ready key, with a deadline"; the phase fails its own purpose if that leaks into
-the API.
+**Must not lock in:** anything Redis-specific above the port boundary. A claim script and a deadline ZSET —
+`BLMOVE` and a deadline ZSET, when this was written — are one implementation of "claim a ready key, with a
+deadline"; the phase fails its own purpose if that leaks into the API.
 
 **Done when:** two pods, one Redis, a client whose dequeue on pod A is woken by an enqueue on pod B, and a
 killed worker whose key is reclaimed and reprocessed.
@@ -87,8 +87,8 @@ as repeated polling, and killing the stream releases its keys promptly.
 
 ### 3. Persistence as a second adapter
 
-**Goal:** the same state machine over Postgres — `SKIP LOCKED` and a `claimed_until` column doing what
-`BLMOVE` and the deadline ZSET did.
+**Goal:** the same state machine over Postgres — `SKIP LOCKED` and a `claimed_until` column doing what the
+claim script and the deadline ZSET do.
 
 **Why it is not a phase of its own:** if the port boundary held in phase 1, this is writing an adapter and
 running the existing tests against it. If it turns out to be a redesign, that is the phase-1 boundary

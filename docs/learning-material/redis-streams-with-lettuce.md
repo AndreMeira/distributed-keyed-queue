@@ -68,7 +68,7 @@ XREAD [COUNT n] [BLOCK ms] STREAMS key [key ...] id [id ...]
   the same slot**, which is the constraint that decides how many reader connections a cluster deployment
   needs.
 
-A blocked `XREAD` occupies its connection exactly like `BLMOVE` does, so it wants a connection of its own.
+A blocked `XREAD` occupies its connection exactly as `BLMOVE` or `BLPOP` would, so it wants one of its own.
 
 `XRANGE key - +` reads history without blocking (`-` and `+` are the minimum and maximum ids), and `XLEN`
 gives the length — both useful when inspecting a live system.
@@ -130,10 +130,10 @@ An expired block comes back as an **empty list**, not an exception — the loop 
 
 ### The command-timeout trap
 
-This is the same one `BLMOVE` set in this repo. Lettuce's connection-level command timeout is enforced
+This is the same one `BLMOVE` set in this repo before the wake path replaced it. Lettuce's connection-level command timeout is enforced
 client-side, so a `BLOCK 5000` on a connection whose command timeout is 5 s races its own deadline and
 surfaces as `RedisCommandTimeoutException` instead of an empty result. **The connection's command timeout
-must exceed the longest `BLOCK` it will be asked to make** — which is why `Connection.claimingSlack` exists
+must exceed the longest `BLOCK` it will be asked to make** — which is why `Connection.listeningSlack` exists
 for the claiming connections and why a stream reader wants the same treatment, on its own connection.
 
 ### Cluster
@@ -159,7 +159,7 @@ was rejected as non-deterministic.
    never get reused.
 4. **Reading does not trim.** Memory is bounded by whoever writes, via `MAXLEN`/`MINID` — not by consumers
    keeping up.
-5. **A blocking read holds a connection**, so it belongs on a dedicated one, exactly like `BLMOVE`.
+5. **A blocking read holds a connection**, so it belongs on a dedicated one, like any blocking command.
 6. **`COUNT` bounds a single reply**, not the block: `XREAD COUNT 64 BLOCK 5000` returns as soon as *one*
    entry exists, with up to 64.
 
