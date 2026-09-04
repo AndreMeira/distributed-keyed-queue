@@ -117,7 +117,8 @@ final class RedisQueueStore(
    * @return the claim, or `None` when nothing was claimable; aborts with `QueueError` when the store fails
    */
   private def attempt(ns: Namespace, demand: Demand): IO[QueueError, Option[Claimed]] =
-    connection.provide(scripts.consume.run(ns, leaseTtl, demand.batch))
+    connection.provide:
+      scripts.consume.run(ns, leaseTtl, demand.batch)
 
   /**
    * What is left of a caller's patience.

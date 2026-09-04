@@ -45,7 +45,9 @@ final class Waiters(signals: Ref.Synchronized[Map[QueueName, Promise[Nothing, Un
       current.get(queue) match
         case Some(signal) => ZIO.succeed(Waiters.Signal(signal) -> current)
         case None         =>
-          Promise.make[Nothing, Unit].map(signal => Waiters.Signal(signal) -> current.updated(queue, signal))
+          Promise
+            .make[Nothing, Unit]
+            .map(signal => Waiters.Signal(signal) -> current.updated(queue, signal))
 
   /**
    * Raise a queue's signal: wake every consumer holding it, and put a fresh one in its place.
