@@ -1,6 +1,7 @@
 package homelab.keyedqueue.infrastructure.tracing
 
 
+import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
 import homelab.telemetry.OtelMonitor
 import zio.*
@@ -23,11 +24,13 @@ import zio.telemetry.opentelemetry.tracing.Tracing
  * under the agent's — a request would produce two disconnected traces instead of one.
  */
 object Module:
+  case class OtelLoadError(cause: Throwable) extends ApplicationError.AdapterError:
+    override def message: String = s"OpenTelemetry SDK could not be loaded: ${cause.getMessage}"
 
   /** The scope every span and metric this service opens is attributed to — us, not the libraries. */
   private val scope = "homelab.keyedqueue"
 
-  private val otel    = OpenTelemetry.global ++ OpenTelemetry.contextJVM
+  private val otel    = OpenTelemetry.global.mapError(OtelLoadError(_)) ++ OpenTelemetry.contextJVM
   private val tracing = otel >>> OpenTelemetry.tracing(scope)
   private val metrics = otel >>> OpenTelemetry.metrics(scope)
 
@@ -38,7 +41,7 @@ object Module:
    * can fail, and there is nothing useful to translate it into — a service that cannot build its monitor
    * has not started.
    */
-  val monitor: ZLayer[Any, Throwable, Monitor] =
+  val monitor: ZLayer[Any, ApplicationError.AdapterError, Monitor] =
     (tracing ++ metrics) >>> ZLayer:
       for
         tracer  <- ZIO.service[Tracing]

@@ -2,6 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.error.ApplicationError
+import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.model.{ Claim, Claimed, Demand, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
@@ -29,12 +30,24 @@ import java.time.Instant
  * claimed and the lease is the only thing that expires. No connection announces itself, and no registration
  * has to be renewed on its behalf.
  *
+ * '''Traced, not measured.''' Everything that reaches the substrate opens a span; none of it records a
+ * hit or a latency series. The RPC above already counts and times the operation a caller asked for, so a
+ * second metric per store method would double the series for something the span already answers — and the
+ * question these are here for is "where did that call's time go", which is a trace question. The pure
+ * helpers are left alone: a span around clock arithmetic is noise.
+ *
+ * `attempt` is traced although it is private, because it is the one that repeats: a claim that loses the
+ * race retries, and the span count is what shows the redundant attempts the design pays in.
+ *
+ * @param monitor what each call on the substrate is traced against
  * @param connection where its connection comes from
  * @param scripts the loaded script digests
  * @param waiters where a caller waits when there is nothing to claim
  * @param leaseTtl how long a claim survives without a heartbeat
+ * @param buckets how many wake streams the deployment has, which decides every key's hash tag
  */
 final class RedisQueueStore(
+  monitor: Monitor,
   connection: Connection,
   scripts: Scripts,
   waiters: Waiters,
@@ -53,8 +66,9 @@ final class RedisQueueStore(
    * @return the key's depth after the append
    */
   override def enqueue(submission: Submission): IO[RedisFailure, Long] =
-    connection.provide:
-      scripts.produce.run(Namespace(submission.queue, buckets), submission.message)
+    monitor.trace("RedisQueueStore.enqueue"):
+      connection.provide:
+        scripts.produce.run(Namespace(submission.queue, buckets), submission.message)
 
   /**
    * One `consume` call, and — when it finds nothing — a wait on the queue's signal.
@@ -117,8 +131,9 @@ final class RedisQueueStore(
    * @return the claim, or `None` when nothing was claimable; aborts with `RedisFailure` when the store fails
    */
   private def attempt(ns: Namespace, demand: Demand): IO[RedisFailure, Option[Claimed]] =
-    connection.provide:
-      scripts.consume.run(ns, leaseTtl, demand.batch)
+    monitor.trace("RedisQueueStore.attempt"):
+      connection.provide:
+        scripts.consume.run(ns, leaseTtl, demand.batch)
 
   /**
    * What is left of a caller's patience.
@@ -144,8 +159,9 @@ final class RedisQueueStore(
    * @return whether it applied
    */
   override def settle(settlement: Settlement): IO[RedisFailure, Boolean] =
-    connection.provide:
-      scripts.complete.run(Namespace(settlement.claimed.queue, buckets), settlement)
+    monitor.trace("RedisQueueStore.settle"):
+      connection.provide:
+        scripts.complete.run(Namespace(settlement.claimed.queue, buckets), settlement)
 
   /**
    * One `heartbeat` call '''per queue''', because claims are namespaced by queue while a caller's receipts
@@ -158,13 +174,14 @@ final class RedisQueueStore(
    * @return the new deadline and the claims already revoked
    */
   override def renew(claims: Chunk[Claim]): IO[RedisFailure, (Instant, Chunk[Claim])] =
-    connection.provide:
-      ZIO
-        .foreach(claims.groupBy(_.queue).toList): (queue, held) =>
-          scripts.heartbeat.run(Namespace(queue, buckets), leaseTtl, held)
-        .map: results =>
-          val (when, chunk) = results.unzip
-          when.maxOption.getOrElse(Instant.EPOCH) -> Chunk.fromIterable(chunk).flatten
+    monitor.trace("RedisQueueStore.renew"):
+      connection.provide:
+        ZIO
+          .foreach(claims.groupBy(_.queue).toList): (queue, held) =>
+            scripts.heartbeat.run(Namespace(queue, buckets), leaseTtl, held)
+          .map: results =>
+            val (when, chunk) = results.unzip
+            when.maxOption.getOrElse(Instant.EPOCH) -> Chunk.fromIterable(chunk).flatten
 
   /**
    * One `watchdog` call, which carries both sweeps — lapsed claims and elapsed backoffs — so
@@ -175,8 +192,9 @@ final class RedisQueueStore(
    * @return what it repaired
    */
   override def sweep(queue: QueueName, limit: Int): IO[RedisFailure, QueueStore.Swept] =
-    connection.provide:
-      scripts.watchdog.run(Namespace(queue, buckets), limit)
+    monitor.trace("RedisQueueStore.sweep"):
+      connection.provide:
+        scripts.watchdog.run(Namespace(queue, buckets), limit)
 
 
 object RedisQueueStore:
@@ -187,6 +205,7 @@ object RedisQueueStore:
    * Nothing is started here any more: the store holds no registrations to renew, and the streams it waits
    * on is run by whoever owns the listener.
    *
+   * @param monitor what each call on the substrate is traced against
    * @param connection where its connection comes from
    * @param scripts the loaded digests
    * @param waiters where a caller waits
@@ -195,10 +214,11 @@ object RedisQueueStore:
    * @return the store
    */
   def make(
+    monitor: Monitor,
     connection: Connection,
     scripts: Scripts,
     waiters: Waiters,
     leaseTtl: Duration,
     buckets: Int,
   ): UIO[RedisQueueStore] =
-    ZIO.succeed(RedisQueueStore(connection, scripts, waiters, leaseTtl, buckets))
+    ZIO.succeed(RedisQueueStore(monitor, connection, scripts, waiters, leaseTtl, buckets))

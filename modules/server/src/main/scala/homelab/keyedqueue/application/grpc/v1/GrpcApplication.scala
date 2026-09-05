@@ -8,6 +8,7 @@ import homelab.keyedqueue.domain.service.usecase.v1.Module as UseCaseModule
 import homelab.keyedqueue.domain.service.validation.Module as ValidationModule
 import homelab.keyedqueue.infrastructure.configuration.Module as ConfigurationModule
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
+import homelab.keyedqueue.infrastructure.tracing.Module as TracingModule
 import homelab.keyedqueue.infrastructure.redis.Module as RedisModule
 import scalapb.zio_grpc.Server
 import zio.*
@@ -46,4 +47,5 @@ object GrpcApplication:
       UseCaseModule.useCases,
       GrpcModule.service,
       GrpcModule.server,
+      TracingModule.monitor,
     )

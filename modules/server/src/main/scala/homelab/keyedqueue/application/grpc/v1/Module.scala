@@ -2,6 +2,7 @@ package homelab.keyedqueue.application.grpc.v1
 
 
 import homelab.common.error.ApplicationError
+import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.service.usecase.v1.SyncUseCases
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import io.grpc.ServerBuilder
@@ -22,9 +23,9 @@ object Module:
    *
    * @return the layer
    */
-  val service: ZLayer[SyncUseCases, Nothing, QueueService] =
-    ZLayer.fromFunction: (useCases: SyncUseCases) =>
-      QueueService(useCases)
+  val service: ZLayer[SyncUseCases & Monitor, Nothing, QueueService] =
+    ZLayer.fromFunction: (monitor: Monitor, useCases: SyncUseCases) =>
+      QueueService(monitor, useCases)
 
   /**
    * The server, started when the layer is built and shut down when the scope closes.

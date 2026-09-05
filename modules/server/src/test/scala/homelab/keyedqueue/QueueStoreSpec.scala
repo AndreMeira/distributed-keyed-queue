@@ -2,6 +2,7 @@ package homelab.keyedqueue
 
 
 import homelab.common.error.ApplicationError
+import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.model.{ Claim, Claimed, Demand, Message, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
@@ -69,7 +70,9 @@ object QueueStoreSpec extends ZIOSpecDefault:
       waiters    <- Waiters.make
       listener   <- WakeListener.make(connection, waiters, config.wakeBuckets, config.wakeBlock)
       _          <- listener.run.forkScoped
-      store      <- RedisQueueStore.make(connection, scripts, waiters, config.leaseTtl, config.wakeBuckets)
+      // Unobserved: these tests are about what the store does to Redis, and `Noop` keeps the telemetry
+      // wiring out of the assertions without changing a single code path.
+      store      <- RedisQueueStore.make(Monitor.Noop, connection, scripts, waiters, config.leaseTtl, config.wakeBuckets)
     yield (store, connection)
 
   /** A message whose cargo is `body`: these tests care about order and ownership, not about content. */

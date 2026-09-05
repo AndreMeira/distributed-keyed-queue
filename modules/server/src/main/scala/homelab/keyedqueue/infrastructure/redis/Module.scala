@@ -2,6 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.error.ApplicationError
+import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import io.lettuce.core.api.sync.RedisCommands
@@ -50,8 +51,9 @@ object Module:
    *
    * @return the layer
    */
-  val store: ZLayer[Connection & Scripts & QueueConfig, ApplicationError, QueueStore] = ZLayer.scoped {
+  val store: ZLayer[Connection & Scripts & QueueConfig & Monitor, ApplicationError, QueueStore] = ZLayer.scoped {
     for
+      monitor    <- ZIO.service[Monitor]
       connection <- ZIO.service[Connection]
       scripts    <- ZIO.service[Scripts]
       config     <- ZIO.service[QueueConfig]
@@ -60,6 +62,6 @@ object Module:
       // Forked here rather than in the composition root because the store is unusable without it: a
       // consumer that finds nothing waits on a signal, and an unrun listener never raises one.
       _          <- listener.run.forkScoped
-      store      <- RedisQueueStore.make(connection, scripts, waiters, config.leaseTtl, config.wakeBuckets)
+      store      <- RedisQueueStore.make(monitor, connection, scripts, waiters, config.leaseTtl, config.wakeBuckets)
     yield store
   }

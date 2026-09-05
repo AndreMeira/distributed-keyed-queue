@@ -2,6 +2,7 @@ package homelab.keyedqueue.application.grpc.v1
 
 
 import homelab.common.error.{ ApplicationError, ValidationError }
+import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.service.usecase.v1.*
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Inbound.*
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Outbound.*
@@ -28,10 +29,17 @@ import zio.*
  * the same order everywhere they are wired. Adding a fifth operation is then an edit to [[SyncUseCases]]
  * and a handler here, and nothing in between.
  *
+ * '''Every RPC is measured, and this is the right place for it.''' A handler is the whole of one call —
+ * decode, use case, encode — so a span here times what the caller experienced, and the four names are the
+ * four operations the API has. Naming them after the RPC rather than the use case is deliberate: it is the
+ * surface a caller talks to, and a second adapter would measure its own.
+ *
+ * @param monitor what each RPC is counted and timed against
  * @param useCases the operations this surface exposes, one per RPC
  */
 final class QueueService(
-  useCases: SyncUseCases
+  monitor: Monitor,
+  useCases: SyncUseCases,
 ) extends ZioKeyedQueueService.KeyedQueue:
 
   /**
@@ -42,10 +50,11 @@ final class QueueService(
    * @return the wire response; aborts with `INVALID_ARGUMENT` when the message cannot be read
    */
   override def enqueue(request: v1.EnqueueRequest): IO[StatusException, v1.EnqueueResponse] =
-    for
-      safe     <- decoded(request.toDomain)
-      response <- useCases.enqueue(safe).mapError(status)
-    yield response.toProto
+    monitor.measure("QueueService.enqueue"):
+      for
+        safe     <- decoded(request.toDomain)
+        response <- useCases.enqueue(safe).mapError(status)
+      yield response.toProto
 
   /**
    * Blocks for the caller's `max_wait`, clamped by the use case. A timeout comes back as an absent
@@ -55,10 +64,11 @@ final class QueueService(
    * @return the wire response, whose delivery is absent when nothing became ready
    */
   override def dequeue(request: v1.DequeueRequest): IO[StatusException, v1.DequeueResponse] =
-    for
-      safe     <- decoded(request.toDomain)
-      response <- useCases.dequeue(safe).mapError(status)
-    yield response.toProto
+    monitor.measure("QueueService.dequeue"):
+      for
+        safe     <- decoded(request.toDomain)
+        response <- useCases.dequeue(safe).mapError(status)
+      yield response.toProto
 
   /**
    * A revoked claim answers `APPLIED_STALE` rather than failing: the caller must branch on it, and a status
@@ -68,10 +78,11 @@ final class QueueService(
    * @return the wire response; aborts with `INVALID_ARGUMENT` when the outcome is unspecified
    */
   override def settle(request: v1.SettleRequest): IO[StatusException, v1.SettleResponse] =
-    for
-      safe     <- decoded(request.toDomain)
-      response <- useCases.settle(safe).mapError(status)
-    yield response.toProto
+    monitor.measure("QueueService.settle"):
+      for
+        safe     <- decoded(request.toDomain)
+        response <- useCases.settle(safe).mapError(status)
+      yield response.toProto
 
   /**
    * Never fails on a receipt it cannot read — that one is reported stale alongside the genuinely revoked
@@ -81,10 +92,11 @@ final class QueueService(
    * @return the wire response, naming what the caller no longer holds
    */
   override def heartbeat(request: v1.HeartbeatRequest): IO[StatusException, v1.HeartbeatResponse] =
-    for
-      safe     <- decoded(request.toDomain)
-      response <- useCases.heartbeat(safe).mapError(status)
-    yield response.toProto
+    monitor.measure("QueueService.heartbeat"):
+      for
+        safe     <- decoded(request.toDomain)
+        response <- useCases.heartbeat(safe).mapError(status)
+      yield response.toProto
 
   /**
    * Turn a partial decode into a call that either proceeds or is refused.
