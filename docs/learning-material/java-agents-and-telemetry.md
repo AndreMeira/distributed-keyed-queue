@@ -147,6 +147,13 @@ Because the agent only ships in the image, `sbt run` can never show you a trace.
 trade, and it means local observability needs the container:
 
 ```bash
+bin/run.sh          # stack up, image built, service running with the agent
+bin/run.sh down     # stop both
+```
+
+which is the three steps that actually matter, in order:
+
+```bash
 docker compose --profile telemetry up -d   # Jaeger, Prometheus, Grafana
 sbt server/Docker/publishLocal             # build the image
 bin/run-with-telemetry.sh                  # run it with the agent on
@@ -155,7 +162,8 @@ bin/run-with-telemetry.sh                  # run it with the agent on
 The observability services sit behind a **compose profile**, so `docker compose up` is still Valkey alone
 and costs a developer who is not looking at telemetry exactly nothing.
 
-`bin/run-with-telemetry.sh` is where the three "on" variables live:
+`bin/run-with-telemetry.sh` — the last of those, and what `bin/run.sh` ends by exec'ing — is where
+the three "on" variables live:
 
 ```
 OTEL_JAVAAGENT_ENABLED=true

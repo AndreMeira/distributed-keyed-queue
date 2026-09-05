@@ -35,8 +35,8 @@ services:
   #   docker compose --profile telemetry up -d
   #
   # Nothing sends to it by default: `sbt run` has no agent at all (it is scoped `dist`, so only the image
-  # carries it), and the image keeps OTEL_JAVAAGENT_ENABLED=false. `bin/run-with-telemetry.sh` is the one
-  # thing that turns both on.
+  # carries it), and the image keeps OTEL_JAVAAGENT_ENABLED=false. `bin/run.sh` brings up this profile, builds
+  # the image and runs it with the agent on — the one path that turns telemetry on.
   jaeger:
     image: jaegertracing/jaeger:2.0.0
     container_name: dkq-jaeger
