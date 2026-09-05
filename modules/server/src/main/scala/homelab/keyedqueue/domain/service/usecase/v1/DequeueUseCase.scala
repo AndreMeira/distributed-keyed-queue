@@ -1,6 +1,7 @@
 package homelab.keyedqueue.domain.service.usecase.v1
 
 
+import homelab.common.orFail
 import homelab.common.error.{ ApplicationError, ValidationError }
 import homelab.keyedqueue.domain.model.Claimed
 import homelab.keyedqueue.domain.request.v1.QueueRequest
@@ -8,7 +9,6 @@ import homelab.keyedqueue.domain.response.v1.QueueResponse
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
-import homelab.keyedqueue.domain.syntax.*
 import zio.{ Chunk, Duration, IO, NonEmptyChunk, duration2DurationOps }
 
 

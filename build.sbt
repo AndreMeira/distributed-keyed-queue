@@ -2,14 +2,14 @@
 // at the storage layer rather than in consumer memory.
 // Design note: ../research/infrastructure/homelab-message-broker.md
 //
-// Built on homelab-toolkit-zio: `homelab-common` brings the messaging/flow/store ports (KeyedQueue,
-// KeyLock, Distributer, PollConsumer), `homelab-postgres` the leased store behind them.
+// Built on homelab-toolkit-zio: `homelab-common` brings the ports and the error vocabulary,
+// `homelab-telemetry` the OpenTelemetry adapter behind the `Monitor` port.
 
 val scala3Version         = "3.8.3"
 val zioVersion            = "2.1.23"
-val zioPreludeVersion     = "1.0.0-RC47" // the toolkit's version; Validation is a domain-level type here
-val toolkitVersion        = "0.0.1-alpha"
-val otelAgentVersion      = "2.20.1"      // the OpenTelemetry Java agent; in the image, off unless asked for
+val zioPreludeVersion     = "1.0.0-RC47"    // the toolkit's version; Validation is a domain-level type here
+val toolkitVersion        = "0.0.2"
+val otelAgentVersion      = "2.20.1"        // the OpenTelemetry Java agent; in the image, off unless asked for
 val scalapbVersion        = "0.11.17"       // keep in sync with compilerplugin in project/plugins.sbt
 val zioGrpcVersion        = "0.6.3"
 val grpcVersion           = "1.83.1"        // must match the grpc-core zio-grpc pulls, not scalapb's
@@ -40,7 +40,6 @@ ThisBuild / scalacOptions ++= Seq(
 ThisBuild / resolvers += GitHubPackages.toolkit
 
 ThisBuild / credentials ++= GitHubPackages.credentials
-
 
 // The two contract modules are the only ones worth publishing: they are what a consumer of this service
 // needs, and the modules that are not a contract opt out with `publish / skip` where they are defined.
@@ -109,10 +108,10 @@ ThisBuild / dependencyOverrides ++= Seq(
 lazy val protocol = project
   .in(file("modules/protocol"))
   .settings(
-    name                                := "distributed-keyed-queue-protocol",
+    name                                  := "distributed-keyed-queue-protocol",
     // Everything under `protobuf` except the service: the messages are what this artifact is.
     Compile / PB.generate / excludeFilter := "*_service.proto",
-    Compile / PB.targets := Seq(
+    Compile / PB.targets                  := Seq(
       // Generator options live in the .proto (`option (scalapb.options)`), not here: zio-grpc's generator
       // reads them from the file, so setting flatPackage build-side desynchronises the two and the ZIO
       // stub ends up referring to a package ScalaPB no longer generates.
@@ -142,11 +141,11 @@ lazy val protocolZioGrpc = project
   .in(file("modules/protocol-zio-grpc"))
   .dependsOn(protocol)
   .settings(
-    name                                := "distributed-keyed-queue-protocol-zio-grpc",
-    Compile / PB.protoSources           := Seq((protocol / Compile / sourceDirectory).value / "protobuf"),
+    name                                  := "distributed-keyed-queue-protocol-zio-grpc",
+    Compile / PB.protoSources             := Seq((protocol / Compile / sourceDirectory).value / "protobuf"),
     // The mirror of the exclusion in `protocol`: between them, every proto is generated exactly once.
     Compile / PB.generate / includeFilter := "*_service.proto",
-    Compile / PB.targets       := Seq(
+    Compile / PB.targets                  := Seq(
       scalapb.gen(grpc = true)          -> (Compile / sourceManaged).value / "scalapb",
       scalapb.zio_grpc.ZioCodeGenerator -> (Compile / sourceManaged).value / "scalapb",
     ),
@@ -174,18 +173,18 @@ lazy val server = project
   // then the image sbt built, with no second definition of the entry point to keep in step.
   .enablePlugins(JavaAppPackaging, DockerPlugin, JavaAgent)
   .settings(
-    name                 := "distributed-keyed-queue-server",
+    name                                      := "distributed-keyed-queue-server",
     // The deployable ships as an image, not a jar — nothing should depend on it.
-    publish / skip       := true,
+    publish / skip                            := true,
     // Pinned rather than derived from `name`: the compose files and the cluster manifests name this image,
     // and they should not move because a module was renamed.
-    Docker / packageName := "distributed-keyed-queue",
+    Docker / packageName                      := "distributed-keyed-queue",
     // Pinned to a JRE newer than any JDK likely to build this: class files travel forward, not back.
-    dockerBaseImage      := "eclipse-temurin:21-jre",
-    dockerExposedPorts   := Seq(9000),
+    dockerBaseImage                           := "eclipse-temurin:21-jre",
+    dockerExposedPorts                        := Seq(9000),
     // `:latest` as well as the version, so docker-compose.e2e.yml names an image that does not change
     // every time the version does.
-    dockerUpdateLatest   := true,
+    dockerUpdateLatest                        := true,
     // `dist` and not `compile`: the agent travels in the image, and `sbt run` never sees it. sbt-javaagent
     // also writes the `-javaagent:` flag into the generated start script, so a deployment turns telemetry on
     // with configuration rather than with a JVM argument it has to get right.
@@ -193,31 +192,33 @@ lazy val server = project
     // Off by default, because an agent that instruments everything costs ~1.4s of startup and, with no
     // collector to reach, retries its exports forever in the logs. `false` leaves it loaded but inert; a
     // deployment that wants telemetry sets this true and points OTEL_EXPORTER_OTLP_ENDPOINT at a collector.
-    dockerEnvVars        := Map("OTEL_JAVAAGENT_ENABLED" -> "false"),
+    dockerEnvVars                             := Map("OTEL_JAVAAGENT_ENABLED" -> "false"),
     libraryDependencies ++= Seq(
-      // the toolkit: ports + the Postgres adapter behind them (magnum, Hikari, Flyway come transitively)
-      "com.andremeira.homelab" %% "homelab-common"   % toolkitVersion,
-      "com.andremeira.homelab" %% "homelab-postgres" % toolkitVersion,
-      "dev.zio"                %% "zio"              % zioVersion,
+      // the toolkit: the ports and error vocabulary, plus the OpenTelemetry adapter behind the `Monitor`
+      // port (zio-telemetry and the otel API come transitively). No `homelab-postgres`: the substrate is
+      // Redis, and nothing here has ever touched a relational store.
+      "com.andremeira.homelab" %% "homelab-common"    % toolkitVersion,
+      "com.andremeira.homelab" %% "homelab-telemetry" % toolkitVersion,
+      "dev.zio"                %% "zio"               % zioVersion,
       // Validation as a value: accumulating rather than fail-fast, which ZIO's error channel cannot be.
       // Comes transitively with homelab-common; named here because the domain uses it directly.
-      "dev.zio"                %% "zio-prelude"      % zioPreludeVersion,
+      "dev.zio"                %% "zio-prelude"       % zioPreludeVersion,
       // Redis: the substrate. Lettuce rather than zio-redis, which derives its Input/Output from a
       // zio-schema BinaryCodec — that encodes keys and args, and this design needs them byte-exact
       // (the Lua builds key names by concatenation) plus heterogeneous script replies.
-      "io.lettuce"              % "lettuce-core"     % lettuceVersion,
+      "io.lettuce"              % "lettuce-core"      % lettuceVersion,
       // Config: HOCON under resources/config, read with pureconfig — the homelab's convention, and the
       // one that lets a file carry both a working default and an env override for the same key.
-      "com.typesafe"            % "config"           % typesafeConfigVersion,
-      "com.github.pureconfig"  %% "pureconfig-core"  % pureconfigVersion,
+      "com.typesafe"            % "config"            % typesafeConfigVersion,
+      "com.github.pureconfig"  %% "pureconfig-core"   % pureconfigVersion,
       // Wire <-> domain mapping. The domain DTOs mirror the proto field for field precisely so these
       // transformers stay derivable: anything Chimney cannot derive is a mismatch worth looking at.
-      "io.scalaland"           %% "chimney"          % chimneyVersion,
+      "io.scalaland"           %% "chimney"           % chimneyVersion,
       // The transport the server listens on; the generated stubs and their runtime come from `protocol`.
-      "io.grpc"                 % "grpc-netty"       % grpcVersion,
-      "dev.zio"                %% "zio-test"         % zioVersion            % Test,
-      "dev.zio"                %% "zio-test-sbt"     % zioVersion            % Test,
-      "org.testcontainers"      % "testcontainers"   % testcontainersVersion % Test,
+      "io.grpc"                 % "grpc-netty"        % grpcVersion,
+      "dev.zio"                %% "zio-test"          % zioVersion            % Test,
+      "dev.zio"                %% "zio-test-sbt"      % zioVersion            % Test,
+      "org.testcontainers"      % "testcontainers"    % testcontainersVersion % Test,
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
   )

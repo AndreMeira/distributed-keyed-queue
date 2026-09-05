@@ -12,19 +12,19 @@ import zio.ZLayer
 /**
  * Wiring for the gRPC adapter.
  *
- * The service takes the apply cases and nothing else — no store, no connection, no configuration — because a
+ * The service takes the use cases and nothing else — no store, no connection, no configuration — because a
  * protocol adapter that reached past them could hide a decision where a second adapter would not find it.
  */
 object Module:
 
   /**
-   * The service, over the synchronous apply cases.
+   * The service, over the synchronous use cases.
    *
    * @return the layer
    */
   val service: ZLayer[SyncUseCases, Nothing, QueueService] =
     ZLayer.fromFunction: (useCases: SyncUseCases) =>
-      QueueService(useCases.enqueue, useCases.dequeue, useCases.settle, useCases.heartbeat)
+      QueueService(useCases)
 
   /**
    * The server, started when the layer is built and shut down when the scope closes.

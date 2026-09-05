@@ -1,8 +1,8 @@
 package homelab.keyedqueue.domain.service.validation
 
 
+import homelab.common.Validated
 import homelab.keyedqueue.domain.error.InvalidInput
-import homelab.keyedqueue.domain.syntax.Validated
 import zio.prelude.Validation
 
 

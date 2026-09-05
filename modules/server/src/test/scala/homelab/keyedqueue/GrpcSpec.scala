@@ -37,7 +37,7 @@ object GrpcSpec extends ZIOSpecDefault:
                      )(container => ZIO.attemptBlocking(container.stop()).ignore)
         url        = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
         config     = QueueConfig(url, cluster = false, port, 30.seconds, 1.second, 100, 200.millis, 1, 5.seconds, maxBatchLimit = 32)
-        _         <- GrpcApplication.serve.provide(ZLayer.succeed(config)).forkScoped
+        _         <- GrpcApplication.serve(config).forkScoped
         _         <- ZIO.sleep(1.second) // let the server bind before the client dials
         client    <- KeyedQueueClient.scoped(
                        ZManagedChannel(ManagedChannelBuilder.forAddress("localhost", port).usePlaintext())
@@ -153,9 +153,9 @@ object GrpcSpec extends ZIOSpecDefault:
       for
         client <- ZIO.service[KeyedQueueClient]
         failed <- client.enqueue(EnqueueRequest("", Some(message("", "x")))).flip
-        status  = failed match
-                    case error: StatusException => Option(error.getStatus)
-                    case _                      => None
+        // `flip` gives the error channel, which the stub types as `StatusException`, so there is no other
+        // shape to match on. `Option` is for the status itself, which the exception may carry as null.
+        status  = Option(failed.getStatus)
       yield assertTrue(
         status.map(_.getCode).contains(Status.Code.INVALID_ARGUMENT),
         status.flatMap(reported => Option(reported.getDescription)).exists(_.contains("a queue name is required")),

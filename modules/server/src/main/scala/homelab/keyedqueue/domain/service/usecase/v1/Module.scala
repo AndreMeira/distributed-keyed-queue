@@ -8,7 +8,7 @@ import zio.ZLayer
 
 
 /**
- * Wiring for the synchronous apply cases.
+ * Wiring for the synchronous use cases.
  *
  * Everything it needs is a port or a domain value, so this layer says exactly what the domain depends on:
  * somewhere to keep the queue, something that repairs abandoned work, and the parse that turns a request
@@ -18,7 +18,7 @@ import zio.ZLayer
 object Module:
 
   /**
-   * The four apply cases, as one dependency for whatever adapter serves them.
+   * The four use cases, as one dependency for whatever adapter serves them.
    *
    * @return the layer
    */

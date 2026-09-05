@@ -13,7 +13,7 @@ import zio.*
 
 
 /**
- * The gRPC surface: decode, run a apply case, encode.
+ * The gRPC surface: decode, run a use case, encode.
  *
  * There is no logic here on purpose. A handler that did more than translate would be a decision living in
  * the protocol adapter, where a second adapter — or a test — could not reach it.
@@ -23,21 +23,20 @@ import zio.*
  * caller has to look at them. Only genuine faults become a `Status`, and the mapping lives in one place
  * rather than in each handler.
  *
- * @param acceptMessage accepts a message
- * @param claimMessage waits for one
- * @param settleMessage reports an outcome
- * @param renewClaims renews what a consumer holds
+ * '''One dependency, not four.''' The set of use cases is the API — the same four calls the proto
+ * declares — so it travels as one value rather than as four constructor parameters that must be listed in
+ * the same order everywhere they are wired. Adding a fifth operation is then an edit to [[SyncUseCases]]
+ * and a handler here, and nothing in between.
+ *
+ * @param useCases the operations this surface exposes, one per RPC
  */
 final class QueueService(
-  acceptMessage: EnqueueUseCase,
-  claimMessage: DequeueUseCase,
-  settleMessage: SettleUseCase,
-  renewClaims: HeartbeatUseCase,
+  useCases: SyncUseCases
 ) extends ZioKeyedQueueService.KeyedQueue:
 
   /**
    * Refuses a message that does not say how to read itself: the encoding is decoded here, not validated in
-   * the apply case, because the domain has no `Unspecified` to carry inwards.
+   * the use case, because the domain has no `Unspecified` to carry inwards.
    *
    * @param request the wire request
    * @return the wire response; aborts with `INVALID_ARGUMENT` when the message cannot be read
@@ -45,11 +44,11 @@ final class QueueService(
   override def enqueue(request: v1.EnqueueRequest): IO[StatusException, v1.EnqueueResponse] =
     for
       safe     <- decoded(request.toDomain)
-      response <- acceptMessage(safe).mapError(status)
+      response <- useCases.enqueue(safe).mapError(status)
     yield response.toProto
 
   /**
-   * Blocks for the caller's `max_wait`, clamped by the apply case. A timeout comes back as an absent
+   * Blocks for the caller's `max_wait`, clamped by the use case. A timeout comes back as an absent
    * `delivery` rather than a status, so a quiet queue is not an error.
    *
    * @param request the wire request
@@ -58,7 +57,7 @@ final class QueueService(
   override def dequeue(request: v1.DequeueRequest): IO[StatusException, v1.DequeueResponse] =
     for
       safe     <- decoded(request.toDomain)
-      response <- claimMessage(safe).mapError(status)
+      response <- useCases.dequeue(safe).mapError(status)
     yield response.toProto
 
   /**
@@ -71,7 +70,7 @@ final class QueueService(
   override def settle(request: v1.SettleRequest): IO[StatusException, v1.SettleResponse] =
     for
       safe     <- decoded(request.toDomain)
-      response <- settleMessage(safe).mapError(status)
+      response <- useCases.settle(safe).mapError(status)
     yield response.toProto
 
   /**
@@ -84,7 +83,7 @@ final class QueueService(
   override def heartbeat(request: v1.HeartbeatRequest): IO[StatusException, v1.HeartbeatResponse] =
     for
       safe     <- decoded(request.toDomain)
-      response <- renewClaims(safe).mapError(status)
+      response <- useCases.heartbeat(safe).mapError(status)
     yield response.toProto
 
   /**

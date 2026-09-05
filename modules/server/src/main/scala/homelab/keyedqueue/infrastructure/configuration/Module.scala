@@ -1,7 +1,6 @@
 package homelab.keyedqueue.infrastructure.configuration
 
 
-import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
 import zio.ZLayer
@@ -14,13 +13,6 @@ import zio.ZLayer
  * of infrastructure settings is narrowed to the handful of rules each domain service actually needs.
  */
 object Module:
-
-  /**
-   * The whole configuration, read from `resources/config/queue.conf`.
-   *
-   * @return the layer; fails startup when the file is missing or invalid
-   */
-  val config: ZLayer[Any, ApplicationError, QueueConfig] = ZLayer(QueueConfig.load)
 
   /**
    * The slice of it the parse is allowed to know.

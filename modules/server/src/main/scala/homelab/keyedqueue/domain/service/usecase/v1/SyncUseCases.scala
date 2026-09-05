@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.usecase.v1
 
 
 /**
- * The synchronous API's apply cases behind a single dependency.
+ * The synchronous API's use cases behind a single dependency.
  *
  * One field per operation, and the set is the API: the four calls of `docs/research/phase-1-api.md`. When
  * streaming arrives it gets its own aggregate rather than growing this one, because the two speak different

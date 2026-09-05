@@ -2,10 +2,13 @@ package homelab.keyedqueue.application.grpc.v1
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.service.usecase.v1 as usecase
-import homelab.keyedqueue.domain.service.validation as validation
+import homelab.keyedqueue.application.grpc.v1.Module as GrpcModule
+import homelab.keyedqueue.domain.service.maintenance.Module as MaintenanceModule
+import homelab.keyedqueue.domain.service.usecase.v1.Module as UseCaseModule
+import homelab.keyedqueue.domain.service.validation.Module as ValidationModule
+import homelab.keyedqueue.infrastructure.configuration.Module as ConfigurationModule
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis as redis
+import homelab.keyedqueue.infrastructure.redis.Module as RedisModule
 import scalapb.zio_grpc.Server
 import zio.*
 
@@ -27,18 +30,20 @@ object GrpcApplication:
    * `ZIO.never` requires nothing — so without this the whole stack would be constructed lazily, which is to
    * say never, and the process would sit there serving no one.
    *
+   * @param conf where Redis is, what to listen on, and the sizes every module reads its own slice of
    * @return never completes successfully; aborts when the substrate or the server cannot be set up
    */
-  val serve: ZIO[QueueConfig, ApplicationError, Nothing] =
-    (ZIO.service[Server] *> ZIO.never).provideSome[QueueConfig](
-      redis.Module.connection,
-      redis.Module.scripts,
-      redis.Module.store,
-      homelab.keyedqueue.domain.service.maintenance.Module.watchdog,
-      homelab.keyedqueue.infrastructure.configuration.Module.validation,
-      homelab.keyedqueue.infrastructure.configuration.Module.watchdog,
-      validation.Module.input,
-      usecase.Module.useCases,
-      Module.service,
-      Module.server,
+  def serve(conf: QueueConfig): ZIO[Any, ApplicationError, Nothing] =
+    (ZIO.service[Server] *> ZIO.never).provide(
+      ZLayer.succeed(conf),
+      RedisModule.connection,
+      RedisModule.scripts,
+      RedisModule.store,
+      MaintenanceModule.watchdog,
+      ConfigurationModule.validation,
+      ConfigurationModule.watchdog,
+      ValidationModule.input,
+      UseCaseModule.useCases,
+      GrpcModule.service,
+      GrpcModule.server,
     )

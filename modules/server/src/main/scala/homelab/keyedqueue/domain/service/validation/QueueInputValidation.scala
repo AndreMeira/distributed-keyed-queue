@@ -1,10 +1,10 @@
 package homelab.keyedqueue.domain.service.validation
 
 
+import homelab.common.Validated
 import homelab.keyedqueue.domain.error.InvalidInput
 import homelab.keyedqueue.domain.model.{ Claim, Demand, Message, Renewal, Settlement, Submission }
 import homelab.keyedqueue.domain.request.v1.QueueRequest
-import homelab.keyedqueue.domain.syntax.Validated
 import homelab.keyedqueue.domain.types.*
 import zio.prelude.Validation
 import zio.duration2DurationOps

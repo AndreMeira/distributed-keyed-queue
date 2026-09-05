@@ -1,8 +1,9 @@
 package homelab.keyedqueue
 
 
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.application.grpc.v1.GrpcApplication
-import homelab.keyedqueue.infrastructure.configuration.Module as configuration
+import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import zio.*
 
 
@@ -22,4 +23,8 @@ object Main extends ZIOAppDefault:
    *
    * @return never completes successfully; aborts with whatever prevented startup
    */
-  override def run: ZIO[Any, Any, Any] = GrpcApplication.serve.provide(configuration.config)
+  override def run: ZIO[Any, ApplicationError, Nothing] =
+    for
+      conf  <- QueueConfig.load
+      never <- GrpcApplication.serve(conf)
+    yield never
