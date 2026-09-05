@@ -1,0 +1,86 @@
+{
+  "uid": "dkq-overview",
+  "title": "dkq — overview",
+  "tags": ["dkq"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Request rate, by operation",
+      "description": "What the service is being asked to do. Flat under `steady`; a staircase under `idle`.",
+      "datasource": { "type": "prometheus", "uid": "dkq-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (operation) (rate(dkq_operation_hits_total[1m]))",
+          "legendFormat": "{{operation}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Errors, by kind",
+      "description": "Empty is the expected state. `error.kind` is the toolkit's classification, not the exception name.",
+      "datasource": { "type": "prometheus", "uid": "dkq-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (operation, error_kind) (rate(dkq_operation_errors_total[1m]))",
+          "legendFormat": "{{operation}} {{error_kind}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency p50 / p95 / p99 — enqueue, settle, heartbeat",
+      "description": "Dequeue is deliberately excluded: it blocks for max_wait by design, and averaging it in makes this panel meaningless. See docs/architecture/observability.md.",
+      "datasource": { "type": "prometheus", "uid": "dkq-prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le, operation) (rate(dkq_operation_latency_milliseconds_bucket{operation!=\"QueueService.dequeue\"}[5m])))",
+          "legendFormat": "p50 {{operation}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(dkq_operation_latency_milliseconds_bucket{operation!=\"QueueService.dequeue\"}[5m])))",
+          "legendFormat": "p95 {{operation}}"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le, operation) (rate(dkq_operation_latency_milliseconds_bucket{operation!=\"QueueService.dequeue\"}[5m])))",
+          "legendFormat": "p99 {{operation}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Dequeue latency — read this differently",
+      "description": "Two populations, not one distribution: calls that found work return in ms, calls that waited out an empty queue return at max_wait. A high p99 here is healthy. Note the histogram's top finite bucket is 10s, so a longer wait cannot be distinguished.",
+      "datasource": { "type": "prometheus", "uid": "dkq-prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(dkq_operation_latency_milliseconds_bucket{operation=\"QueueService.dequeue\"}[5m])))",
+          "legendFormat": "p50 — found work at once"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(dkq_operation_latency_milliseconds_bucket{operation=\"QueueService.dequeue\"}[5m])))",
+          "legendFormat": "p99 — waited"
+        }
+      ]
+    }
+  ]
+}

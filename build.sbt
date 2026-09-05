@@ -246,6 +246,23 @@ lazy val root = project
  * Docker — `sbt test` must stay something worth running on every save. Run them with `sbt e2e` (which
  * builds the image first) or `sbt e2e/test` against a stack you already have up.
  */
+// The demo: a client that produces known shapes of traffic, so a human can watch a dashboard while it
+// runs. Not a test — nothing here asserts, and CI never runs it. See demo/src/.../Scenario.scala.
+lazy val demo = project
+  .in(file("demo"))
+  // the contract, not `server`: the demo is a *consumer*, and depending on what is published is what makes
+  // it evidence that the published contract is usable.
+  .dependsOn(protocolZioGrpc)
+  .settings(
+    name           := "distributed-keyed-queue-demo",
+    publish / skip := true,
+    libraryDependencies ++= Seq(
+      // A consumer picks its own transport; the contract does not ship one.
+      "io.grpc" % "grpc-netty" % grpcVersion
+    ),
+  )
+
+
 lazy val e2e = project
   .in(file("e2e"))
   // the contract, not `server`: these tests are a *consumer*, and depending on the contract alone is the

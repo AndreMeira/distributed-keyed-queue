@@ -1,0 +1,14 @@
+# Picks up any dashboard JSON committed beside this file, so a dashboard is a reviewable artefact rather
+# than something living in one browser's local storage.
+#
+# The workflow is: bring the stack up, arrange panels in the UI, export the JSON, and commit it here.
+# Hand-authoring Grafana JSON is not worth anyone's afternoon.
+apiVersion: 1
+
+providers:
+  - name: dkq
+    type: file
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

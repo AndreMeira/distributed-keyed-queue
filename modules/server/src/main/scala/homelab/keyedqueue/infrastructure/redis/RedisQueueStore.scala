@@ -87,10 +87,11 @@ final class RedisQueueStore(
    * @return the claim, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
    */
   override def claim(demand: Demand): IO[RedisFailure, Option[Claimed]] =
-    for
-      asked   <- Clock.instant
-      claimed <- claimWithin(Namespace(demand.queue, buckets), demand, asked)
-    yield claimed
+    monitor.trace("RedisQueueStore.claim"):
+      for
+        asked   <- Clock.instant
+        claimed <- claimWithin(Namespace(demand.queue, buckets), demand, asked)
+      yield claimed
 
   /**
    * Take a signal, look, and — finding nothing — wait on it, until the patience is spent.
