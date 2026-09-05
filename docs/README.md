@@ -34,6 +34,8 @@ What is specific to this repo:
     what another service depends on to talk to dkq, and what it still has to write itself.
   - [`proto-generation.md`](learning-material/proto-generation.md) — how two published artifacts are
     generated from one set of `.proto` files, and what breaks if that is rearranged.
+  - [`java-agents-and-telemetry.md`](learning-material/java-agents-and-telemetry.md) — what a Java agent
+    does to a build, why it ships only in the image, and why present is not the same as active.
   - [`writing-end-to-end-tests.md`](learning-material/writing-end-to-end-tests.md) — what the e2e suite
     taught about measuring and asserting against a real deployment.
 - **The problem statement lives outside this repo**, in `research/infrastructure/homelab-message-broker.md`

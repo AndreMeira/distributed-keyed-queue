@@ -1,0 +1,41 @@
+# Jaeger v2 is an OpenTelemetry Collector distribution, so it is the collector *and* the trace UI in one
+# container: it receives OTLP directly, keeps traces in memory, and re-exports metrics for Prometheus to
+# scrape. One service instead of collector + jaeger + storage, which is the right trade for a laptop.
+service:
+  extensions: [jaeger_storage, jaeger_query]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [jaeger_storage_exporter]
+    metrics:
+      receivers: [otlp]
+      exporters: [prometheus]
+
+receivers:
+  otlp:
+    protocols:
+      # Both, because which one is used is the agent's choice: OTEL_EXPORTER_OTLP_PROTOCOL defaults to
+      # http/protobuf (4318), and grpc (4317) is a one-variable change away.
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+extensions:
+  jaeger_query:
+    storage:
+      traces: traces
+  jaeger_storage:
+    backends:
+      traces:
+        # In memory, and gone on restart. This stack is for looking at a trace you just produced, not for
+        # keeping history — the same choice the dev Valkey makes with `save ""`.
+        memory:
+          max_traces: 100000
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: traces
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: dkq

@@ -1,0 +1,9 @@
+# Scrapes the metrics Jaeger re-exports from what the agent sent it, so both signals arrive over one OTLP
+# connection and split here.
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: dkq
+    static_configs:
+      - targets: ["jaeger:8889"]

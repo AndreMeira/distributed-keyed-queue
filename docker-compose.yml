@@ -28,6 +28,54 @@ services:
       timeout: 3s
       retries: 10
 
+  # ── Observability, opt-in ────────────────────────────────────────────────────────────────────────
+  # Behind a profile, so `docker compose up` is still just Valkey and nothing here costs a developer who
+  # is not looking at telemetry. Start it with:
+  #
+  #   docker compose --profile telemetry up -d
+  #
+  # Nothing sends to it by default: `sbt run` has no agent at all (it is scoped `dist`, so only the image
+  # carries it), and the image keeps OTEL_JAVAAGENT_ENABLED=false. `bin/run-with-telemetry.sh` is the one
+  # thing that turns both on.
+  jaeger:
+    image: jaegertracing/jaeger:2.0.0
+    container_name: dkq-jaeger
+    profiles: [telemetry]
+    command: ["--config=/etc/jaeger/jaeger.yml"]
+    volumes:
+      - ./data/jaeger/jaeger.yml:/etc/jaeger/jaeger.yml:ro
+    ports:
+      - "16686:16686" # Jaeger UI — the traces
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP, the agent's default
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: dkq-prometheus
+    profiles: [telemetry]
+    volumes:
+      - ./data/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090" # Prometheus UI — the metrics, and where to try a query before writing a panel
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: dkq-grafana
+    profiles: [telemetry]
+    volumes:
+      - ./data/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000" # Grafana UI — admin/admin, with both datasources already provisioned
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    depends_on: [prometheus]
+    restart: unless-stopped
+
 # No `app` service here on purpose: this stack is the substrate for a dkq you run from sbt or your IDE.
 # For dkq *deployed* — the image, two instances, the whole thing driven over the wire — see
 # docker-compose.e2e.yml and docs/architecture/end-to-end-testing.md. The image itself comes from

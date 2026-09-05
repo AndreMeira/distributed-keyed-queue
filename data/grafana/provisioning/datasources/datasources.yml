@@ -1,0 +1,17 @@
+# Provisioned so the stack is useful the moment it is up: no click-through to add a datasource, and the
+# dashboards a reader writes are portable because the datasource has a fixed uid.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: dkq-prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+
+  - name: Jaeger
+    type: jaeger
+    uid: dkq-jaeger
+    access: proxy
+    url: http://jaeger:16686

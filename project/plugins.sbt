@@ -9,3 +9,5 @@ addSbtPlugin("org.scalameta" % "sbt-scalafmt" % "2.5.0")
 // Packages the service as a Docker image (`sbt Docker/publishLocal`), which is what the end-to-end suite
 // runs: several real instances against one Valkey, driven over the wire. See docs/testing/end-to-end.md.
 addSbtPlugin("com.github.sbt" % "sbt-native-packager" % "1.11.1")
+
+addSbtPlugin("com.github.sbt" % "sbt-javaagent" % "0.1.8")

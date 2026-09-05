@@ -9,6 +9,7 @@ val scala3Version         = "3.8.3"
 val zioVersion            = "2.1.23"
 val zioPreludeVersion     = "1.0.0-RC47" // the toolkit's version; Validation is a domain-level type here
 val toolkitVersion        = "0.0.1-alpha"
+val otelAgentVersion      = "2.20.1"      // the OpenTelemetry Java agent; in the image, off unless asked for
 val scalapbVersion        = "0.11.17"       // keep in sync with compilerplugin in project/plugins.sbt
 val zioGrpcVersion        = "0.6.3"
 val grpcVersion           = "1.83.1"        // must match the grpc-core zio-grpc pulls, not scalapb's
@@ -171,7 +172,7 @@ lazy val server = project
   // JavaAppPackaging + DockerPlugin so `sbt server/Docker/publishLocal` produces the image the end-to-end
   // suite deploys. The service has no hand-written Dockerfile on purpose: the image a developer tests is
   // then the image sbt built, with no second definition of the entry point to keep in step.
-  .enablePlugins(JavaAppPackaging, DockerPlugin)
+  .enablePlugins(JavaAppPackaging, DockerPlugin, JavaAgent)
   .settings(
     name                 := "distributed-keyed-queue-server",
     // The deployable ships as an image, not a jar — nothing should depend on it.
@@ -185,6 +186,14 @@ lazy val server = project
     // `:latest` as well as the version, so docker-compose.e2e.yml names an image that does not change
     // every time the version does.
     dockerUpdateLatest   := true,
+    // `dist` and not `compile`: the agent travels in the image, and `sbt run` never sees it. sbt-javaagent
+    // also writes the `-javaagent:` flag into the generated start script, so a deployment turns telemetry on
+    // with configuration rather than with a JVM argument it has to get right.
+    javaAgents += "io.opentelemetry.javaagent" % "opentelemetry-javaagent" % otelAgentVersion % "dist",
+    // Off by default, because an agent that instruments everything costs ~1.4s of startup and, with no
+    // collector to reach, retries its exports forever in the logs. `false` leaves it loaded but inert; a
+    // deployment that wants telemetry sets this true and points OTEL_EXPORTER_OTLP_ENDPOINT at a collector.
+    dockerEnvVars        := Map("OTEL_JAVAAGENT_ENABLED" -> "false"),
     libraryDependencies ++= Seq(
       // the toolkit: ports + the Postgres adapter behind them (magnum, Hikari, Flyway come transitively)
       "com.andremeira.homelab" %% "homelab-common"   % toolkitVersion,
