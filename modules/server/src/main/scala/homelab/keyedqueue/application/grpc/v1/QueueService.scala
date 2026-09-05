@@ -1,7 +1,7 @@
 package homelab.keyedqueue.application.grpc.v1
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.{ ApplicationError, ValidationError }
 import homelab.keyedqueue.domain.service.usecase.v1.*
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Inbound.*
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Outbound.*
@@ -116,17 +116,22 @@ final class QueueService(
   /**
    * Map a failure to a gRPC status.
    *
-   * Bad input is the caller's to fix; anything else is ours, and transient by nature — the lease is the
-   * backstop, so a caller that retries will be served. An invalid request describes *every* problem it had,
-   * because `INVALID_ARGUMENT` is the caller's cue to change something and one round trip per mistake is a
-   * poor way to learn what to change.
+   * '''By category, not by identity.''' The toolkit's marker traits already say what a failure means — the
+   * caller sent something wrong, the trouble will pass, or it is ours to fix — and those are exactly the
+   * three answers gRPC has room for. Matching on markers rather than on an enum of concrete errors means a
+   * new adapter, or a new failure inside this one, is classified correctly without anyone remembering to
+   * come back here, and the default is the safe one.
+   *
+   * A `ValidationError` describes *every* problem the request had, because `INVALID_ARGUMENT` is the
+   * caller's cue to change something and one round trip per mistake is a poor way to learn what to change.
+   * An unavailable store carries its reason, because a caller deciding whether to retry benefits from
+   * knowing what is unreachable. Anything else is ours: the caller is told nothing beyond `INTERNAL`,
+   * because the detail is for our logs and not for a stranger.
    *
    * @param error what went wrong
    * @return the status to fail the call with
    */
-  private def status(error: QueueError): StatusException = error match
-    case invalid: QueueError.InvalidRequest  => reject(invalid.message)
-    case QueueError.StoreUnavailable(reason) => StatusException(Status.UNAVAILABLE.withDescription(reason))
-    case QueueError.MalformedReply(reason)   => StatusException(Status.INTERNAL.withDescription(reason))
-    case QueueError.Misconfigured(_)         => StatusException(Status.INTERNAL.withDescription(""))
-    case QueueError.StartupFailed(_)         => StatusException(Status.INTERNAL.withDescription(""))
+  private def status(error: ApplicationError): StatusException = error match
+    case invalid: ValidationError           => reject(invalid.message)
+    case _: ApplicationError.TransientError => StatusException(Status.UNAVAILABLE.withDescription(error.message))
+    case _                                  => StatusException(Status.INTERNAL.withDescription(""))

@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.redis
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.{ Claim, Claimed, Demand, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
@@ -52,7 +52,7 @@ final class RedisQueueStore(
    * @param submission the queue to append in, and the message; the key it carries decides where it lands
    * @return the key's depth after the append
    */
-  override def enqueue(submission: Submission): IO[QueueError, Long] =
+  override def enqueue(submission: Submission): IO[RedisFailure, Long] =
     connection.provide:
       scripts.produce.run(Namespace(submission.queue, buckets), submission.message)
 
@@ -70,9 +70,9 @@ final class RedisQueueStore(
    * is left of it, rather than starting again — so a race it loses costs it a round trip, not a full wait.
    *
    * @param demand the queue to claim from, how long to wait, and the most to take
-   * @return the claim, or `None` when the patience elapsed; aborts with `QueueError` when the store fails
+   * @return the claim, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
    */
-  override def claim(demand: Demand): IO[QueueError, Option[Claimed]] =
+  override def claim(demand: Demand): IO[RedisFailure, Option[Claimed]] =
     for
       asked   <- Clock.instant
       claimed <- claimWithin(Namespace(demand.queue, buckets), demand, asked)
@@ -93,9 +93,9 @@ final class RedisQueueStore(
    * @param ns the queue being claimed from
    * @param demand what the caller asked for
    * @param asked when its call arrived, which is what the patience is measured from
-   * @return the claim, or `None` when the patience elapsed; aborts with `QueueError` when the store fails
+   * @return the claim, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
    */
-  private def claimWithin(ns: Namespace, demand: Demand, asked: Instant): IO[QueueError, Option[Claimed]] =
+  private def claimWithin(ns: Namespace, demand: Demand, asked: Instant): IO[RedisFailure, Option[Claimed]] =
     waiters.subscribe(demand.queue).flatMap { signal =>
       attempt(ns, demand).flatMap:
         case granted @ Some(_) => ZIO.succeed(granted)
@@ -114,9 +114,9 @@ final class RedisQueueStore(
    *
    * @param ns the queue to claim from
    * @param demand how much to take
-   * @return the claim, or `None` when nothing was claimable; aborts with `QueueError` when the store fails
+   * @return the claim, or `None` when nothing was claimable; aborts with `RedisFailure` when the store fails
    */
-  private def attempt(ns: Namespace, demand: Demand): IO[QueueError, Option[Claimed]] =
+  private def attempt(ns: Namespace, demand: Demand): IO[RedisFailure, Option[Claimed]] =
     connection.provide:
       scripts.consume.run(ns, leaseTtl, demand.batch)
 
@@ -143,7 +143,7 @@ final class RedisQueueStore(
    * @param settlement the claim, what became of the messages it names, and any backoff
    * @return whether it applied
    */
-  override def settle(settlement: Settlement): IO[QueueError, Boolean] =
+  override def settle(settlement: Settlement): IO[RedisFailure, Boolean] =
     connection.provide:
       scripts.complete.run(Namespace(settlement.claimed.queue, buckets), settlement)
 
@@ -157,7 +157,7 @@ final class RedisQueueStore(
    * @param claims every claim the caller still holds, across any number of queues
    * @return the new deadline and the claims already revoked
    */
-  override def renew(claims: Chunk[Claim]): IO[QueueError, (Instant, Chunk[Claim])] =
+  override def renew(claims: Chunk[Claim]): IO[RedisFailure, (Instant, Chunk[Claim])] =
     connection.provide:
       ZIO
         .foreach(claims.groupBy(_.queue).toList): (queue, held) =>
@@ -174,7 +174,7 @@ final class RedisQueueStore(
    * @param limit the most entries to handle in one pass
    * @return what it repaired
    */
-  override def sweep(queue: QueueName, limit: Int): IO[QueueError, QueueStore.Swept] =
+  override def sweep(queue: QueueName, limit: Int): IO[RedisFailure, QueueStore.Swept] =
     connection.provide:
       scripts.watchdog.run(Namespace(queue, buckets), limit)
 

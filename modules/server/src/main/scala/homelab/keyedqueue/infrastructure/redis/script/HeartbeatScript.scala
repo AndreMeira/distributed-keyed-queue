@@ -1,9 +1,10 @@
 package homelab.keyedqueue.infrastructure.redis.script
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.Claim
 import homelab.keyedqueue.domain.types.*
+import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands
 import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
 import io.lettuce.core.ScriptOutputType
@@ -31,14 +32,14 @@ final class HeartbeatScript(ref: LuaScript.Sha):
    * @param ns the queue whose claims to renew
    * @param leaseTtl how long the registration, and each renewed claim, survive without another beat
    * @param held the claims to renew, all in that queue
-   * @return the new deadline and the claims already revoked; aborts with `QueueError` when the store fails
+   * @return the new deadline and the claims already revoked; aborts with `RedisFailure` when the store fails
    *         or the reply cannot be read
    */
   def run(
     ns: Namespace,
     leaseTtl: Duration,
     held: Chunk[Claim],
-  ): ZIO[Connection.Commands, QueueError, (Instant, Chunk[Claim])] =
+  ): ZIO[Connection.Commands, RedisFailure, (Instant, Chunk[Claim])] =
     Connection.use: redis =>
       ZIO
         .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns), args(leaseTtl, held)*))
@@ -79,7 +80,7 @@ final class HeartbeatScript(ref: LuaScript.Sha):
    * @return the deadline every renewed claim now carries, and the claims that had already been revoked, or
    *         `MalformedReply` naming the element that could not be read
    */
-  private def read(held: Chunk[Claim])(value: Any): Either[QueueError, (Instant, Chunk[Claim])] =
+  private def read(held: Chunk[Claim])(value: Any): Either[RedisFailure, (Instant, Chunk[Claim])] =
     decoder(held).decode("heartbeat", value)
 
   /**
@@ -106,7 +107,7 @@ object HeartbeatScript:
   /**
    * Register `lua/heartbeat.lua` and hold the digest it was given.
    *
-   * @return the script, ready to run; aborts with `QueueError` if it is missing or the server rejects it
+   * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
-  def make: ZIO[Connection.Commands, QueueError, HeartbeatScript] =
+  def make: ZIO[Connection.Commands, RedisFailure, HeartbeatScript] =
     LuaScript.register("lua/heartbeat.lua").map(HeartbeatScript(_))

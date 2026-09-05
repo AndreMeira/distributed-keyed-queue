@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.redis
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import io.lettuce.core.api.sync.RedisCommands
@@ -28,7 +28,7 @@ object Module:
    *
    * @return the layer
    */
-  val connection: ZLayer[QueueConfig, QueueError, Connection] = ZLayer.scoped:
+  val connection: ZLayer[QueueConfig, ApplicationError, Connection] = ZLayer.scoped:
     ZIO.service[QueueConfig].flatMap { config =>
       Connection.make(Connection.Config(config.maxWait, config.redisUrl, config.cluster))
     }
@@ -39,7 +39,7 @@ object Module:
    *
    * @return the layer
    */
-  val scripts: ZLayer[Connection, QueueError, Scripts] =
+  val scripts: ZLayer[Connection, ApplicationError, Scripts] =
     ZLayer(ZIO.serviceWithZIO[Connection](_.provide(Scripts.make)))
 
   /**
@@ -50,7 +50,7 @@ object Module:
    *
    * @return the layer
    */
-  val store: ZLayer[Connection & Scripts & QueueConfig, QueueError, QueueStore] = ZLayer.scoped {
+  val store: ZLayer[Connection & Scripts & QueueConfig, ApplicationError, QueueStore] = ZLayer.scoped {
     for
       connection <- ZIO.service[Connection]
       scripts    <- ZIO.service[Scripts]

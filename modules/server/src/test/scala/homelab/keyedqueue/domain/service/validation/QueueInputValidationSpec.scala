@@ -1,7 +1,8 @@
 package homelab.keyedqueue.domain.service.validation
 
 
-import homelab.keyedqueue.domain.error.{ InvalidInput, QueueError }
+import homelab.common.error.ValidationError
+import homelab.keyedqueue.domain.error.InvalidInput
 import homelab.keyedqueue.domain.model.{ Claim, Demand, Message, Renewal, Settlement, Submission }
 import homelab.keyedqueue.domain.request.v1.QueueRequest
 import homelab.keyedqueue.domain.request.v1.QueueRequest.MessageOutcome
@@ -131,8 +132,12 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
       // next would need two round trips to learn what a single answer can tell it.
       for failure <- validation.parse(QueueRequest.Enqueue("", message(""))).orFail.flip
       yield assertTrue(
-        failure == QueueError.InvalidRequest(NonEmptyChunk(InvalidInput.EmptyQueueName, InvalidInput.EmptyMessageKey)),
-        failure.message == "a queue name is required; a message key is required: it is what ordering is defined by",
+        failure == ValidationError(NonEmptyChunk(InvalidInput.EmptyQueueName, InvalidInput.EmptyMessageKey)),
+        // Both problems reach the caller. Asserted by containment rather than as one joined string: how
+        // the toolkit renders an aggregate is its business, and pinning it here would make a rendering
+        // change in `ValidationError` a failure in this service.
+        failure.message.contains("a queue name is required"),
+        failure.message.contains("a message key is required"),
       )
     },
     test("one problem is reported alone") {
@@ -140,8 +145,8 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
         noQueue <- validation.parse(QueueRequest.Enqueue("", message("k1"))).orFail.flip
         noKey   <- validation.parse(QueueRequest.Enqueue("jobs", message(""))).orFail.flip
       yield assertTrue(
-        noQueue == QueueError.InvalidRequest(NonEmptyChunk(InvalidInput.EmptyQueueName)),
-        noKey == QueueError.InvalidRequest(NonEmptyChunk(InvalidInput.EmptyMessageKey)),
+        noQueue == ValidationError(NonEmptyChunk(InvalidInput.EmptyQueueName)),
+        noKey == ValidationError(NonEmptyChunk(InvalidInput.EmptyMessageKey)),
       )
     },
     test("a dequeue asking for more than the service offers is clamped, not refused") {
@@ -164,7 +169,7 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
       for unnamed <- validation.parse(QueueRequest.Dequeue("", 1.second, maxBatch = 1)).orFail.flip
       yield assertTrue(
         patient.toEither.isRight,
-        unnamed == QueueError.InvalidRequest(NonEmptyChunk(InvalidInput.EmptyQueueName)),
+        unnamed == ValidationError(NonEmptyChunk(InvalidInput.EmptyQueueName)),
       )
     },
   )

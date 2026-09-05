@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.redis
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.types.QueueName
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import io.lettuce.core.XReadArgs.StreamOffset
@@ -68,7 +68,7 @@ final class WakeListener(
    *
    * @return the queues named by the entries that arrived, one occurrence per entry
    */
-  private def read: IO[QueueError, Chunk[QueueName]] =
+  private def read: IO[RedisFailure, Chunk[QueueName]] =
     positions.get.flatMap: current =>
       val offsets = current.map((stream, id) => StreamOffset.from(stream, id)).toArray
       connection
@@ -86,7 +86,7 @@ final class WakeListener(
    */
   private def entries(
     offsets: Array[StreamOffset[String]]
-  ): ZIO[Connection.Commands, QueueError, List[io.lettuce.core.StreamMessage[String, Array[Byte]]]] =
+  ): ZIO[Connection.Commands, RedisFailure, List[io.lettuce.core.StreamMessage[String, Array[Byte]]]] =
     Connection.use: redis =>
       ZIO
         .attemptBlocking(redis.xread(XReadArgs.Builder.block(block.toMillis).count(WakeListener.count), offsets*))
@@ -157,7 +157,7 @@ object WakeListener:
    * @param block how long one read waits before going round again
    * @return the listener; aborts with `StoreUnavailable` when a wake stream's position cannot be read
    */
-  def make(connection: Connection, waiters: Waiters, buckets: Int, block: Duration): IO[QueueError, WakeListener] =
+  def make(connection: Connection, waiters: Waiters, buckets: Int, block: Duration): IO[RedisFailure, WakeListener] =
     ZIO
       .foreach(Namespace.wakeStreams(buckets).toChunk)(stream => position(connection, stream).map(stream -> _))
       .flatMap(resolved => Ref.make(resolved.toMap))
@@ -170,7 +170,7 @@ object WakeListener:
    * @param stream the wake stream
    * @return the id to read after; aborts with `StoreUnavailable` when the read fails
    */
-  private def position(connection: Connection, stream: String): IO[QueueError, String] =
+  private def position(connection: Connection, stream: String): IO[RedisFailure, String] =
     connection.provide:
       Connection.use: redis =>
         ZIO

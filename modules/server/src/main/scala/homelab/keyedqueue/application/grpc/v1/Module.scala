@@ -1,7 +1,7 @@
 package homelab.keyedqueue.application.grpc.v1
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.usecase.v1.SyncUseCases
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import io.grpc.ServerBuilder
@@ -29,13 +29,13 @@ object Module:
   /**
    * The server, started when the layer is built and shut down when the scope closes.
    *
-   * Its failure is narrowed to `QueueError` so the whole graph fails with one type: a port already taken is
+   * Its failure is narrowed to `ApplicationError` so the whole graph fails with one type: a port already taken is
    * the same kind of event as a Redis that will not answer — the process cannot start, and nothing about it
    * is worth retrying in place.
    *
    * @return the layer
    */
-  val server: ZLayer[QueueService & QueueConfig, QueueError, Server] =
+  val server: ZLayer[QueueService & QueueConfig, ApplicationError, Server] =
     ZLayer
       .service[QueueConfig]
       .flatMap: environment =>
@@ -43,4 +43,4 @@ object Module:
           ServerBuilder.forPort(environment.get[QueueConfig].port),
           ServiceList.addFromEnvironment[QueueService],
         )
-      .mapError(error => QueueError.StartupFailed(s"the gRPC server did not start: ${error.getMessage}"))
+      .mapError(error => StartupFailed(s"the gRPC server did not start: ${error.getMessage}"))

@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.service.maintenance
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.QueueName
 import zio.*
@@ -96,7 +96,7 @@ final class Watchdog(store: QueueStore, config: Watchdog.Config, queues: Ref[Set
    * @param error what the store reported
    * @return noop
    */
-  private def sweptWarn(queue: QueueName, error: QueueError): UIO[Unit] =
+  private def sweptWarn(queue: QueueName, error: ApplicationError): UIO[Unit] =
     ZIO.logWarning(s"sweep of $queue failed: ${error.message}")
 
   /**

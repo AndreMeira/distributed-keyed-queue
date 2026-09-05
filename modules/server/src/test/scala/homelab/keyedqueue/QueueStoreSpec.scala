@@ -1,7 +1,7 @@
 package homelab.keyedqueue
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.{ Claim, Claimed, Demand, Message, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
@@ -60,7 +60,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
    * @param config where Redis is, and the sizes to build with
    * @return the store, and the pool behind it for tests that need to look at Redis directly
    */
-  private def store(config: QueueConfig): ZIO[Scope, QueueError, (QueueStore, Connection)] =
+  private def store(config: QueueConfig): ZIO[Scope, ApplicationError, (QueueStore, Connection)] =
     for
       connection <- Connection.make(
                       Connection.Config(config.maxWait, config.redisUrl, config.cluster)
@@ -104,17 +104,17 @@ object QueueStoreSpec extends ZIOSpecDefault:
     )
 
   /** Claim exactly one message, for the tests that are not about batching. */
-  private def one(store: QueueStore, queue: QueueName): ZIO[Any, QueueError, Option[Claimed]] =
+  private def one(store: QueueStore, queue: QueueName): ZIO[Any, ApplicationError, Option[Claimed]] =
     store.claim(Demand(queue, 2.seconds, 1))
 
   /** Acknowledge a single-message batch and report what it was carrying. */
-  private def ack(store: QueueStore, queue: QueueName)(batch: Option[Claimed]): ZIO[Any, QueueError, String] =
+  private def ack(store: QueueStore, queue: QueueName)(batch: Option[Claimed]): ZIO[Any, ApplicationError, String] =
     ZIO
       .foreach(batch)(one => store.settle(settlement(one.claim, acks(one))).as(body(one).mkString))
       .map(_.getOrElse(""))
 
   /** Report a whole batch as failed. */
-  private def nack(store: QueueStore)(batch: Claimed): ZIO[Any, QueueError, Boolean] =
+  private def nack(store: QueueStore)(batch: Claimed): ZIO[Any, ApplicationError, Boolean] =
     store.settle(settlement(batch.claim, batch.messages.map(_.id -> Verdict.Failed)))
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueStore over Redis")(

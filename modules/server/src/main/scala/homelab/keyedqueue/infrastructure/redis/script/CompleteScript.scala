@@ -1,9 +1,10 @@
 package homelab.keyedqueue.infrastructure.redis.script
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.{ Claim, Settlement }
 import homelab.keyedqueue.domain.types.*
+import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
 import io.lettuce.core.ScriptOutputType
 import zio.*
@@ -32,9 +33,9 @@ final class CompleteScript(ref: LuaScript.Sha):
    *
    * @param settlement the claim being settled against, what became of the messages it names, and any
    *                   backoff a failure asked for — several in one claim leave the longest wait standing
-   * @return whether it applied; aborts with `QueueError` when the store fails or the reply cannot be read
+   * @return whether it applied; aborts with `RedisFailure` when the store fails or the reply cannot be read
    */
-  def run(ns: Namespace, settlement: Settlement): ZIO[Connection.Commands, QueueError, Boolean] =
+  def run(ns: Namespace, settlement: Settlement): ZIO[Connection.Commands, RedisFailure, Boolean] =
     Connection.use: redis =>
       ZIO
         .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns, settlement.claimed), args(settlement)*))
@@ -103,7 +104,7 @@ final class CompleteScript(ref: LuaScript.Sha):
    * @param value the raw reply
    * @return whether it applied, or `MalformedReply` when the reply is not an integer
    */
-  private def read(value: Any): Either[QueueError, Boolean] =
+  private def read(value: Any): Either[RedisFailure, Boolean] =
     LuaScript.Decode.long.map(_ == 1L).decode("complete", value)
 
 
@@ -112,7 +113,7 @@ object CompleteScript:
   /**
    * Register `lua/complete.lua` and hold the digest it was given.
    *
-   * @return the script, ready to run; aborts with `QueueError` if it is missing or the server rejects it
+   * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
-  def make: ZIO[Connection.Commands, QueueError, CompleteScript] =
+  def make: ZIO[Connection.Commands, RedisFailure, CompleteScript] =
     LuaScript.register("lua/complete.lua").map(CompleteScript(_))

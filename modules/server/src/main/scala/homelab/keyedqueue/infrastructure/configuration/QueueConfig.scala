@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.configuration
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import pureconfig.{ ConfigReader, ConfigSource }
 import zio.*
 
@@ -70,10 +70,10 @@ object QueueConfig:
    * @return the configuration; aborts with `Misconfigured` describing every problem pureconfig found, not just
    *         the first
    */
-  val load: IO[QueueError, QueueConfig] =
+  val load: IO[ApplicationError, QueueConfig] =
     ZIO
       .attempt(ConfigSource.resources("config/queue.conf").load[QueueConfig])
-      .mapError(error => QueueError.Misconfigured(s"config/queue.conf could not be read: ${error.getMessage}"))
+      .mapError(error => Misconfigured(s"config/queue.conf could not be read: ${error.getMessage}"))
       .flatMap:
         case Right(config)  => ZIO.succeed(config)
-        case Left(failures) => ZIO.fail(QueueError.Misconfigured(s"config/queue.conf is invalid: ${failures.prettyPrint()}"))
+        case Left(failures) => ZIO.fail(Misconfigured(s"config/queue.conf is invalid: ${failures.prettyPrint()}"))

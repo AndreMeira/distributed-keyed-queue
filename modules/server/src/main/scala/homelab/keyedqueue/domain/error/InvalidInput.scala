@@ -6,10 +6,10 @@ import homelab.common.error.ValidationError
 /**
  * One thing wrong with a request, named.
  *
- * '''A value, not an error.''' These are what validation *accumulates*; the error a caller eventually sees is
- * a single [[QueueError.InvalidRequest]] carrying every one of them. Keeping them separate is what makes "one
- * pass, all the problems" expressible — an error type that could only ever hold one reason would force
- * validation to stop at the first.
+ * '''A value, not an error.''' These are what validation *accumulates*; the error a caller eventually sees
+ * is a single [[ValidationError]] carrying every one of them. Keeping them separate is what makes "one pass,
+ * all the problems" expressible — an error type that could only ever hold one reason would force validation
+ * to stop at the first.
  *
  * '''An implementation of the homelab's [[ValidationError.InvalidInput]].''' The contract is one problem
  * with a `message`; this enumerates the ones a queue can have. Sharing the contract is what lets

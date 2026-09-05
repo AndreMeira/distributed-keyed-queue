@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.service.persistence
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.{ Claim, Claimed, Demand, Settlement, Submission }
 import homelab.keyedqueue.domain.types.*
 import zio.{ Chunk, Duration, IO }
@@ -29,9 +29,9 @@ trait QueueStore:
    * The key is the message's own, so a message cannot be filed under a key that disagrees with it.
    *
    * @param submission where the message goes, and the message
-   * @return the key's queue depth after the append; aborts with `QueueError` if the store fails
+   * @return the key's queue depth after the append; aborts with an `AdapterError` if the store fails
    */
-  def enqueue(submission: Submission): IO[QueueError, Long]
+  def enqueue(submission: Submission): IO[ApplicationError.AdapterError, Long]
 
   /**
    * Wait for a key to become claimable, then take the oldest of its messages the demand allows for.
@@ -43,10 +43,10 @@ trait QueueStore:
    * messages until the claim ends, however many it turned out to contain.
    *
    * @param demand the queue to claim from, how long to wait, and the most to take
-   * @return the claim, or `None` when nothing became claimable in time; aborts with `QueueError` if the
+   * @return the claim, or `None` when nothing became claimable in time; aborts with an `AdapterError` if the
    *         store fails
    */
-  def claim(demand: Demand): IO[QueueError, Option[Claimed]]
+  def claim(demand: Demand): IO[ApplicationError.AdapterError, Option[Claimed]]
 
   /**
    * Report what happened to some of what a claim owns.
@@ -55,19 +55,20 @@ trait QueueStore:
    * harmless: settling removes the id from what the claim owns, and removing it again finds nothing.
    *
    * @param settlement the claim, what became of the messages it names, and any backoff
-   * @return true when applied, false when the claim had already been revoked; aborts with `QueueError` if
+   * @return true when applied, false when the claim had already been revoked; aborts with an
+   *         `AdapterError` if
    *         the store fails
    */
-  def settle(settlement: Settlement): IO[QueueError, Boolean]
+  def settle(settlement: Settlement): IO[ApplicationError.AdapterError, Boolean]
 
   /**
    * Push the deadline forward on the claims still held, and say which are gone.
    *
    * @param claims everything the caller believes it holds; may span queues
    * @return the new deadline, and the claims that were not renewed because they had been revoked; aborts
-   *         with `QueueError` if the store fails
+   *         with `ApplicationError` if the store fails
    */
-  def renew(claims: Chunk[Claim]): IO[QueueError, (Instant, Chunk[Claim])]
+  def renew(claims: Chunk[Claim]): IO[ApplicationError.AdapterError, (Instant, Chunk[Claim])]
 
   /**
    * Repair what a death or a backoff left behind: revoke lapsed claims, and release keys whose retry delay
@@ -77,9 +78,9 @@ trait QueueStore:
    *
    * @param queue the queue to sweep
    * @param limit the most entries to handle per sweep, per kind
-   * @return what it repaired, for logging and metrics; aborts with `QueueError` if the store fails
+   * @return what it repaired, for logging and metrics; aborts with an `AdapterError` if the store fails
    */
-  def sweep(queue: QueueName, limit: Int): IO[QueueError, QueueStore.Swept]
+  def sweep(queue: QueueName, limit: Int): IO[ApplicationError.AdapterError, QueueStore.Swept]
 
 
 object QueueStore:

@@ -1,10 +1,11 @@
 package homelab.keyedqueue.infrastructure.redis.script
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.{ Claim, Claimed, Message }
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
+import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
 import io.lettuce.core.ScriptOutputType
 import zio.*
@@ -35,10 +36,10 @@ final class ConsumeScript(ref: LuaScript.Sha):
    * @param ns the queue to claim from
    * @param leaseTtl how long the resulting claim survives without a heartbeat
    * @param maxBatch the most messages to take at once
-   * @return the claim, or `None` when nothing was claimable; aborts with `QueueError` when the store fails
+   * @return the claim, or `None` when nothing was claimable; aborts with `RedisFailure` when the store fails
    *         or the reply cannot be read
    */
-  def run(ns: Namespace, leaseTtl: Duration, maxBatch: Int): ZIO[Connection.Commands, QueueError, Option[Claimed]] =
+  def run(ns: Namespace, leaseTtl: Duration, maxBatch: Int): ZIO[Connection.Commands, RedisFailure, Option[Claimed]] =
     Connection.use: redis =>
       ZIO
         .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns), args(ns, leaseTtl, maxBatch)*))
@@ -86,7 +87,7 @@ final class ConsumeScript(ref: LuaScript.Sha):
    * @return the claim, or `None` when nothing was claimable; `MalformedReply` when the reply, or a message
    *         in it, cannot be read
    */
-  private def read(ns: Namespace)(value: Any): Either[QueueError, Option[Claimed]] =
+  private def read(ns: Namespace)(value: Any): Either[RedisFailure, Option[Claimed]] =
     decoder(ns).decode("consume", value)
 
   /**
@@ -119,7 +120,7 @@ final class ConsumeScript(ref: LuaScript.Sha):
   private def nonEmpty(batch: Chunk[Claimed.Owned]): LuaScript.Decode.Of[NonEmptyChunk[Claimed.Owned]] =
     NonEmptyChunk.fromChunk(batch) match
       case Some(messages) => LuaScript.Decode.succeed(messages)
-      case None           => LuaScript.Decode.fail(QueueError.MalformedReply("consume granted a claim over no messages"))
+      case None           => LuaScript.Decode.fail(RedisFailure.MalformedReply("consume granted a claim over no messages"))
 
   /**
    * The shape the script promises: `{key, token, deadline, backlog, ids, messages, attempts}` when it
@@ -159,7 +160,7 @@ object ConsumeScript:
   /**
    * Register `lua/consume.lua` and hold the digest it was given.
    *
-   * @return the script, ready to run; aborts with `QueueError` if it is missing or the server rejects it
+   * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
-  def make: ZIO[Connection.Commands, QueueError, ConsumeScript] =
+  def make: ZIO[Connection.Commands, RedisFailure, ConsumeScript] =
     LuaScript.register("lua/consume.lua").map(ConsumeScript(_))

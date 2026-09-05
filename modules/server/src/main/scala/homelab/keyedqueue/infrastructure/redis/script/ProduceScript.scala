@@ -1,9 +1,10 @@
 package homelab.keyedqueue.infrastructure.redis.script
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.Message
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
+import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands
 import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
 import io.lettuce.core.ScriptOutputType
@@ -31,10 +32,10 @@ final class ProduceScript(ref: LuaScript.Sha):
    *
    * @param ns the queue to append in
    * @param message the message; the key it carries decides where it lands
-   * @return the key's depth after the append; aborts with `QueueError` when the store fails or the reply
+   * @return the key's depth after the append; aborts with `RedisFailure` when the store fails or the reply
    *         cannot be read
    */
-  def run(ns: Namespace, message: Message): ZIO[Connection.Commands, QueueError, Long] =
+  def run(ns: Namespace, message: Message): ZIO[Connection.Commands, RedisFailure, Long] =
     Connection.use: redis =>
       ZIO
         .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns, message), args(ns, message)*))
@@ -74,7 +75,7 @@ final class ProduceScript(ref: LuaScript.Sha):
    * @param value the raw reply
    * @return how many messages that key now holds, or `MalformedReply` when the reply is not an integer
    */
-  private def read(value: Any): Either[QueueError, Long] =
+  private def read(value: Any): Either[RedisFailure, Long] =
     LuaScript.Decode.long.decode("produce", value)
 
 
@@ -83,7 +84,7 @@ object ProduceScript:
   /**
    * Register `lua/produce.lua` and hold the digest it was given.
    *
-   * @return the script, ready to run; aborts with `QueueError` if it is missing or the server rejects it
+   * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
-  def make: ZIO[Connection.Commands, QueueError, ProduceScript] =
+  def make: ZIO[Connection.Commands, RedisFailure, ProduceScript] =
     LuaScript.register("lua/produce.lua").map(ProduceScript(_))

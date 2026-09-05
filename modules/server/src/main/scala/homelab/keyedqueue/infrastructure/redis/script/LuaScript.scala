@@ -1,7 +1,8 @@
 package homelab.keyedqueue.infrastructure.redis.script
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
+import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection
 import io.lettuce.core.cluster.api.sync.RedisAdvancedClusterCommands
 import zio.*
@@ -47,14 +48,14 @@ object LuaScript:
    * good on every connection to it.
    *
    * @param path the script's path on the classpath, e.g. `lua/produce.lua`
-   * @return the digest to call it by; aborts with `QueueError` if it is missing or rejected
+   * @return the digest to call it by; aborts with `RedisFailure` if it is missing or rejected
    */
-  def register(path: String): ZIO[Connection.Commands, QueueError, Sha] =
+  def register(path: String): ZIO[Connection.Commands, RedisFailure, Sha] =
     load(path).flatMap: text =>
       Connection.use: redis =>
         ZIO
           .attemptBlocking(loadEverywhere(redis, text.getBytes(StandardCharsets.UTF_8)))
-          .mapError(error => QueueError.StoreUnavailable(s"loading a script failed: ${error.getMessage}"))
+          .mapError(error => RedisFailure.Unavailable(s"loading a script failed: ${error.getMessage}"))
           .map(Sha.apply)
 
   /**
@@ -86,10 +87,10 @@ object LuaScript:
    * @param path the script's path on the classpath, e.g. `lua/produce.lua`
    * @return the script text; aborts if it is missing from the jar
    */
-  private def load(path: String): IO[QueueError, String] =
+  private def load(path: String): IO[RedisFailure, String] =
     ZIO
       .attempt(Source.fromResource(path).mkString)
-      .mapError(error => QueueError.MalformedReply(s"$path is missing: ${error.getMessage}"))
+      .mapError(error => RedisFailure.MalformedReply(s"$path is missing: ${error.getMessage}"))
 
   /**
    * Encode text the way the scripts expect to read it.
@@ -117,9 +118,9 @@ object LuaScript:
    * Everything the substrate throws is transient by nature: the lease is the backstop.
    *
    * @param error what the call threw
-   * @return it as a `StoreUnavailable`
+   * @return it as an `Unavailable`
    */
-  def failure(error: Throwable): QueueError = QueueError.StoreUnavailable(error.getMessage)
+  def failure(error: Throwable): RedisFailure = RedisFailure.Unavailable(error.getMessage)
 
   /**
    * Reading a reply into what it means.
@@ -143,7 +144,7 @@ object LuaScript:
      *
      * @tparam A what the reply means once read
      */
-    opaque type Of[+A] = (String, Any) => Either[QueueError, A]
+    opaque type Of[+A] = (String, Any) => Either[RedisFailure, A]
 
     /**
      * An integer reply.
@@ -205,7 +206,7 @@ object LuaScript:
      * @param problem what was wrong with it
      * @return the decoder
      */
-    def fail(problem: QueueError): Of[Nothing] = (_, _) => Left(problem)
+    def fail(problem: RedisFailure): Of[Nothing] = (_, _) => Left(problem)
 
     /**
      * An array reply of exactly `arity` elements.
@@ -221,7 +222,7 @@ object LuaScript:
     def sized[A](arity: Int)(decoder: Of[A]): Of[A] = (path, value) =>
       list(path, value).flatMap: values =>
         if values.size == arity then decoder(path, value)
-        else Left(QueueError.MalformedReply(s"$path: expected $arity elements, got ${values.size}"))
+        else Left(RedisFailure.MalformedReply(s"$path: expected $arity elements, got ${values.size}"))
 
     /**
      * Name a reply that was not what a script promised, without printing a payload into a log.
@@ -241,7 +242,7 @@ object LuaScript:
        * @tparam A what the reply means once read
        * @return its meaning, or `MalformedReply` naming where reading stopped
        */
-      def decode(context: String, value: Any): Either[QueueError, A] = decoder(context, value)
+      def decode(context: String, value: Any): Either[RedisFailure, A] = decoder(context, value)
 
       /**
        * Turn what this reads into something else.
@@ -255,14 +256,14 @@ object LuaScript:
       /**
        * Turn what this reads into something else that can itself fail.
        *
-       * The bridge to anything already returning `Either[QueueError, *]` — a stored message read back out of
+       * The bridge to anything already returning `Either[RedisFailure, *]` — a stored message read back out of
        * its bytes, say.
        *
        * @param f what to turn it into, or why it could not be
        * @tparam B the result
        * @return the decoder
        */
-      def emap[B](f: A => Either[QueueError, B]): Of[B] = (path, value) => decoder(path, value).flatMap(f)
+      def emap[B](f: A => Either[RedisFailure, B]): Of[B] = (path, value) => decoder(path, value).flatMap(f)
 
       /**
        * Read something else from the '''same''' reply, once this has been read.
@@ -287,7 +288,7 @@ object LuaScript:
           values.lift(index) match
             case Some(element) => decoder(s"$path[$index]", element)
             case None          =>
-              Left(QueueError.MalformedReply(s"$path: expected at least ${index + 1} elements, got ${values.size}"))
+              Left(RedisFailure.MalformedReply(s"$path: expected at least ${index + 1} elements, got ${values.size}"))
 
       /**
        * Read this out of every element of an array reply.
@@ -296,7 +297,7 @@ object LuaScript:
        */
       def each: Of[Chunk[A]] = (path, value) =>
         list(path, value).flatMap: values =>
-          values.zipWithIndex.foldLeft(Right(Chunk.empty): Either[QueueError, Chunk[A]]):
+          values.zipWithIndex.foldLeft(Right(Chunk.empty): Either[RedisFailure, Chunk[A]]):
             case (soFar, (element, index)) =>
               soFar.flatMap(read => decoder(s"$path[$index]", element).map(read :+ _))
 
@@ -326,5 +327,5 @@ object LuaScript:
      * @param value what it found
      * @return the failure
      */
-    private def malformed(path: String, expected: String, value: Any): QueueError =
-      QueueError.MalformedReply(s"$path: expected $expected, got ${describe(value)}")
+    private def malformed(path: String, expected: String, value: Any): RedisFailure =
+      RedisFailure.MalformedReply(s"$path: expected $expected, got ${describe(value)}")

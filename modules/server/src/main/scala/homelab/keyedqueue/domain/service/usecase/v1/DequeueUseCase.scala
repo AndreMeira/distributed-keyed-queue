@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.service.usecase.v1
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.{ ApplicationError, ValidationError }
 import homelab.keyedqueue.domain.model.Claimed
 import homelab.keyedqueue.domain.request.v1.QueueRequest
 import homelab.keyedqueue.domain.response.v1.QueueResponse
@@ -36,10 +36,10 @@ final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, validation: Qu
    * `Demand` mean "within this service's limits" wherever one turns up.
    *
    * @param request the queue and what the caller is asking for, untrusted
-   * @return the delivery, or nothing when none became ready in time; aborts with `InvalidRequest` when the
-   *         queue is unnamed or the batch is negative, or with `QueueError` when the store fails
+   * @return the delivery, or nothing when none became ready in time; aborts with `ValidationError` when the
+   *         queue is unnamed or the batch is negative, or with `ApplicationError` when the store fails
    */
-  def apply(request: QueueRequest.Dequeue): IO[QueueError, QueueResponse.Dequeue] =
+  def apply(request: QueueRequest.Dequeue): IO[ApplicationError, QueueResponse.Dequeue] =
     validation.parse(request).orFail.flatMap { demand =>
       watchdog.watch(demand.queue) *> store.claim(demand).map(response)
     }

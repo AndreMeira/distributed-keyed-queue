@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.redis
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import io.lettuce.core.cluster.RedisClusterClient
 import io.lettuce.core.cluster.api.sync.RedisClusterCommands
 import io.lettuce.core.codec.{ ByteArrayCodec, RedisCodec, StringCodec }
@@ -140,9 +140,9 @@ object Connection:
    * so the listener's `XREAD` is the sole long-lived wait in the process.
    *
    * @param config where Redis is, and the longest wait to honour
-   * @return the connections; aborts with `QueueError` when one cannot be opened
+   * @return the connections; aborts with `Unavailable` when one cannot be opened
    */
-  def make(config: Config): ZIO[Scope, QueueError, Connection] =
+  def make(config: Config): ZIO[Scope, RedisFailure, Connection] =
     for
       client <- client(config)
       sync   <- open(client, config.maxWait)
@@ -157,9 +157,9 @@ object Connection:
    * double those threads to no purpose.
    *
    * @param config where the substrate lives, and whether it is a cluster
-   * @return the client, shut down with the scope; aborts with `QueueError` when the URL is unusable
+   * @return the client, shut down with the scope; aborts with `Unavailable` when the URL is unusable
    */
-  private def client(config: Config): ZIO[Scope, QueueError, RedisClient | RedisClusterClient] =
+  private def client(config: Config): ZIO[Scope, RedisFailure, RedisClient | RedisClusterClient] =
     if config.cluster then redisClusterClient(config.redisUrl)
     else redisClient(config.redisUrl)
 
@@ -167,16 +167,16 @@ object Connection:
    * A client for the life of the scope.
    *
    * @param url the Redis URL, e.g. `redis://localhost:6379`
-   * @return the client; aborts with `QueueError` when the URL is unusable
+   * @return the client; aborts with `Unavailable` when the URL is unusable
    */
-  private def redisClient(url: String): ZIO[Scope, QueueError, RedisClient] =
+  private def redisClient(url: String): ZIO[Scope, RedisFailure, RedisClient] =
     ZIO
       .acquireRelease {
         ZIO.attempt:
           val uri = RedisURI.create(url)
           RedisClient.create(uri)
       }(client => ZIO.attempt(client.shutdown()).ignore)
-      .mapError(error => QueueError.StoreUnavailable(s"cannot reach $url: ${error.getMessage}"))
+      .mapError(error => RedisFailure.Unavailable(s"cannot reach $url: ${error.getMessage}"))
 
   /**
    * A cluster client for the life of the scope.
@@ -186,16 +186,16 @@ object Connection:
    * `{q:<queue>}` hash tag and therefore lands in one slot.
    *
    * @param url a seed node, e.g. `redis://localhost:7000`
-   * @return the client; aborts with `QueueError` when the URL is unusable
+   * @return the client; aborts with `Unavailable` when the URL is unusable
    */
-  private def redisClusterClient(url: String): ZIO[Scope, QueueError, RedisClusterClient] =
+  private def redisClusterClient(url: String): ZIO[Scope, RedisFailure, RedisClusterClient] =
     ZIO
       .acquireRelease {
         ZIO.attempt:
           val uri = RedisURI.create(url)
           RedisClusterClient.create(uri)
       }(client => ZIO.attempt(client.shutdown()).ignore)
-      .mapError(error => QueueError.StoreUnavailable(s"cannot reach $url: ${error.getMessage}"))
+      .mapError(error => RedisFailure.Unavailable(s"cannot reach $url: ${error.getMessage}"))
 
   /**
    * A connection from whichever client [[redis]] returned.
@@ -206,9 +206,9 @@ object Connection:
    *
    * @param client the client to connect with
    * @param commandTimeout the ceiling for any single command
-   * @return the synchronous command API; aborts with `QueueError` when connecting fails
+   * @return the synchronous command API; aborts with `Unavailable` when connecting fails
    */
-  private def open(client: RedisClient | RedisClusterClient, commandTimeout: Duration): ZIO[Scope, QueueError, Commands] =
+  private def open(client: RedisClient | RedisClusterClient, commandTimeout: Duration): ZIO[Scope, RedisFailure, Commands] =
     client match
       case c: RedisClient        => open(c, commandTimeout)
       case c: RedisClusterClient => open(c, commandTimeout)
@@ -222,9 +222,9 @@ object Connection:
    *
    * @param client the client to connect with
    * @param commandTimeout the ceiling for any single command
-   * @return the synchronous command API; aborts with `QueueError` when connecting fails
+   * @return the synchronous command API; aborts with `Unavailable` when connecting fails
    */
-  private def open(client: RedisClient, commandTimeout: Duration): ZIO[Scope, QueueError, Connection.Commands] =
+  private def open(client: RedisClient, commandTimeout: Duration): ZIO[Scope, RedisFailure, Connection.Commands] =
     ZIO
       .acquireRelease(
         ZIO.attemptBlocking(client.connect(codec))
@@ -232,7 +232,7 @@ object Connection:
       .mapAttempt: connection =>
         connection.setTimeout(JavaDuration.ofMillis(commandTimeout.toMillis))
         connection.sync()
-      .mapError(error => QueueError.StoreUnavailable(s"cannot open a connection: ${error.getMessage}"))
+      .mapError(error => RedisFailure.Unavailable(s"cannot open a connection: ${error.getMessage}"))
 
   /**
    * A cluster connection for the life of the scope.
@@ -242,9 +242,9 @@ object Connection:
    *
    * @param client         the cluster client to connect with
    * @param commandTimeout the ceiling for any single command
-   * @return the synchronous command API; aborts with `QueueError` when connecting fails
+   * @return the synchronous command API; aborts with `Unavailable` when connecting fails
    */
-  private def open(client: RedisClusterClient, commandTimeout: Duration): ZIO[Scope, QueueError, Connection.Commands] =
+  private def open(client: RedisClusterClient, commandTimeout: Duration): ZIO[Scope, RedisFailure, Connection.Commands] =
     ZIO
       .acquireRelease(
         ZIO.attemptBlocking(client.connect(codec))
@@ -252,4 +252,4 @@ object Connection:
       .mapAttempt: connection =>
         connection.setTimeout(JavaDuration.ofMillis(commandTimeout.toMillis))
         connection.sync()
-      .mapError(error => QueueError.StoreUnavailable(s"cannot open a connection: ${error.getMessage}"))
+      .mapError(error => RedisFailure.Unavailable(s"cannot open a connection: ${error.getMessage}"))

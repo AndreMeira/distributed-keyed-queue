@@ -1,9 +1,10 @@
 package homelab.keyedqueue.infrastructure.redis.script
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
+import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands
 import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
 import io.lettuce.core.ScriptOutputType
@@ -31,9 +32,9 @@ final class WatchdogScript(ref: LuaScript.Sha):
    *
    * @param ns the queue to repair
    * @param limit the most entries to handle in one pass
-   * @return what it repaired; aborts with `QueueError` when the store fails or the reply cannot be read
+   * @return what it repaired; aborts with `RedisFailure` when the store fails or the reply cannot be read
    */
-  def run(ns: Namespace, limit: Int): ZIO[Connection.Commands, QueueError, QueueStore.Swept] =
+  def run(ns: Namespace, limit: Int): ZIO[Connection.Commands, RedisFailure, QueueStore.Swept] =
     Connection.use: redis =>
       ZIO
         .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns), args(ns, limit)*))
@@ -67,7 +68,7 @@ final class WatchdogScript(ref: LuaScript.Sha):
    * @param value the raw reply
    * @return what the pass repaired, or `MalformedReply` naming the element that could not be read
    */
-  private def read(value: Any): Either[QueueError, QueueStore.Swept] =
+  private def read(value: Any): Either[RedisFailure, QueueStore.Swept] =
     decoder.decode("watchdog", value)
 
   /**
@@ -92,7 +93,7 @@ object WatchdogScript:
   /**
    * Register `lua/watchdog.lua` and hold the digest it was given.
    *
-   * @return the script, ready to run; aborts with `QueueError` if it is missing or the server rejects it
+   * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
-  def make: ZIO[Connection.Commands, QueueError, WatchdogScript] =
+  def make: ZIO[Connection.Commands, RedisFailure, WatchdogScript] =
     LuaScript.register("lua/watchdog.lua").map(WatchdogScript(_))

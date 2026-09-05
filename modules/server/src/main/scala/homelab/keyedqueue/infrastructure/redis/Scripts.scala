@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.redis
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands
 import homelab.keyedqueue.infrastructure.redis.script.*
 import zio.*
@@ -46,9 +46,9 @@ object Scripts:
    *
    * Each script registers itself — it is the one place that knows which file it comes from.
    *
-   * @return the calls they make; aborts with `QueueError` if one is missing or rejected
+   * @return the calls they make; aborts with `RedisFailure` if one is missing or rejected
    */
-  def make: ZIO[Commands, QueueError, Scripts] =
+  def make: ZIO[Commands, RedisFailure, Scripts] =
     for
       produce   <- ProduceScript.make
       consume   <- ConsumeScript.make

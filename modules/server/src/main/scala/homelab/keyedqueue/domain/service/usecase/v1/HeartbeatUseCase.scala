@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.service.usecase.v1
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.{ ApplicationError, ValidationError }
 import homelab.keyedqueue.domain.model.{ Claim, Renewal }
 import homelab.keyedqueue.domain.request.v1.QueueRequest
 import homelab.keyedqueue.domain.response.v1.QueueResponse
@@ -28,9 +28,9 @@ final class HeartbeatUseCase(store: QueueStore):
    * it has since revoked both mean "you do not hold this", and a consumer does the same thing about each.
    *
    * @param request everything the consumer believes it holds
-   * @return the new deadline and what it no longer holds; aborts with `QueueError` when the store fails
+   * @return the new deadline and what it no longer holds; aborts with `RedisFailure` when the store fails
    */
-  def apply(request: QueueRequest.Heartbeat): IO[QueueError, QueueResponse.Heartbeat] =
+  def apply(request: QueueRequest.Heartbeat): IO[ApplicationError, QueueResponse.Heartbeat] =
     val renewal = parse(request)
     store.renew(renewal.held).map { (until, lost) =>
       QueueResponse.Heartbeat(renewal.unreadable ++ lost.map(_.reference), until)

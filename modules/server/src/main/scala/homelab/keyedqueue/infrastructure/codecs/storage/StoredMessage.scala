@@ -1,8 +1,8 @@
 package homelab.keyedqueue.infrastructure.codecs.storage
 
 
-import homelab.keyedqueue.domain.error.QueueError
 import homelab.keyedqueue.domain.model.Message
+import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.{ Inbound, Outbound }
 import homelab.keyedqueue.v1
 import zio.Chunk
@@ -45,11 +45,11 @@ object StoredMessage:
    * @param bytes what the store handed back
    * @return the message, or `MalformedReply` when the bytes cannot be read
    */
-  def fromBytes(bytes: Chunk[Byte]): Either[QueueError, Message] =
+  def fromBytes(bytes: Chunk[Byte]): Either[RedisFailure, Message] =
     Try(v1.Message.parseFrom(bytes.toArray)).toEither.left
-      .map(error => QueueError.MalformedReply(s"a stored message is not a message: ${error.getMessage}"))
+      .map(error => RedisFailure.MalformedReply(s"a stored message is not a message: ${error.getMessage}"))
       .flatMap: parsed =>
         Inbound
           .message(parsed)
           .left
-          .map(reason => QueueError.MalformedReply(s"a stored message cannot be read: $reason"))
+          .map(reason => RedisFailure.MalformedReply(s"a stored message cannot be read: $reason"))

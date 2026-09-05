@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.configuration
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
 import zio.ZLayer
@@ -20,7 +20,7 @@ object Module:
    *
    * @return the layer; fails startup when the file is missing or invalid
    */
-  val config: ZLayer[Any, QueueError, QueueConfig] = ZLayer(QueueConfig.load)
+  val config: ZLayer[Any, ApplicationError, QueueConfig] = ZLayer(QueueConfig.load)
 
   /**
    * The slice of it the parse is allowed to know.

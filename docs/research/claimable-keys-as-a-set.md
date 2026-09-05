@@ -135,3 +135,6 @@ design questions rather than a piece of this one. What is already known about it
   take the head is claiming a *different* key from them, so the two do not race.
 - [`dequeue-connection-model.md`](dequeue-connection-model.md) discusses stickiness, but predates both the
   signal and the sorted set; its framing needs a pass before it is much use.
+- [`dequeue-latency.md`](dequeue-latency.md) draws the distinction that matters before starting: a named
+  claim reduces *contention* while keeping the authority in the store, so it still pays a round trip per
+  claim. Leasing a slice of the keyspace is what removes the round trip, and it is a much larger change.

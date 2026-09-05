@@ -1,7 +1,7 @@
 package homelab.keyedqueue.application.grpc.v1
 
 
-import homelab.keyedqueue.domain.error.QueueError
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.usecase.v1 as usecase
 import homelab.keyedqueue.domain.service.validation as validation
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
@@ -29,7 +29,7 @@ object GrpcApplication:
    *
    * @return never completes successfully; aborts when the substrate or the server cannot be set up
    */
-  val serve: ZIO[QueueConfig, QueueError, Nothing] =
+  val serve: ZIO[QueueConfig, ApplicationError, Nothing] =
     (ZIO.service[Server] *> ZIO.never).provideSome[QueueConfig](
       redis.Module.connection,
       redis.Module.scripts,

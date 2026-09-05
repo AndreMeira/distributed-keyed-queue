@@ -91,3 +91,6 @@ blocking `XREAD` occupies the connection whether or not it occupies a thread.
 - Hop cost: 200,000 iterations of `ZIO.attemptBlocking(())` against `ZIO.succeed(())` in a scratch spec.
 - Request latency and throughput: the opt-in indicators in `ThroughputSpec`, recorded in
   [`../research/throughput-first-numbers.md`](../research/throughput-first-numbers.md).
+
+What these numbers imply about where latency could be *removed* — rather than where it is spent — is
+[`../research/dequeue-latency.md`](../research/dequeue-latency.md).
