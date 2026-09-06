@@ -42,6 +42,8 @@ What is specific to this repo:
     does to a build, why it ships only in the image, and why present is not the same as active.
   - [`writing-end-to-end-tests.md`](learning-material/writing-end-to-end-tests.md) — what the e2e suite
     taught about measuring and asserting against a real deployment.
+  - [`reading-a-latency-tail.md`](learning-material/reading-a-latency-tail.md) — how to tell a GC pause
+    from queueing in trace data, why generational ZGC lost to G1 here, and which lever actually moves it.
   And the most recent checkpoint is
   [`sessions/2026-09-06-observability-checkpoint.md`](sessions/2026-09-06-observability-checkpoint.md) —
   what telemetry proved, what it cost, and where to pick dkq up.
