@@ -3,7 +3,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
-import homelab.keyedqueue.domain.model.{ Claim, Claimed, Demand, Settlement, Submission }
+import homelab.keyedqueue.domain.model.{ Claim, Grant, Demand, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.domain.types.*
@@ -86,7 +86,7 @@ final class RedisQueueStore(
    * @param demand the queue to claim from, how long to wait, and the most to take
    * @return the claim, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
    */
-  override def claim(demand: Demand): IO[RedisFailure, Option[Claimed]] =
+  override def claim(demand: Demand): IO[RedisFailure, Option[Grant]] =
     monitor.trace("RedisQueueStore.claim"):
       for
         asked   <- Clock.instant
@@ -109,7 +109,7 @@ final class RedisQueueStore(
    * @param asked when its call arrived, which is what the patience is measured from
    * @return the claim, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
    */
-  private def claimWithin(ns: Namespace, demand: Demand, asked: Instant): IO[RedisFailure, Option[Claimed]] =
+  private def claimWithin(ns: Namespace, demand: Demand, asked: Instant): IO[RedisFailure, Option[Grant]] =
     remainingTime(demand.patience, asked).flatMap {
       case None               => ZIO.none
       case Some(patienceLeft) =>
@@ -128,7 +128,7 @@ final class RedisQueueStore(
    * @param demand how much to take
    * @return the claim, or `None` when nothing was claimable; aborts with `RedisFailure` when the store fails
    */
-  private def attemptClaim(ns: Namespace, demand: Demand): IO[RedisFailure, Option[Claimed]] =
+  private def attemptClaim(ns: Namespace, demand: Demand): IO[RedisFailure, Option[Grant]] =
     monitor.trace("RedisQueueStore.attempt"):
       connection.provide:
         scripts.claim.run(ns, leaseTtl, demand.batch)

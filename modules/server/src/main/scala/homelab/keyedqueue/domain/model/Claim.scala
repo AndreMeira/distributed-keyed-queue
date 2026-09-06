@@ -10,9 +10,9 @@ import java.util.Base64
 /**
  * What a consumer must hand back to settle or renew: which key, in which queue, under which claim.
  *
- * Travels over the wire as an opaque [[ClaimRef]] so a consumer cannot reason about the fencing scheme, or do
- * arithmetic on it. Forgery is not a threat model here: the store validates the token against the key's
- * current generation, so a made-up reference buys nothing that a guessed one would not.
+ * Handed to a consumer as an opaque [[ClaimRef]] so it cannot reason about the fencing scheme or do
+ * arithmetic on it. Forgery is not a threat model: the store validates the token against the key's current
+ * generation, so a made-up reference buys nothing a guessed one would not.
  *
  * @param queue the queue the message was taken from
  * @param key the key being held
@@ -38,9 +38,9 @@ object Claim:
   /**
    * Read back a reference handed out by [[Claim.reference]].
    *
-   * Takes a `String` rather than a [[ClaimRef]]: a reference off the wire is a string a consumer sent, and
-   * this is the mechanics of deciding whether it is a receipt. `ClaimRef` is what this service *hands out*
-   * — evidence of a claim it granted — so requiring one here would mean minting it before the check.
+   * Takes a `String` rather than a [[ClaimRef]]: what a consumer hands back is an unchecked value, and this
+   * is the mechanics of deciding whether it is a receipt. `ClaimRef` is what this service *hands out* —
+   * evidence of a claim it granted — so requiring one here would mean minting it before the check.
    *
    * Answers with an `Option` rather than refusing, because its two callers disagree about what a failure
    * means: settle's validator turns `None` into an input problem, while a heartbeat lists an unreadable

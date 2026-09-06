@@ -9,14 +9,11 @@ import zio.{ Chunk, Duration }
 /**
  * Report what happened to some of what a claim owns.
  *
- * '''Nothing here is a domain type, and that is the point.''' A `ClaimRef` or a `MessageId` in this
- * position would be evidence — of a receipt this service issued, of an id it can address — minted by a
- * codec for values nobody has looked at. Raw strings can make no such claim, so the only way to obtain the
- * evidence is to go through [[homelab.keyedqueue.domain.service.validation.QueueInputValidation]], which is
- * what turns this into a `Settlement`.
- *
- * `Verdict` is the exception, and is not evidence: the wire's `UNSPECIFIED` is refused by the codec, so
- * what arrives here is a total value rather than an unchecked claim.
+ * '''Nothing here is a domain type, and that is the point.''' A `ClaimRef` or a `MessageId` here would
+ * assert that someone checked a value nobody has looked at. Raw strings make no such claim, so the only way
+ * to obtain the evidence is [[homelab.keyedqueue.domain.service.validation.QueueInputValidation]], which is
+ * what turns this into a `Settlement`. `Verdict` is the exception: it is total on arrival, so it asserts
+ * nothing.
  *
  * @param receipt the handle from the delivery, as it arrived
  * @param outcomes what became of each message named. What is not named stays owed, and the claim ends

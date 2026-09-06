@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.service.usecase.v1
 
 import homelab.common.orFail
 import homelab.common.error.{ ApplicationError, ValidationError }
-import homelab.keyedqueue.domain.model.Claimed
+import homelab.keyedqueue.domain.model.Grant
 import homelab.keyedqueue.domain.request.v1.*
 import homelab.keyedqueue.domain.response.v1.*
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
@@ -54,8 +54,8 @@ final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, validation: Qu
    * @param claimed what the store handed over, or nothing when the wait elapsed first
    * @return the response, carrying a claim only when there was one
    */
-  private def response(claimed: Option[Claimed]): DequeueResponse =
-    claimed match {
+  private def response(grant: Option[Grant]): DequeueResponse =
+    grant match {
       case None          => DequeueResponse.Empty
-      case Some(claimed) => DequeueResponse.fromClaimed(claimed)
+      case Some(granted) => DequeueResponse.fromGrant(granted)
     }

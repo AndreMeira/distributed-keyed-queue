@@ -2,7 +2,7 @@ package homelab.keyedqueue.infrastructure.redis.script
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.model.{ Claim, Claimed, Message }
+import homelab.keyedqueue.domain.model.{ Claim, Grant, Message }
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
@@ -39,7 +39,7 @@ final class ClaimScript(ref: LuaScript.Sha):
    * @return the claim, or `None` when nothing was claimable; aborts with `RedisFailure` when the store fails
    *         or the reply cannot be read
    */
-  def run(ns: Namespace, leaseTtl: Duration, maxBatch: Int): ZIO[Connection.Commands, RedisFailure, Option[Claimed]] =
+  def run(ns: Namespace, leaseTtl: Duration, maxBatch: Int): ZIO[Connection.Commands, RedisFailure, Option[Grant]] =
     Connection.use: redis =>
       ZIO
         .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns), args(ns, leaseTtl, maxBatch)*))
@@ -87,7 +87,7 @@ final class ClaimScript(ref: LuaScript.Sha):
    * @return the claim, or `None` when nothing was claimable; `MalformedReply` when the reply, or a message
    *         in it, cannot be read
    */
-  private def read(ns: Namespace)(value: Any): Either[RedisFailure, Option[Claimed]] =
+  private def read(ns: Namespace)(value: Any): Either[RedisFailure, Option[Grant]] =
     decoder(ns).decode("consume", value)
 
   /**
@@ -101,12 +101,12 @@ final class ClaimScript(ref: LuaScript.Sha):
    * @param attempts their delivery counts, in the same order
    * @return one entry per message
    */
-  private def owned(ids: Chunk[String], messages: Chunk[Message], attempts: Chunk[Long]): Chunk[Claimed.Owned] =
+  private def owned(ids: Chunk[String], messages: Chunk[Message], attempts: Chunk[Long]): Chunk[Grant.Owned] =
     val size = ids.size.min(messages.size).min(attempts.size)
     Chunk
       .fromIterable(0 until size)
       .map: index =>
-        Claimed.Owned(MessageId(ids(index)), messages(index), attempts(index).toInt)
+        Grant.Owned(MessageId(ids(index)), messages(index), attempts(index).toInt)
 
   /**
    * A claim over nothing is not a claim.
@@ -117,7 +117,7 @@ final class ClaimScript(ref: LuaScript.Sha):
    * @param batch what was read out of the reply
    * @return the same messages, known to be at least one
    */
-  private def nonEmpty(batch: Chunk[Claimed.Owned]): LuaScript.Decode.Of[NonEmptyChunk[Claimed.Owned]] =
+  private def nonEmpty(batch: Chunk[Grant.Owned]): LuaScript.Decode.Of[NonEmptyChunk[Grant.Owned]] =
     NonEmptyChunk.fromChunk(batch) match
       case Some(messages) => LuaScript.Decode.succeed(messages)
       case None           => LuaScript.Decode.fail(RedisFailure.MalformedReply("consume granted a claim over no messages"))
@@ -133,7 +133,7 @@ final class ClaimScript(ref: LuaScript.Sha):
    * @param ns the queue being claimed from
    * @return the decoder
    */
-  private def decoder(ns: Namespace): LuaScript.Decode.Of[Option[Claimed]] =
+  private def decoder(ns: Namespace): LuaScript.Decode.Of[Option[Grant]] =
     LuaScript.Decode
       .sized(7) {
         for
@@ -145,7 +145,7 @@ final class ClaimScript(ref: LuaScript.Sha):
           messages <- LuaScript.Decode.bytes.emap(StoredMessage.fromBytes).each.at(5)
           attempts <- LuaScript.Decode.long.each.at(6)
           batch    <- nonEmpty(owned(ids, messages, attempts))
-        yield Claimed(
+        yield Grant(
           Claim(ns.queue, MessageKey(key), Token(token)),
           batch,
           Instant.ofEpochMilli(deadline),

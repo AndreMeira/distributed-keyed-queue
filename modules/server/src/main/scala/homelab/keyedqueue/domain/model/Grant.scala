@@ -8,14 +8,14 @@ import java.time.Instant
 
 
 /**
- * A batch of one key's messages, and the claim that owns them.
+ * What a granted claim hands over: a batch of one key's messages, and the claim that owns them.
  *
- * '''One claim, many messages.''' Exclusivity is granted on the key, so everything here is held by the same
- * token and released by the same lease. The consumer settles each message as it finishes with it, and the
- * claim ends when nothing is left owed.
+ * '''One claim, many messages.''' Exclusivity is held on the key, so everything here is under the same
+ * token and the same lease. The consumer settles each message as it finishes with it, and the claim ends
+ * when nothing is left owed.
  *
- * The messages are in producer order, and they stay in the queue's own list while they are owned — a nack
- * therefore puts nothing back, and a consumer that dies loses only the acknowledgements it had not sent.
+ * The messages are in producer order and keep their place while owned, so a nack puts nothing back and a
+ * consumer that dies loses only the acknowledgements it had not sent.
  *
  * @param claim which key, in which queue, under which generation
  * @param messages what it may work, oldest first. Never empty: a claim over nothing is not a claim, and
@@ -23,15 +23,15 @@ import java.time.Instant
  * @param leaseExpiresAt when the claim lapses unless renewed, on the store's clock
  * @param backlogDepth how many more were queued for this key, behind the batch
  */
-final case class Claimed(
+final case class Grant(
   claim: Claim,
-  messages: NonEmptyChunk[Claimed.Owned],
+  messages: NonEmptyChunk[Grant.Owned],
   leaseExpiresAt: Instant,
   backlogDepth: Int,
 )
 
 
-object Claimed:
+object Grant:
 
   /**
    * One message of a batch, and how often it has been handed out.

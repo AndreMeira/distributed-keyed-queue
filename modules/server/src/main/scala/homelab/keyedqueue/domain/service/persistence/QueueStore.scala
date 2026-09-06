@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.persistence
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.model.{ Claim, Claimed, Demand, Settlement, Submission }
+import homelab.keyedqueue.domain.model.{ Claim, Grant, Demand, Settlement, Submission }
 import homelab.keyedqueue.domain.types.*
 import zio.{ Chunk, Duration, IO }
 
@@ -46,7 +46,7 @@ trait QueueStore:
    * @return the claim, or `None` when nothing became claimable in time; aborts with an `AdapterError` if the
    *         store fails
    */
-  def claim(demand: Demand): IO[ApplicationError.AdapterError, Option[Claimed]]
+  def claim(demand: Demand): IO[ApplicationError.AdapterError, Option[Grant]]
 
   /**
    * Report what happened to some of what a claim owns.

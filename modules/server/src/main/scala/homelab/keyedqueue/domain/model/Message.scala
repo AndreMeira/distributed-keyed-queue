@@ -10,9 +10,6 @@ import java.time.Instant
 /**
  * The unit that travels and is stored: routing metadata the queue reads, and cargo it does not.
  *
- * Mirrors the wire message field for field, because the transformer between them should contain no
- * decisions — a field that needs logic to cross that boundary is a sign the two have drifted apart.
- *
  * The queue name is deliberately absent: it is the address a message was sent to, not a property of the
  * message (`docs/research/connection-keyed-queue.md`).
  *
@@ -39,9 +36,8 @@ object Message:
   /**
    * How a payload is serialised.
    *
-   * There is no `Unspecified` here, unlike on the wire: a message that does not say how to read it cannot
-   * be acted on, so it is refused at the boundary rather than carried inwards as a state every later match
-   * has to remember to reject.
+   * Total by construction: a message that does not say how to read itself cannot be acted on, so that case
+   * is refused at the boundary rather than carried inwards for every later match to reject.
    */
   enum Encoding:
     case Json, Protobuf

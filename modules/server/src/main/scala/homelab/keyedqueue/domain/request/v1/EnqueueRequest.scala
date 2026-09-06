@@ -9,11 +9,10 @@ import java.time.Instant
 
 
 /**
- * Accept a message for a key.
+ * A caller's unchecked ask to append a message to a key.
  *
- * Mirrors its wire message field for field — same names, same shapes, richer types — so the transformer
- * between them carries no decisions. Where it differs from the proto, the difference is the point: the
- * queue name is separate from the message because it is an address.
+ * The queue is separate from the message because it is the address a message was sent to, not a property
+ * of the message.
  *
  * @param queue the queue to append to, as it arrived
  * @param message the message, as it arrived
@@ -24,14 +23,11 @@ final case class EnqueueRequest(queue: String, message: EnqueueRequest.Message)
 object EnqueueRequest:
 
   /**
-   * A message as the wire can state it.
+   * A message as a caller stated it, before anyone has checked it.
    *
    * The twin of [[homelab.keyedqueue.domain.model.Message]], and deliberately not it: the domain message
-   * carries a [[MessageKey]] and a [[MessageId]], which are claims that someone checked. Here they are the
-   * strings a caller sent, and the parse is what turns them into names the store can address.
-   *
-   * `encoding` and the cargo cross unchanged. The first is already total — the codec refuses the wire's
-   * `UNSPECIFIED` — and the second is bytes this service never reads.
+   * carries a [[MessageKey]] and a [[MessageId]], which assert that someone checked. Here they are the
+   * strings a caller sent, and parsing is what turns them into names the store can address.
    *
    * @param key what ordering is to be defined by
    * @param messageId what this message is to be addressed by

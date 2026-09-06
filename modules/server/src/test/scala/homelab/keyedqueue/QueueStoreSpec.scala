@@ -3,7 +3,7 @@ package homelab.keyedqueue
 
 import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
-import homelab.keyedqueue.domain.model.{ Claim, Claimed, Demand, Message, Settlement, Submission }
+import homelab.keyedqueue.domain.model.{ Claim, Grant, Demand, Message, Settlement, Submission }
 import homelab.keyedqueue.domain.model.Message.Encoding
 import homelab.keyedqueue.domain.model.Settlement.Verdict
 import homelab.keyedqueue.domain.service.persistence.QueueStore
@@ -84,10 +84,10 @@ object QueueStoreSpec extends ZIOSpecDefault:
   private def cargo(message: Message): String = String(message.payload.toArray, "UTF-8")
 
   /** What a batch is carrying, as text, in the order it was handed over. */
-  private def body(batch: Claimed): Chunk[String] = batch.messages.map(owned => cargo(owned.message)).toChunk
+  private def body(batch: Grant): Chunk[String] = batch.messages.map(owned => cargo(owned.message)).toChunk
 
   /** Acknowledge everything a batch owns. Non-empty, because a batch is. */
-  private def acks(batch: Claimed): NonEmptyChunk[(MessageId, Verdict)] = batch.messages.map(_.id -> Verdict.Done)
+  private def acks(batch: Grant): NonEmptyChunk[(MessageId, Verdict)] = batch.messages.map(_.id -> Verdict.Done)
 
   /**
    * What the use case builds before it calls the port, in the spec's own vocabulary.
@@ -109,17 +109,17 @@ object QueueStoreSpec extends ZIOSpecDefault:
     )
 
   /** Claim exactly one message, for the tests that are not about batching. */
-  private def one(store: QueueStore, queue: QueueName): ZIO[Any, ApplicationError, Option[Claimed]] =
+  private def one(store: QueueStore, queue: QueueName): ZIO[Any, ApplicationError, Option[Grant]] =
     store.claim(Demand(queue, 2.seconds, 1))
 
   /** Acknowledge a single-message batch and report what it was carrying. */
-  private def ack(store: QueueStore, queue: QueueName)(batch: Option[Claimed]): ZIO[Any, ApplicationError, String] =
+  private def ack(store: QueueStore, queue: QueueName)(batch: Option[Grant]): ZIO[Any, ApplicationError, String] =
     ZIO
       .foreach(batch)(one => store.settle(settlement(one.claim, acks(one))).as(body(one).mkString))
       .map(_.getOrElse(""))
 
   /** Report a whole batch as failed. */
-  private def nack(store: QueueStore)(batch: Claimed): ZIO[Any, ApplicationError, Boolean] =
+  private def nack(store: QueueStore)(batch: Grant): ZIO[Any, ApplicationError, Boolean] =
     store.settle(settlement(batch.claim, batch.messages.map(_.id -> Verdict.Failed)))
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueStore over Redis")(
