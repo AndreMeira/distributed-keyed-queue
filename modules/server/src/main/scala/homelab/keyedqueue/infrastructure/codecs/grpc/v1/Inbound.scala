@@ -24,17 +24,6 @@ import java.time.Instant
  */
 object Inbound:
 
-  /**
-   * The only domain names minted here, and not on any request's behalf.
-   *
-   * Both exist for [[message]], which the storage codec uses to read back what this service itself wrote.
-   * Those bytes came from a message that had already been parsed, so reconstructing its names restores
-   * evidence rather than inventing it.
-   *
-   * '''No request crosses through them.''' Every request's fields arrive as the strings they are, and the
-   * names are minted by the parse, once something has checked them — which is why there is no
-   * `String => QueueName` or `String => ClaimRef` here to reach for.
-   */
   private given Transformer[String, MessageKey] = MessageKey(_)
   private given Transformer[String, MessageId]  = MessageId(_)
 
@@ -69,9 +58,6 @@ object Inbound:
   /**
    * An enqueue without a message is a request with nothing in it. Chimney would refuse the absent field on
    * its own, but with a generic reason; this says what the caller left out.
-   *
-   * Targets the request's own [[EnqueueRequest.Message]], not the domain's: the domain one carries a
-   * key and an id that have been checked, and this boundary checks nothing — it reads what arrived.
    */
   private given PartialTransformer[Option[v1.Message], EnqueueRequest.Message] = PartialTransformer:
     case Some(message) => message.transformIntoPartial[EnqueueRequest.Message]
