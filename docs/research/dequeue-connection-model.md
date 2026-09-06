@@ -64,7 +64,7 @@ Give the connection to the *queue* rather than to the caller.
 - The watcher exits and returns its connection when the last waiter leaves. Creation and teardown belong in
   one `Ref.Synchronized` update, or a waiter arriving during shutdown is lost.
 
-**`consume.lua` does not need the blocking connection.** It takes the worker as an argument and `LREM`s
+**`claim.lua` does not need the blocking connection.** It takes the worker as an argument and `LREM`s
 that worker's claiming list, so the claiming script can run on the *shared* connection, in the consumer's
 own fiber. The blocking connection does nothing but wait. The consumer keeps an `onInterrupt(release)`, so
 a key handed to a consumer that dies goes back at once instead of waiting for the sweep.
@@ -86,7 +86,7 @@ Make waiting an in-process fact entirely.
 
 1. Try to claim **non-blocking** (`LMOVE`). On a busy queue this is the whole story.
 2. If empty, park a fiber on a promise. No connection held.
-3. Wake it from a notification. `produce.lua` already knows when it pushes a key onto `ready`, so it can
+3. Wake it from a notification. `enqueue.lua` already knows when it pushes a key onto `ready`, so it can
    `SPUBLISH` on a channel carrying the *same hash tag* — `{q:orders}:wake`. Sharded pub/sub is
    slot-scoped, which works in cluster precisely because of the tagging the key layout already uses. One
    subscriber connection per instance.
@@ -103,7 +103,7 @@ hash tags. It would work standalone and break in cluster, so it is not a step wo
 ## The constraint both options must keep
 
 **Demand equals workers: every claimed key gets a worker or is given back.** The wake-up may be
-centralised, but the *claim* must still happen in the fiber that will do the work — `consume.lua` inside
+centralised, but the *claim* must still happen in the fiber that will do the work — `claim.lua` inside
 the request, as it is today. A dispatcher that claims ahead of demand into a buffer recreates work held for
 a consumer that has since gone, which is the failure the toolkit's `PollConsumer` spent a day on
 (https://github.com/AndreMeira/homelab-toolkit-zio). The watcher in Option A only moves a key with `BLMOVE`

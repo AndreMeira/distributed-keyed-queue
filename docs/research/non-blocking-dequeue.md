@@ -38,9 +38,9 @@ this service can run any logic on it, leaving a half-claimed state that has to b
 - `workers` — the liveness set that says whether a box has been abandoned
 - `WorkerId`, and its leak into `domain/types` and `QueueStore.Swept.recovered`
 - `register` and the part of `beat` that keeps claiming connections announced
-- `watchdog.lua` sweep (2) — recovery of dead workers' boxes
+- `sweep.lua` sweep (2) — recovery of dead workers' boxes
 - `release` — handing back a key whose name the interrupted caller never learned
-- `consume.lua`'s `LREM claiming` guard, which exists to detect that someone else drained the box
+- `claim.lua`'s `LREM claiming` guard, which exists to detect that someone else drained the box
 - `Connection.provideBlocking`, the claiming half of the pool, and `DKQ_CLAIMERS`
 - the patience-as-deadline correction, which only matters because a caller can queue for a connection
 
@@ -98,7 +98,7 @@ delayed ──backoff elapses, watchdog──▶ queued (wake+1)
 ```
 
 The `queued → processing` arrow is the one that used to be two moves with a box in between. It is now a
-single `EVALSHA`: pop the head of `ready`, and do everything `consume.lua` already does — set `state`, add
+single `EVALSHA`: pop the head of `ready`, and do everything `claim.lua` already does — set `state`, add
 the lease to `claimed`, bump `fence`, fill `owned`, read ids and payloads, bump `attempts`. Atomic, so no
 window exists for a second consumer to see the same key.
 
@@ -127,18 +127,18 @@ read ──watched set changed──▶ re-issue XREAD ──▶ read
 
 ### The claim
 
-One script, replacing `BLMOVE` + `consume.lua`:
+One script, replacing `BLMOVE` + `claim.lua`:
 
 1. `LPOP ready` — nothing means nothing is claimable; return nil.
-2. Everything the current `consume.lua` does, unchanged.
+2. Everything the current `claim.lua` does, unchanged.
 
 The current script's first line — `LREM claiming 1 key`, which fails the claim if someone else drained the
 box — has nothing left to guard and goes away with the box.
 
 ### The wake stream
 
-Every script that pushes a key onto `ready` appends one entry to `wake` in the same script: `produce.lua`
-when it queues a message for an idle key, `complete.lua` when a settled claim leaves messages behind, and
+Every script that pushes a key onto `ready` appends one entry to `wake` in the same script: `enqueue.lua`
+when it queues a message for an idle key, `settle.lua` when a settled claim leaves messages behind, and
 each of the watchdog's sweeps when it returns a key. A nacked key parked in `delayed` announces *nothing* —
 its wake comes later, from the sweep that releases it.
 

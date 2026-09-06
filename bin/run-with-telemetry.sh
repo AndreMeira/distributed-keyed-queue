@@ -14,11 +14,19 @@
 #   Metrics     http://localhost:9090
 #   Dashboards  http://localhost:3000
 #
+# A second instance, for watching the service scale out (the demo can drive both — see bin/demo.sh):
+#
+#   DKQ_NAME=dkq-app-2 DKQ_PORT=9001 bin/run-with-telemetry.sh
+#
+# Same service name on purpose, so both instances' traces and metrics aggregate as one service.
+#
 # Anything after `--` is passed to the service, so a run mode can be selected once there is more than one.
 set -euo pipefail
 
 NETWORK="${DKQ_NETWORK:-distributed-keyed-queue_default}"
 IMAGE="${DKQ_IMAGE:-distributed-keyed-queue:latest}"
+NAME="${DKQ_NAME:-dkq-app}"
+PORT="${DKQ_PORT:-9000}"
 
 if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
   echo "network '$NETWORK' not found — start the stack first:" >&2
@@ -39,9 +47,9 @@ TTY=""
 if [ -t 0 ] && [ -t 1 ]; then TTY="-it"; fi
 
 exec docker run --rm ${TTY} \
-  --name dkq-app \
+  --name "$NAME" \
   --network "$NETWORK" \
-  -p 9000:9000 \
+  -p "$PORT":9000 \
   -e OTEL_JAVAAGENT_ENABLED=true \
   -e OTEL_SERVICE_NAME=distributed-keyed-queue \
   -e OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 \

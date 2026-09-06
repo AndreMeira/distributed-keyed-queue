@@ -14,11 +14,11 @@ import java.time.Instant
 
 
 /**
- * Push the deadline forward on the claims a consumer still holds — `lua/heartbeat.lua`.
+ * Push the deadline forward on the claims a consumer still holds — `lua/renew.lua`.
  *
  * '''Renewal only.''' A consumer with nothing held has nothing to send, and beats with
  */
-final class HeartbeatScript(ref: LuaScript.Sha):
+final class RenewScript(ref: LuaScript.Sha):
 
   /** Multi, because a beat answers with a deadline and a list. */
   private val output: ScriptOutputType = ScriptOutputType.MULTI
@@ -50,7 +50,7 @@ final class HeartbeatScript(ref: LuaScript.Sha):
    * The leases to push forward, and the fences that say whether a claim is still the caller's.
    *
    * @param ns the queue whose claims to renew
-   * @return `claimed`, `fence`, in the order `lua/heartbeat.lua` reads them
+   * @return `claimed`, `fence`, in the order `lua/renew.lua` reads them
    */
   private def keys(ns: Namespace): Array[String] = Array(ns.claimed, ns.fence)
 
@@ -62,7 +62,7 @@ final class HeartbeatScript(ref: LuaScript.Sha):
    *
    * @param leaseTtl how long the registration, and each renewed claim, survive without another beat
    * @param held the claims to renew
-   * @return `ttl`, then `key`, `token` repeated, in the order `lua/heartbeat.lua` reads them
+   * @return `ttl`, then `key`, `token` repeated, in the order `lua/renew.lua` reads them
    */
   private def args(leaseTtl: Duration, held: Chunk[Claim]): Array[Array[Byte]] =
     val pairs = held.flatMap(claim => Chunk(LuaScript.utf8(claim.key), LuaScript.utf8(claim.token.toString)))
@@ -102,12 +102,12 @@ final class HeartbeatScript(ref: LuaScript.Sha):
     }
 
 
-object HeartbeatScript:
+object RenewScript:
 
   /**
-   * Register `lua/heartbeat.lua` and hold the digest it was given.
+   * Register `lua/renew.lua` and hold the digest it was given.
    *
    * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
-  def make: ZIO[Connection.Commands, RedisFailure, HeartbeatScript] =
-    LuaScript.register("lua/heartbeat.lua").map(HeartbeatScript(_))
+  def make: ZIO[Connection.Commands, RedisFailure, RenewScript] =
+    LuaScript.register("lua/renew.lua").map(RenewScript(_))

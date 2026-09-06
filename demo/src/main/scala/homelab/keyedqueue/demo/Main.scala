@@ -12,8 +12,9 @@ import zio.*
  *   sbt "demo/run steady"    # one scenario
  * ```
  *
- * Talks to `DKQ_ADDRESS`, or `localhost:9000`. Nothing here asserts and nothing here is run by CI — see
- * [[Scenario]] for why that is deliberate.
+ * Talks to `DKQ_ADDRESS`, or `localhost:9000`. That may name several instances, comma-separated, and every
+ * scenario spreads its workers over them — which is how a scenario shows whether the service scales out.
+ * Nothing here asserts and nothing here is run by CI — see [[Scenario]] for why that is deliberate.
  */
 object Main extends ZIOAppDefault:
 
@@ -39,13 +40,13 @@ object Main extends ZIOAppDefault:
    */
   private def start(scenario: Scenario): ZIO[Scope, Throwable, Unit] =
     for
-      address <- Client.address
-      _       <- Console.printLine(s"→ ${scenario.name}, against $address")
-      _       <- Console.printLine(s"  look at: ${scenario.lookAt}")
-      _       <- Console.printLine("")
-      client  <- Client.scoped(address)
-      _       <- scenario.run.provideSomeEnvironment[Scope](_ ++ ZEnvironment(client))
-      _       <- Console.printLine(s"← ${scenario.name} done")
+      addresses <- Servers.addresses
+      _         <- Console.printLine(s"→ ${scenario.name}, against ${addresses.mkString(", ")}")
+      _         <- Console.printLine(s"  look at: ${scenario.lookAt}")
+      _         <- Console.printLine("")
+      servers   <- Servers.scoped(addresses)
+      _         <- scenario.run.provideSomeEnvironment[Scope](_ ++ ZEnvironment(servers))
+      _         <- Console.printLine(s"← ${scenario.name} done")
     yield ()
 
   /**

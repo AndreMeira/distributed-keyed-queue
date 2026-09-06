@@ -12,7 +12,7 @@ Every piece of state lives in Redis; dkq pods hold nothing but connections. This
 each structure has the type it has, and which script touches it.
 
 `Namespace` is the single place these names are built. Nothing else in the codebase constructs a key name,
-apart from `consume.lua` and `watchdog.lua`, which rebuild the per-key ones at runtime — see
+apart from `claim.lua` and `sweep.lua`, which rebuild the per-key ones at runtime — see
 [Cluster](#one-bucket-one-slot).
 
 ## The layout
@@ -37,7 +37,7 @@ queue in it. `{Q}` below is one queue's prefix, `{W}` its bucket's:
 
 ## Why the types are what they are
 
-**`ready` is a sorted set, scored by arrival.** It is a FIFO across keys — `ZPOPMIN` in `consume.lua`
+**`ready` is a sorted set, scored by arrival.** It is a FIFO across keys — `ZPOPMIN` in `claim.lua`
 serves whichever key has waited longest — and being a set is what makes "is this key already queued" the
 structure's own property rather than a separate hash to keep in step. It was a list while `BLMOVE` needed
 one, and briefly afterwards; a set also makes claiming a *named* key O(log N), which is what any affinity
@@ -88,7 +88,7 @@ human reading `XRANGE` — a consumer claims whatever is at the head rather than
 The trim is a budget shared by the bucket, and it is denominated in entries rather than time: at a few
 thousand appends a second, a thousand entries is a fraction of a second of history. That only matters to a
 listener that is *away* — one reading continuously is a handful of entries behind — and a listener that
-reconnects raises every local signal before it resumes, precisely because `XREAD` cannot report having been
+reconnects announces every local queue before it resumes, precisely because `XREAD` cannot report having been
 trimmed past.
 
 ## What a message's life touches
@@ -99,7 +99,7 @@ idempotent: the same id twice for one key is one message, for as long as it is q
 checks are what stop a key being queued while it is being worked — a key in `ready` twice is two consumers
 on one key, which is the one thing this design forbids.
 
-**Claim** — one call. `consume.lua` does `ZPOPMIN ready` itself, then takes the first N ids with
+**Claim** — one call. `claim.lua` does `ZPOPMIN ready` itself, then takes the first N ids with
 `LRANGE msgs 0 n-1`, `SADD`s them to `owned`, writes the lease into `claimed`,
 advances `fence`, counts an attempt each, and reads the payloads with `HMGET`. Because the pop and the grant
 are one script, **a key is either in `ready` or claimed** — there is no in-between state for anything to
@@ -110,13 +110,13 @@ them the claim holds. That is the load-bearing decision here, and three things f
 nothing to put back, a crash has nothing to repair, and producer order cannot be disturbed by the order in
 which a consumer settles.
 
-**Settle** — `complete.lua` checks the token against `fence`, then per named id: `SREM owned` and, if
+**Settle** — `settle.lua` checks the token against `fence`, then per named id: `SREM owned` and, if
 acknowledged, `LREM msgs` + `HDEL payloads` + `HDEL attempts`. A nack removes only the ownership, and may
 `ZADD delayed GT` to ask the key to wait. When `owned` is empty the claim is over: `fence` advances,
 `claimed` is cleared, and the key goes back to `ready` with a *fresh* score — it has been served, so it
 queues behind everything still waiting — or stays out of it, held by `delayed` or by having nothing left.
 
-**Every addition to `ready` appends a wake.** `produce.lua`, `complete.lua` and both watchdog sweeps append
+**Every addition to `ready` appends a wake.** `enqueue.lua`, `settle.lua` and both watchdog sweeps append
 to `wake` in the same script, and only where the key actually became claimable — a nacked key parked in
 `delayed` announces nothing, because its wake comes later, from the sweep that releases it.
 
@@ -128,7 +128,7 @@ a settle applying twice is `SREM` finding nothing the second time; what stops a 
 counter moving when the claim ends — including when the watchdog ends it.
 
 **Whether a key is claimable is two questions, not one.** A partial nack can set a backoff in `delayed`
-while the claim is still alive, so both `complete.lua`'s claim-end and the watchdog's reclaim must check
+while the claim is still alive, so both `settle.lua`'s claim-end and the watchdog's reclaim must check
 `ZSCORE delayed` before pushing to `ready`. Push in both places and the key lands on `ready` twice, and two
 consumers claim it — the fence stops the loser corrupting anything, but it works for nothing.
 `QueueStoreSpec` has a regression test for exactly this.
@@ -146,9 +146,9 @@ one script there is no such list and no such moment: **the lease is the only thi
 ## One bucket, one slot
 
 Every name above carries its bucket's `{w:<bucket>}` hash tag, so a queue's keys — and the wake stream that
-announces them — hash to one cluster slot and a script may touch them all. `consume.lua` and `watchdog.lua`
+announces them — hash to one cluster slot and a script may touch them all. `claim.lua` and `sweep.lua`
 build `msgs:<key>`, `payloads:<key>` and `owned:<key>` at runtime from `prefix` rather than receiving them
-in `KEYS` — legal only because the tag guarantees the same slot, and unavoidable for `consume.lua`, which
+in `KEYS` — legal only because the tag guarantees the same slot, and unavoidable for `claim.lua`, which
 does not know which key it has until it pops one. That is why both take `prefix` as an argument.
 
 The same rule is what decides where `wake` lives: a stream tagged differently from the keys it announces

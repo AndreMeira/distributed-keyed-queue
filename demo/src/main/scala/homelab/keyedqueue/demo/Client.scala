@@ -11,7 +11,7 @@ import zio.*
 
 
 /**
- * The four calls, over one channel.
+ * The four calls, over one channel — one instance's worth. [[Servers]] is how a scenario reaches several.
  *
  * Written against the published contract and nothing else — the demo module depends on
  * `distributed-keyed-queue-protocol-zio-grpc`, exactly as an outside consumer would, so anything awkward
@@ -109,10 +109,3 @@ object Client:
     KeyedQueueClient
       .scoped(ZManagedChannel(ManagedChannelBuilder.forAddress(host, port.toInt).usePlaintext()))
       .map(Client.apply)
-
-  /**
-   * The instance to talk to, from `DKQ_ADDRESS` or the local default.
-   *
-   * @return the address
-   */
-  val address: UIO[String] = System.env("DKQ_ADDRESS").orDie.map(_.getOrElse("localhost:9000"))

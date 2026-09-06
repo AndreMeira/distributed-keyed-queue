@@ -131,8 +131,10 @@ curl -s 'http://localhost:16686/api/traces?service=distributed-keyed-queue&limit
 ```
 
 That last one — counting span names — is the fastest answer to "what is actually instrumented", and it is
-how you notice something *missing*. It is what showed that this service produces `EVALSHA` and `XREAD`
-spans from the Java agent, and **no gRPC server spans**, because the agent does not recognise zio-grpc.
+how you notice something *missing*. It is also how you notice something you assumed was missing is present:
+a first look here suggested this service produced no gRPC server spans, and a later count against more
+traffic showed `homelab.keyedqueue.v1.KeyedQueue/*` throughout. A count over twenty traces is not evidence
+about instrumentation; a count over a thousand is.
 
 Useful filters: `&operation=<name>`, `&minDuration=1s` (find the slow ones), `&tags={"error":"true"}`.
 

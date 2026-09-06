@@ -139,13 +139,10 @@ Known gaps:
   message cycles rather than wedging its key, so this is not urgent — what is missing is somewhere to put
   it once the count is too high.
 - **One queue per `Dequeue`.** A consumer spanning queues needs a connection each.
-- **A hot key stays on one instance.** A wake reaches every waiting consumer and they race to claim, and
-  the instance that just settled a key is already claiming while the others are being woken. Nothing is
+- **A hot key stays on one instance.** Every instance reads every wake entry, so instances race to claim,
+  and the one that just settled a key is already claiming while the others are being told. Nothing is
   lost — a key is worked by one consumer at a time regardless — but "several consumers" does not mean the
   work for one key is spread across them.
-- **Idle consumers all wake for every message on their queue.** Cheap in the tens, and it is why the
-  contract asks for one outstanding `Dequeue` per consumer, with parallelism inside the consumer rather
-  than in extra pollers (see C7 in the guarantees).
 - **No persistence.** The POC runs Valkey with saving off; durability is a later phase.
 
 ## Docs

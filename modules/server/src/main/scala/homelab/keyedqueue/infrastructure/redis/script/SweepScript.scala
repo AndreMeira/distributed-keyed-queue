@@ -12,7 +12,7 @@ import zio.*
 
 
 /**
- * One repair pass — `lua/watchdog.lua`.
+ * One repair pass — `lua/sweep.lua`.
  *
  * Both sweeps travel together — lapsed claims and elapsed backoffs — so a pass is a single round trip and a
  * single blocking window on the server.
@@ -22,7 +22,7 @@ import zio.*
  *
  * @param ref the digest this script was loaded under, from [[Scripts]]
  */
-final class WatchdogScript(ref: LuaScript.Sha):
+final class SweepScript(ref: LuaScript.Sha):
 
   /** Multi, because a pass reports two lists. */
   private val output: ScriptOutputType = ScriptOutputType.MULTI
@@ -46,7 +46,7 @@ final class WatchdogScript(ref: LuaScript.Sha):
    * they advance, the backoff set, and the wake stream they append to when a key becomes claimable again.
    *
    * @param ns the queue to repair
-   * @return `claimed`, `ready`, `fence`, `delayed`, `wake`, `sequence`, in the order `lua/watchdog.lua`
+   * @return `claimed`, `ready`, `fence`, `delayed`, `wake`, `sequence`, in the order `lua/sweep.lua`
    *         reads them
    */
   private def keys(ns: Namespace): Array[String] =
@@ -57,7 +57,7 @@ final class WatchdogScript(ref: LuaScript.Sha):
    *
    * @param ns the queue being repaired, for its prefix
    * @param limit the most entries to handle in one pass
-   * @return `limit`, `prefix`, in the order `lua/watchdog.lua` reads them
+   * @return `limit`, `prefix`, in the order `lua/sweep.lua` reads them
    */
   private def args(ns: Namespace, limit: Int): Array[Array[Byte]] =
     Array(LuaScript.utf8(limit.toString), LuaScript.utf8(ns.prefix), LuaScript.utf8(ns.queue))
@@ -88,12 +88,12 @@ final class WatchdogScript(ref: LuaScript.Sha):
     }
 
 
-object WatchdogScript:
+object SweepScript:
 
   /**
-   * Register `lua/watchdog.lua` and hold the digest it was given.
+   * Register `lua/sweep.lua` and hold the digest it was given.
    *
    * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
-  def make: ZIO[Connection.Commands, RedisFailure, WatchdogScript] =
-    LuaScript.register("lua/watchdog.lua").map(WatchdogScript(_))
+  def make: ZIO[Connection.Commands, RedisFailure, SweepScript] =
+    LuaScript.register("lua/sweep.lua").map(SweepScript(_))

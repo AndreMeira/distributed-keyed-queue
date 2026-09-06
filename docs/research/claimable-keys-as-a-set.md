@@ -15,7 +15,7 @@ departed from this note, is at the end.
 ## What `state` actually does
 
 `{q:Q}:state` maps key → `queued` | `processing`, with absence meaning idle. It is written in four places
-and **read in one** — `produce.lua`, and only for existence:
+and **read in one** — `enqueue.lua`, and only for existence:
 
 ```lua
 if not redis.call('HGET', state, key) then
@@ -54,10 +54,10 @@ Make `ready` a **sorted set**, scored by when the key became claimable.
 The scores *are* the cross-key ordering, so they have to agree. Each push site answers "when did this key
 become claimable":
 
-1. **`produce.lua`, idle key** — `now`. It has just become claimable.
-2. **`produce.lua`, key already on `ready`** — `ZADD NX` leaves the existing score alone. A key that has
+1. **`enqueue.lua`, idle key** — `now`. It has just become claimable.
+2. **`enqueue.lua`, key already on `ready`** — `ZADD NX` leaves the existing score alone. A key that has
    been waiting must not lose its place because another message arrived for it.
-3. **`complete.lua`, claim ended with messages left** — `now`. It has been served; it goes behind whatever
+3. **`settle.lua`, claim ended with messages left** — `now`. It has been served; it goes behind whatever
    has been waiting.
 4. **watchdog, lapsed claim or elapsed backoff** — `now`, for the same reason.
 
@@ -126,8 +126,8 @@ design questions rather than a piece of this one. What is already known about it
 - **Two flavours, with different requirements.** *Consumer-driven* — "I hold warm state for `k`, give me
   `k`" — needs only a request field and a claim script that does `ZREM ready <key>` instead of `ZPOPMIN`.
   *Announcement-driven* — "`k` just became claimable and I worked it last" — needs the key to reach the
-  consumer, and it currently does not: a wake entry carries `queue` and `key`, but `Waiters.raise(queue)`
-  discards the key, because a signal is per queue and every waiter on that queue receives the same one.
+  consumer, and it currently does not: a wake entry carries `queue` and `key`, but `Readiness.ready(queue)`
+  discards the key, because readiness is per queue and says only that the queue is worth another look.
   Routing a key to a particular waiter would mean a signal per key, or a side channel.
 - **The fallback is a fairness decision**, not a detail: when the named key is not claimable, answering
   empty, falling back to the head, and waiting for that key specifically are three different contracts.

@@ -1,7 +1,7 @@
 package homelab.keyedqueue.demo.scenario
 
 
-import homelab.keyedqueue.demo.{ Client, Scenario }
+import homelab.keyedqueue.demo.{ Scenario, Servers }
 import zio.*
 
 
@@ -37,31 +37,35 @@ object Idle extends Scenario:
    *
    * @return noop once the last message has been sent; fails when a call to the service does
    */
-  override val run: ZIO[Client & Scope, Throwable, Unit] =
+  override val run: ZIO[Servers & Scope, Throwable, Unit] =
     for
-      _ <- ZIO.foreachParDiscard(1 to consumers)(_ => consume.forever).forkScoped
+      _ <- ZIO.foreachParDiscard(1 to consumers)(worker => consume(worker).forever).forkScoped
       _ <- ZIO.sleep(2.seconds) // let them all park before anything arrives
       _ <- ZIO.foreachDiscard(1 to messages): index =>
-             produce(s"k$index") *> ZIO.sleep(gap)
+             // Sent through a different instance each time, so most messages have to cross from the one
+             // that took the enqueue to the one a consumer is parked on — which is the wake path's job.
+             produce(index, s"k$index") *> ZIO.sleep(gap)
     yield ()
 
   /**
    * One message for a key nobody has used, so each wakes exactly one waiting consumer.
    *
+   * @param worker which instance to send through
    * @param key the key to send under
    * @return noop
    */
-  private def produce(key: String): ZIO[Client, Throwable, Unit] =
-    ZIO.serviceWithZIO[Client](_.enqueue(queue, key, "wake").unit)
+  private def produce(worker: Int, key: String): ZIO[Servers, Throwable, Unit] =
+    ZIO.serviceWithZIO[Servers](_(worker).enqueue(queue, key, "wake").unit)
 
   /**
    * Wait the full patience, settle whatever arrives.
    *
+   * @param worker which instance this consumer parks on, for its whole life
    * @return noop
    */
-  private val consume: ZIO[Client, Throwable, Unit] =
+  private def consume(worker: Int): ZIO[Servers, Throwable, Unit] =
     for
-      client  <- ZIO.service[Client]
+      client  <- ZIO.serviceWith[Servers](_(worker))
       claimed <- client.dequeue(queue, patience)
       _       <- ZIO.foreachDiscard(claimed): work =>
                    client.settle(work.receipt, work.ids, succeeded = true)

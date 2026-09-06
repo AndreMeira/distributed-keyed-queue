@@ -1,8 +1,8 @@
 ---
 title: "Where dequeue latency goes, and what would actually move it"
 type: research
-status: draft
-updated: 2026-09-05
+status: current
+updated: 2026-09-06
 tags: [latency, design, redis, grpc, ownership, leases, exploration]
 ---
 
@@ -18,11 +18,13 @@ Nothing here is compute-bound, and it is worth seeing by how much.
 
 | | measured | how |
 |---|---|---|
-| Redis executing `produce.lua` | **4.18µs** (p99 16µs) | `valkey-benchmark`, 20,000 `EVALSHA`, `INFO commandstats` |
+| Redis executing `enqueue.lua` | **4.18µs** (p99 16µs) | `valkey-benchmark`, 20,000 `EVALSHA`, `INFO commandstats` |
 | a round trip to Redis from the same container | **55µs**, 18,570 rps on one connection | same run |
 | ZIO's blocking-pool hop | **0.3µs** | 200,000 iterations against `ZIO.succeed` |
 | an enqueue, end to end | **6–7ms** | `ThroughputSpec` indicator |
 | a message reaching an idle consumer | **~10ms** | same |
+| the per-call cost of a unary RPC | **~0.9ms** fixed | trace spans, agent on, isolated calls |
+| — of which the OpenTelemetry agent | **~1ms** added end to end | `ThroughputSpec` RTT, agent on vs off |
 
 So Redis is **0.06%** of an observed request and the effect-system ceremony is 0.005%. The rest is
 transport — and in that harness, chiefly gRPC crossing Docker Desktop's host-to-VM boundary. Throughput says
@@ -107,7 +109,7 @@ one stream, and stream liveness beats a periodic heartbeat — a dropped stream 
 the results for whichever credited consumer takes the next one. The Redis round trip still happens; it
 happens *off the critical path*, and the consumer's latency becomes a local handoff of microseconds.
 
-**Batch the claims, because that is where the round trips go.** `consume.lua` claims one key per call today.
+**Batch the claims, because that is where the round trips go.** `claim.lua` claims one key per call today.
 With credits the instance knows it wants `n`, so `ZPOPMIN ready COUNT n` grants them in one script: per-key
 cost falls from a round trip to a round trip ÷ `n` plus ~4µs of Lua. At `n = 32` that is ~6µs of network per
 key, and Redis round trips stop bounding throughput at all.
@@ -122,12 +124,12 @@ arrives" and "take as much as is already wanted".
 That also disposes of a tuning parameter rather than adding one, which is the opposite of how batching
 usually arrives.
 
-`n` must be capped, for the reason `watchdog.lua` already takes a `limit`: **a script blocks the whole
+`n` must be capped, for the reason `sweep.lua` already takes a `limit`: **a script blocks the whole
 server.** Thirty-two keys of thirty-two messages is ~130µs of Lua and harmless; a thousand would be a
 multi-millisecond stall for every other client. The cap is a latency decision, not a throughput one.
 
 **Settles want the same treatment.** The two round trips per message are the claim and the settle, so
-batching only the first leaves half the win. `complete.lua` is per-claim today; the counterpart takes
+batching only the first leaves half the win. `settle.lua` is per-claim today; the counterpart takes
 several `(key, token, outcomes)` triples. Heartbeats already batch per queue, so the pattern exists.
 
 **Two things it fixes inside the instance**, incidentally:
@@ -150,6 +152,49 @@ several `(key, token, outcomes)` triples. Heartbeats already batch per queue, so
 - **Hoarding**, if credits are not bounded by concurrency. Filling round-robin across streams with
   outstanding demand is the answer, and it is now a policy the server can choose, because it knows the
   demand.
+
+### The per-call cost, which is the second reason for a stream
+
+The first version of this note said a stream "saves almost nothing per request", on the reasoning that
+HTTP/2 already multiplexes. Measuring says otherwise: **a unary RPC carries ~0.9ms of fixed overhead that
+has nothing to do with the work.**
+
+Seen inside a trace, the agent's gRPC server span brackets our own handler span, and the difference is
+symmetric — roughly 0.4ms before the handler starts and 0.5ms after it ends, on isolated calls to an
+otherwise idle service:
+
+```
++0.00 .. +1.08  (1.08ms)  KeyedQueue/Enqueue      ← what the caller waited for
++0.30 .. +0.76  (0.46ms)      QueueService.enqueue ← what the metric records
++0.35 .. +0.76  (0.40ms)          RedisQueueStore.enqueue
++0.51 .. +0.72  (0.21ms)              EVALSHA
+```
+
+It is **constant, not queueing**: the same figures appear on a quiet system and under load, and it does not
+shrink with a warm JVM — 979 enqueues through a freshly started process show the same overhead in the first
+10% as the last. So it is work done identically on every call.
+
+What is in it, per call: HTTP/2 HEADERS in and HEADERS/DATA/trailers out; a fresh `ServerCall` through the
+interceptor chain; a new ZIO fiber, with a handoff from the netty event loop and back; protobuf codec; and
+a new span with its attributes. The symmetry is the clue — one thread handoff each way.
+
+**A stream removes most of that by construction.** Messages become DATA frames on a stream that already
+exists, the handler fiber is already running so there is no per-message handoff, and the agent opens one
+span for the whole stream rather than one per message. That is the same change step 1 proposes for a
+different reason, which is a good sign: credits were argued from *throughput* — removing the ask-and-wait
+round trip — and this argues from *per-call overhead*. Two independent routes to the same design.
+
+It should reduce the GC tails too. Under `flood` the p99 is dominated by young-generation pauses (measured:
+3.2ms mean, 157 collections in ~35s), and per-call `ServerCall`s, fibers and span objects are a real share
+of that allocation.
+
+**Two things it does not do**, so the win is not oversold:
+
+- **Per-message agent spans go away**, since one span covers the stream. In exchange the expensive automatic
+  instrumentation stops, and `Monitor.measure` still gives per-message spans nested inside it — the cheap
+  one, under our control, naming operations in our vocabulary.
+- **It does not touch the rest of the allocation.** Protobuf messages are the same volume, and consumers
+  still contend for the scheduler. The tails should shrink, not vanish.
 
 ## Step 2: slice leases
 
@@ -197,7 +242,7 @@ rewrite.
 ## The expensive way to get step 2's idle-path win
 
 Granting at enqueue time can be built *without* ownership: keep a registry of waiting consumers in Redis,
-scored by patience deadline so the script never grants to a phantom, and have `produce.lua` pop one and
+scored by patience deadline so the script never grants to a phantom, and have `enqueue.lua` pop one and
 grant the claim outright — lease, fence, `owned` — delivering the grant instead of a hint.
 
 **It breaks "one signal wakes everybody", and that is allowed.** The broadcast signal exists because a wake
@@ -239,6 +284,25 @@ cannot give.
 - **An async Redis client.** Measured at 0.3µs per hop — see
   [`../architecture/redis-connections.md`](../architecture/redis-connections.md). A thread-count change, not
   a latency one.
+
+## Where this was left
+
+dkq is paused here, with telemetry working and the case for streaming stronger than when this note was
+written. What exists to resume from:
+
+- **`demo/`** — a scenario runner (`steady`, `idle`, `flood`) that produces known shapes of load, plus a
+  provisioned Grafana dashboard. `flood` is what produced the per-call and GC numbers above, and it reports
+  backlog depth to the console because no panel shows it.
+- **The instrumentation** — every RPC is `measure`d in `QueueService`, every substrate call is `trace`d in
+  `RedisQueueStore`. Verified end to end: spans nest correctly from the agent's gRPC span down to `EVALSHA`,
+  and the metrics reach Prometheus under `dkq_operation_*`.
+- **A known limitation to carry forward:** `dkq_operation_latency` is *handler* time, not *call* time — the
+  0.46ms in the trace above against 1.08ms the caller waited. Whatever replaces the unary RPCs should
+  measure at a point that includes the transport, or the panel should say what it excludes.
+
+The first thing to do on resuming is the cheap one at the top of this note: measure with the load generator
+inside the compose network, so the numbers stop being dominated by Docker Desktop's host boundary. Every
+estimate here is built on a transport model that has not been checked on a real network.
 
 ## Order of work
 

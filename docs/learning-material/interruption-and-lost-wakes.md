@@ -2,7 +2,7 @@
 title: "Interruption, returned values, and the wake that vanishes"
 type: learning-material
 status: current
-updated: 2026-09-04
+updated: 2026-09-06
 tags: [zio, interruption, fibers, concurrency, queues, wakes, debugging]
 ---
 
@@ -95,7 +95,7 @@ nor there, and what happens if the holder dies in that instant. dkq has answered
 |---|---|---|---|
 | half-finished state | `claiming:<worker>` list, **in Redis** | a wake in a fiber's hands, **in memory** | none |
 | hand-back | `LMOVE claiming → ready` — positional, asks nothing about the outcome | `surrender` — must ask ZIO whether it is dying, and in a narrow window the answer comes too late | not needed |
-| swept recovery | `watchdog.lua` sweep 2, over durable state | listener backstop, over in-memory `parked` | not needed |
+| swept recovery | `sweep.lua` sweep 2, over durable state | listener backstop, over in-memory `parked` | not needed |
 | price | a `WorkerId`, a box per connection, a `workers` liveness set, a third sweep | two mechanisms guarding one handover | one look each per wake |
 
 The blocking design was **immune** to everything in the four experiments above, and not by luck: `release`
@@ -107,7 +107,7 @@ of ambiguity out of Redis and into fiber-local memory, where neither positional 
 possible. That is when the hole appeared, and the two in-memory mechanisms that defended it — `surrender`
 and the listener backstop — were the old two ideas rebuilt, less exactly.
 
-## What shipped: no handover at all
+## What shipped next: no handover at all
 
 Each queue has a **signal**: a `Promise` for the current round. `subscribe` takes it, raising it completes
 that one and installs a fresh one, and everyone holding it wakes. Nothing is consumed, so no caller can take
@@ -129,6 +129,38 @@ the registry over the throughput sweep and the idle-consumer wake path, the diff
 run-to-run noise: the redundant attempts fall on consumers that are idle by definition, and a woken consumer
 leaves the waiting set, so the fan-out does not compound under load.
 
+## And then a fourth: idempotent recovery
+
+The broadcast lasted until the herd it costs became the thing worth removing. What replaced it is a
+**readiness token** — one per queue, in a `Queue.sliding[Unit](1)`, taken by the consumer that acts on it.
+`Readiness.await(queue, patience)(claim)` keeps the shape that matters — the claim runs *inside*, so a
+token is never a value a dying fiber can drop — but delivery is point-to-point again: one token wakes one
+consumer, and a consumer that finds work hands the token on, so a burst drains one at a time and the chain
+stops on the first fruitless look.
+
+Which walks straight back into this note's problem, since a `Queue` has no CAS: it cannot report whether
+*this* taker received the element. Measured, the two bounded shapes lose catastrophically —
+`take.timeout` loses ~18,700 of 20,000 with a parked taker, and attaching a finaliser to the *take* does
+not help (~19,500), because when the timeout discards an element the take itself was never interrupted.
+
+**The way out is not to detect the loss but to make recovery idempotent.** Every path that could swallow a
+token offers one unconditionally:
+
+| path | recovery |
+|---|---|
+| the caller is interrupted | `onInterrupt` **outside** the timeout — inside, it never fires |
+| the claim fails | the `onExit` failure branch |
+| the patience elapses | an offer keyed on the *take* having given up |
+
+None of them knows whether there was a token to restore, and none needs to. With a one-slot buffer a
+spurious offer costs one wasted look and cannot accumulate, while a lost token costs a queue going quiet
+with work sitting in it. The design leans on that asymmetry, and all three recoveries are load-bearing:
+removing any one fails a spec.
+
+It also drops the ordering constraint above. The buffer remembers, so a token offered while a claim is in
+flight waits for the next take — look-then-wait is safe, and the subscribe-before-look rule that no test
+could pin is simply gone.
+
 ## The rule to take away
 
 If a fiber can be interrupted, do not model handover as *take, then return*. In order of preference:
@@ -145,8 +177,8 @@ finalizer is asked.
 
 ## Where to look in the code
 
-- `Waiters` — the signal, and `subscribe`'s contract
-- `RedisQueueStore.claimWithin` — subscribe, look, wait, in that order and for that reason
-- `WaitersSpec` — the semantics, plus 500 rounds racing a wake against an interrupt
+- `Readiness` — the token, and the three recoveries
+- `RedisQueueStore.claimWithin` — the loop, which no longer has an ordering to preserve
+- `ReadinessSpec` — the semantics, plus 500 rounds each racing a token against a timeout and an interrupt
 - `docs/research/non-blocking-dequeue.md` — the design this replaced, and why
 - `docs/learning-material/claiming-identity.md` — the `BLMOVE` design's box, and what it cost

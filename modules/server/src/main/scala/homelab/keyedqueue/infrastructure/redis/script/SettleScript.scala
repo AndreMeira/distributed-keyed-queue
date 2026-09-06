@@ -11,7 +11,7 @@ import zio.*
 
 
 /**
- * Settle some of what a claim owns, and release its key when nothing is left owed — `lua/complete.lua`.
+ * Settle some of what a claim owns, and release its key when nothing is left owed — `lua/settle.lua`.
  *
  * '''A claim may be settled piece by piece.''' The token is checked on every call and advanced only when
  * the claim ends, so it stays good across several settles; what stops one applying twice is that settling
@@ -23,7 +23,7 @@ import zio.*
  *
  * @param ref the digest this script was loaded under, from [[Scripts]]
  */
-final class CompleteScript(ref: LuaScript.Sha):
+final class SettleScript(ref: LuaScript.Sha):
 
   /** Integer, because the script answers whether it applied and nothing more. */
   private val output: ScriptOutputType = ScriptOutputType.INTEGER
@@ -51,7 +51,7 @@ final class CompleteScript(ref: LuaScript.Sha):
    * @param claim the claim being settled against, which names the key
    * @return `ready`, `claimed`, `fence`, `msgs`, `payloads`, `owned`, `attempts`, `delayed`, `wake`,
    *         `sequence`, in the
-   *         order `lua/complete.lua` reads them
+   *         order `lua/settle.lua` reads them
    */
   private def keys(ns: Namespace, claim: Claim): Array[String] =
     Array(
@@ -77,7 +77,7 @@ final class CompleteScript(ref: LuaScript.Sha):
    * `None` has to become a number somewhere, and the wire to Redis is a flat array of strings.
    *
    * @param settlement the claim being settled against, what became of the messages it names, and any backoff
-   * @return `key`, `token`, `retryAfter`, then `id`, `verdict` repeated, in the order `lua/complete.lua`
+   * @return `key`, `token`, `retryAfter`, then `id`, `verdict` repeated, in the order `lua/settle.lua`
    *         reads them
    */
   private def args(settlement: Settlement): Array[Array[Byte]] = {
@@ -108,12 +108,12 @@ final class CompleteScript(ref: LuaScript.Sha):
     LuaScript.Decode.long.map(_ == 1L).decode("complete", value)
 
 
-object CompleteScript:
+object SettleScript:
 
   /**
-   * Register `lua/complete.lua` and hold the digest it was given.
+   * Register `lua/settle.lua` and hold the digest it was given.
    *
    * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
-  def make: ZIO[Connection.Commands, RedisFailure, CompleteScript] =
-    LuaScript.register("lua/complete.lua").map(CompleteScript(_))
+  def make: ZIO[Connection.Commands, RedisFailure, SettleScript] =
+    LuaScript.register("lua/settle.lua").map(SettleScript(_))

@@ -86,8 +86,8 @@ already works — so reading 64 bucket streams is one command on one connection.
 - **`WakeListener`** — `watch(queue)` disappears entirely, along with `position` and the growing `watched`
   map: the streams are known at startup, so every one of them is in every read from the first.
 - **The Lua changes after all**, in one small way. An entry carried `key` — the *message* key — and the
-  queue came from the stream name. A shared stream cannot say, so `produce.lua`, `complete.lua` and
-  `watchdog.lua` take the queue as an argument and write `'queue', queue, 'key', key`. Three lines, three
+  queue came from the stream name. A shared stream cannot say, so `enqueue.lua`, `settle.lua` and
+  `sweep.lua` take the queue as an argument and write `'queue', queue, 'key', key`. Three lines, three
   argument builders, and the listener routes on that field.
 - **Configuration** — one new value, the bucket count.
 

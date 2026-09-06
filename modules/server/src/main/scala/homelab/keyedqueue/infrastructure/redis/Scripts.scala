@@ -20,21 +20,21 @@ import zio.*
  *
  * '''It hands out calls, not digests.''' A digest on its own is a string the caller must then pair with the
  * right keys and the right arguments, in the right order, from memory. Each script below already carries
- * its own digest and owns its own positions, so an adapter writes `scripts.produce.run(…)` with the
+ * its own digest and owns its own positions, so an adapter writes `scripts.enqueue.run(…)` with the
  * operation's real parameters and never touches a position again.
  *
- * @param produce appends a message and makes its key claimable
- * @param consume turns possession of a key into a claim
- * @param complete settles the in-flight message and decides the key's next state
- * @param heartbeat renews the claims a consumer still holds
- * @param watchdog the three repair sweeps
+ * @param enqueue appends a message and makes its key claimable
+ * @param claim takes the next claimable key and hands over a batch of its messages
+ * @param settle records what became of each message, and decides the key's next state
+ * @param renew extends the claims a consumer still holds
+ * @param sweep the two repair passes
  */
 final case class Scripts(
-  produce: ProduceScript,
-  consume: ConsumeScript,
-  complete: CompleteScript,
-  heartbeat: HeartbeatScript,
-  watchdog: WatchdogScript,
+  enqueue: EnqueueScript,
+  claim: ClaimScript,
+  settle: SettleScript,
+  renew: RenewScript,
+  sweep: SweepScript,
 )
 
 
@@ -50,9 +50,9 @@ object Scripts:
    */
   def make: ZIO[Commands, RedisFailure, Scripts] =
     for
-      produce   <- ProduceScript.make
-      consume   <- ConsumeScript.make
-      complete  <- CompleteScript.make
-      heartbeat <- HeartbeatScript.make
-      watchdog  <- WatchdogScript.make
-    yield Scripts(produce, consume, complete, heartbeat, watchdog)
+      enqueue <- EnqueueScript.make
+      claim   <- ClaimScript.make
+      settle  <- SettleScript.make
+      renew   <- RenewScript.make
+      sweep   <- SweepScript.make
+    yield Scripts(enqueue, claim, settle, renew, sweep)

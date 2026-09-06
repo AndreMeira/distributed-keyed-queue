@@ -12,7 +12,7 @@ import zio.*
 
 
 /**
- * Append a message and make its key claimable — `lua/produce.lua`.
+ * Append a message and make its key claimable — `lua/enqueue.lua`.
  *
  * The conditional push inside the script is what keeps a key in `ready` at most once, which is why this is
  * one call and not a read followed by a write.
@@ -22,7 +22,7 @@ import zio.*
  *
  * @param ref the digest this script was loaded under, from [[Scripts]]
  */
-final class ProduceScript(ref: LuaScript.Sha):
+final class EnqueueScript(ref: LuaScript.Sha):
 
   /** Integer, because the script's last act is an `LLEN`. */
   private val output: ScriptOutputType = ScriptOutputType.INTEGER
@@ -50,7 +50,7 @@ final class ProduceScript(ref: LuaScript.Sha):
    * @param ns the queue to append in
    * @param message the message; the key it carries decides where it lands
    * @return `ready`, `claimed`, `delayed`, `msgs`, `payloads`, `wake`, `sequence`, in the order
-   *         `lua/produce.lua` reads them
+   *         `lua/enqueue.lua` reads them
    */
   private def keys(ns: Namespace, message: Message): Array[String] =
     Array(ns.ready, ns.claimed, ns.delayed, ns.msgs(message.key), ns.payloads(message.key), ns.wake, ns.sequence)
@@ -59,7 +59,7 @@ final class ProduceScript(ref: LuaScript.Sha):
    * The key to append under, and the message as it will be stored.
    *
    * @param message the message to serialise
-   * @return `key`, `id`, `payload`, in the order `lua/produce.lua` reads them
+   * @return `key`, `id`, `payload`, in the order `lua/enqueue.lua` reads them
    */
   private def args(ns: Namespace, message: Message): Array[Array[Byte]] =
     Array(
@@ -79,12 +79,12 @@ final class ProduceScript(ref: LuaScript.Sha):
     LuaScript.Decode.long.decode("produce", value)
 
 
-object ProduceScript:
+object EnqueueScript:
 
   /**
-   * Register `lua/produce.lua` and hold the digest it was given.
+   * Register `lua/enqueue.lua` and hold the digest it was given.
    *
    * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
-  def make: ZIO[Connection.Commands, RedisFailure, ProduceScript] =
-    LuaScript.register("lua/produce.lua").map(ProduceScript(_))
+  def make: ZIO[Connection.Commands, RedisFailure, EnqueueScript] =
+    LuaScript.register("lua/enqueue.lua").map(EnqueueScript(_))

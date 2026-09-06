@@ -57,11 +57,11 @@ object Module:
       connection <- ZIO.service[Connection]
       scripts    <- ZIO.service[Scripts]
       config     <- ZIO.service[QueueConfig]
-      waiters    <- Waiters.make
-      listener   <- WakeListener.make(connection, waiters, config.wakeBuckets, config.wakeBlock)
+      readiness  <- Readiness.make
+      listener   <- WakeListener.make(connection, readiness, config.wakeBuckets, config.wakeBlock)
       // Forked here rather than in the composition root because the store is unusable without it: a
-      // consumer that finds nothing waits on a signal, and an unrun listener never raises one.
+      // consumer that finds nothing waits for a readiness token, and an unrun listener offers none.
       _          <- listener.run.forkScoped
-      store      <- RedisQueueStore.make(monitor, connection, scripts, waiters, config.leaseTtl, config.wakeBuckets)
+      store      <- RedisQueueStore.make(monitor, connection, scripts, readiness, config.leaseTtl, config.wakeBuckets)
     yield store
   }

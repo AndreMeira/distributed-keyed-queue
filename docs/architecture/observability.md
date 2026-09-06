@@ -76,9 +76,14 @@ produced `EVALSHA` spans without a line of code being written for it.
 
 Two gaps worth knowing before trusting a trace:
 
-- **There are no gRPC server spans.** The agent instruments `io.grpc`'s server, but this service serves
-  through zio-grpc, which it does not recognise. `QueueService`'s own `measure` spans are therefore the
-  root of each trace rather than a child of a transport span.
+- **The agent does instrument zio-grpc's server.** An earlier version of this page said it did not; that
+  was measured against a build predating the telemetry wiring, and it is wrong. A request produces
+  `homelab.keyedqueue.v1.KeyedQueue/Dequeue` as the trace root, with `QueueService.*` beneath it.
+- **A Redis span made after a wait is its own trace.** The agent keeps context in a thread-local, which a
+  fiber loses when it parks and resumes elsewhere, so `EVALSHA` from a claim that waited has no parent. Our
+  own spans do not suffer this — `homelab-telemetry` keeps context in the `FiberRef` and bridges to the
+  agent's span once per request — so `RedisQueueStore.attempt` sits under its `Dequeue` regardless of how
+  long the claim waited. `docs/learning-material/java-agents-and-telemetry.md` has the full account.
 - **`XREAD` spans are long and constant.** The listener's read blocks for `DKQ_WAKE_BLOCK`, so a
   multi-second `XREAD` span is the system idling correctly, not a slow query. The same caution as
   `dequeue`, one layer down.

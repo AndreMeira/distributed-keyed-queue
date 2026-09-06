@@ -32,9 +32,12 @@ trait Scenario:
    * against a quiet system. Scoped because consumers are forked and must die with it — a demo that left
    * fibers running would report its traffic as the next scenario's.
    *
+   * Takes [[Servers]] rather than a [[Client]] so that a scenario spreads its workers over however many
+   * instances were named, without knowing how many that is.
+   *
    * @return noop once the traffic is done; fails when a call to the service does
    */
-  def run: ZIO[Client & Scope, Throwable, Unit]
+  def run: ZIO[Servers & Scope, Throwable, Unit]
 
 
 object Scenario:

@@ -124,11 +124,15 @@ of other keys, ids that never existed, and ids the same claim already settled.
 **C6. A nack may ask the key to wait before anyone works it again.** The wait applies to the *key*, not to
 one message. Where several nacks in a claim ask for different waits, the longest applies.
 
-**C7. One outstanding `Dequeue` per consumer is the intended shape.** Not a rule the service enforces, and
-nothing breaks if it is ignored — but a consumer parallelises by processing claims concurrently, not by
-polling concurrently: claim a key, hand it to your own executor, poll again. A wake reaches *every* consumer
-waiting on that queue, so the redundant attempts one costs are proportional to how many polls are parked
-on it. One poll per consumer keeps that proportional to your deployment rather than to your concurrency.
+**C7. One outstanding `Dequeue` per consumer is the intended shape**, though it costs less to ignore than
+it used to. A consumer parallelises by processing claims concurrently, not by polling concurrently: claim a
+key, hand it to your own executor, poll again.
+
+The reason this was once emphatic has gone. Readiness used to be a broadcast, so every wake woke every
+parked poll on that queue and the wasted claim attempts scaled with how many were parked. A wake is now a
+token that reaches exactly one, and a consumer that finds work passes it on — so extra parked polls cost a
+fiber each rather than a round trip each. What remains is that they are still fibers, and that one poll per
+consumer is the simpler thing to reason about.
 
 ## Recovery
 
@@ -155,9 +159,10 @@ Stated plainly, because each of these is something a reader might otherwise assu
   not stop its code.
 - **No priority, and no deadline scheduling.** Messages are handed out in the order they were sent, and a
   nack's wait is the only way to delay one.
-- **No fairness promise between consumers.** A wake reaches everyone twice over — every instance reads every
-  entry, and every consumer waiting on that queue holds its instance's signal — so waiting consumers race to
-  claim; the instance that just finished a key is often the one that takes it next. A hot key therefore
+- **No fairness promise between consumers.** Every instance reads every wake entry, so instances race to
+  claim; within an instance a readiness token wakes one consumer rather than all of them, and consumers are
+  served in the order the token reaches them. The instance that just finished a key is often the one that
+  takes it next. A hot key therefore
   tends to stay on one instance. Nothing is lost — a key is worked by one consumer at a time regardless —
   but do not read "several consumers" as "the work is spread across them" for a single key.
 - **No fairness promise between keys.**

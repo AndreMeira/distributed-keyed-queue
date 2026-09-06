@@ -48,10 +48,10 @@ has the reasoning and what it cost.
 
 Two consequences are easy to undo by accident:
 
-- **`consume.lua` and `watchdog.lua` build key names at runtime** — `prefix .. ':msgs:' .. key` and its
+- **`claim.lua` and `sweep.lua` build key names at runtime** — `prefix .. ':msgs:' .. key` and its
   siblings — without declaring them in `KEYS`. Reaching an undeclared key is only safe because the tag
   guarantees the same slot. That is why both take `prefix` as an argument at all, and it is unavoidable in
-  `consume.lua`, which does not know which key it holds until it has popped one.
+  `claim.lua`, which does not know which key it holds until it has popped one.
 - **The `wake` stream carries the bucket's tag for the same reason.** A stream tagged differently from the
   keys it announces would be a different slot, so
   the entry could not be appended by the script that made the key claimable — and a separate append is a

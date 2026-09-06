@@ -42,6 +42,10 @@ What is specific to this repo:
     does to a build, why it ships only in the image, and why present is not the same as active.
   - [`writing-end-to-end-tests.md`](learning-material/writing-end-to-end-tests.md) — what the e2e suite
     taught about measuring and asserting against a real deployment.
+  And the most recent checkpoint is
+  [`sessions/2026-09-06-observability-checkpoint.md`](sessions/2026-09-06-observability-checkpoint.md) —
+  what telemetry proved, what it cost, and where to pick dkq up.
+
 - **The problem statement lives outside this repo**, in `research/infrastructure/homelab-message-broker.md`
   and its transport companion: they precede this code and are not only about it. Rationale that *is* only
   about this repo goes in [`research/`](research/).

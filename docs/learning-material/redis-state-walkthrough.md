@@ -84,11 +84,12 @@ identities, and the sweep that recovered them.
 **If the consumer dies now**, `claimed` holds the lease and the lapsed-claim sweep is the whole recovery
 story. Nothing else can be holding a key.
 
-**If nothing was claimable**, the script answers with nothing and the caller waits on the queue's signal,
-which is raised when an entry naming that queue arrives on its bucket's `wake` stream — appended by whatever
-next makes a key claimable. That wait costs a fiber, not a connection: one listener per instance reads every
-bucket on one connection, from startup, so a queue nobody has asked for yet is heard as promptly as a busy
-one.
+**If nothing was claimable**, the script answers with nothing and the caller waits for a readiness token,
+offered when an entry naming that queue arrives on its bucket's `wake` stream — appended by whatever next
+makes a key claimable. A token wakes '''one''' consumer, which claims and hands the token on if it found
+work, so a burst drains one consumer at a time instead of waking all of them for one key. That wait costs a
+fiber, not a connection: one listener per instance reads every bucket on one connection, from startup, so a
+queue nobody has asked for yet is heard as promptly as a busy one.
 
 ---
 

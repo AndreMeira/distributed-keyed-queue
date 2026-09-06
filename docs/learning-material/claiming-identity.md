@@ -45,7 +45,7 @@ EVALSHA consume.lua                        grants it: fence, lease, ownership, p
 Between those two calls the key is in neither `ready` nor a claim. If the process dies there, the key is
 in the box and nothing else knows about it. `claiming:<worker>` is that box, and `<worker>` is its address.
 The deadline in `workers` is how the watchdog decides the box has been abandoned and drains it back
-(`watchdog.lua`, sweep 2).
+(`sweep.lua`, sweep 2).
 
 ## Why it is minted per borrowed connection
 
@@ -69,7 +69,7 @@ Give two connections one id and they share a box. Trace it with connections C1 a
 2. C2's `BLMOVE` returns key `b` → `claiming:W = [a, b]`.
 3. C1's caller is interrupted, so `release` runs `LMOVE claiming:W → ready`, popping from the **right** —
    which is `b`, *C2's* key.
-4. C2 runs `consume.lua` for `b`. Its first line, `LREM claiming:W 1 b`, returns 0, so the claim fails and
+4. C2 runs `claim.lua` for `b`. Its first line, `LREM claiming:W 1 b`, returns 0, so the claim fails and
    C2 answers "nothing found" although it had found something.
 5. **`a` is stranded.** It is in no `ready` list and no claim, and a box is only drained when its worker's
    liveness expires — but `W` is still alive, because C2 is registered and `beat` keeps renewing it. So `a`
@@ -86,7 +86,7 @@ see the design space below.
 ## Why it is called "worker", and why that is wrong
 
 The name comes from the Lua, where `workers` is the set of things that hold liveness, and sweep (2) talks
-about "a worker that died between its `BLMOVE` and `consume.lua`". Everything downstream inherited it.
+about "a worker that died between its `BLMOVE` and `claim.lua`". Everything downstream inherited it.
 
 It is a bad name, for a specific reason: **the participant that actually does the work is the consumer, and
 the consumer has no id at all** — it is known by its receipt (queue, key, fence token). So "worker" names
@@ -137,5 +137,5 @@ Whatever it ends up called, these are the invariants, and they are the reason th
   one process, `random` so two pods or two runs never share a box
 - `Connection.pool` / `Pool.provideBlocking` — where one is handed to a borrower
 - `RedisQueueStore.register` / `take` / `release` — its three uses
-- `lua/consume.lua` first line — the `LREM` guard that makes the box's ownership checkable
-- `lua/watchdog.lua` sweep (2) — recovery, and the only reason liveness is written
+- `lua/claim.lua` first line — the `LREM` guard that makes the box's ownership checkable
+- `lua/sweep.lua` sweep (2) — recovery, and the only reason liveness is written

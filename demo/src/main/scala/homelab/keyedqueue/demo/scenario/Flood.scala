@@ -1,7 +1,7 @@
 package homelab.keyedqueue.demo.scenario
 
 
-import homelab.keyedqueue.demo.{ Client, Scenario }
+import homelab.keyedqueue.demo.{ Scenario, Servers }
 import zio.*
 
 
@@ -23,7 +23,7 @@ import zio.*
 object Flood extends Scenario:
 
   private val queue     = "demo-flood"
-  private val keys      = 64
+  private val keys      = 512
   private val producers = 8
   private val consumers = 16
   private val batch     = 8
@@ -43,20 +43,20 @@ object Flood extends Scenario:
    *
    * @return noop once the flood stops; fails when a call to the service does
    */
-  override val run: ZIO[Client & Scope, Throwable, Unit] =
+  override val run: ZIO[Servers & Scope, Throwable, Unit] =
     for
       sent    <- Ref.make(0L)
       deepest <- Ref.make(0L)
-      _       <- ZIO.foreachParDiscard(1 to consumers)(_ => consume.forever).forkScoped
+      _       <- ZIO.foreachParDiscard(1 to consumers)(worker => consume(worker).forever).forkScoped
       _       <- report(sent, deepest).forkScoped
       _       <- ZIO
-                   .foreachParDiscard(1 to producers)(_ => produce(sent, deepest).forever)
+                   .foreachParDiscard(1 to producers)(worker => produce(worker, sent, deepest).forever)
                    .timeout(duration)
       total   <- sent.get
       peak    <- deepest.get
-      _       <- Console.printLine(
-                   s"  sent $total in ${duration.toSeconds}s (${total / duration.toSeconds}/s), deepest backlog seen: $peak"
-                 )
+      _       <- Console.printLine:
+                   s"  sent $total in ${duration.toSeconds}s (${total / duration.toSeconds}/s), " +
+                     s"deepest backlog seen: $peak"
     yield ()
 
   /**
@@ -65,13 +65,14 @@ object Flood extends Scenario:
    * The depth the service answers with is recorded rather than discarded: it is the only view of the
    * backlog a consumer of this API has, and the thing this scenario exists to watch.
    *
+   * @param worker which instance this producer sends through, for its whole life
    * @param sent counts what has gone out
    * @param deepest keeps the high-water mark of the backlog
    * @return noop
    */
-  private def produce(sent: Ref[Long], deepest: Ref[Long]): ZIO[Client, Throwable, Unit] =
+  private def produce(worker: Int, sent: Ref[Long], deepest: Ref[Long]): ZIO[Servers, Throwable, Unit] =
     for
-      client <- ZIO.service[Client]
+      client <- ZIO.serviceWith[Servers](_(worker))
       key    <- Random.nextIntBounded(keys).map(index => s"k$index")
       body   <- Random.nextLong.map(_.toHexString)
       depth  <- client.enqueue(queue, key, body)
@@ -86,11 +87,12 @@ object Flood extends Scenario:
    * one claim covering several of a key's messages is one round trip instead of several, and this scenario
    * is about how much the service can move rather than how carefully.
    *
+   * @param worker which instance this consumer talks to, for its whole life
    * @return noop
    */
-  private val consume: ZIO[Client, Throwable, Unit] =
+  private def consume(worker: Int): ZIO[Servers, Throwable, Unit] =
     for
-      client  <- ZIO.service[Client]
+      client  <- ZIO.serviceWith[Servers](_(worker))
       claimed <- client.dequeue(queue, 2.seconds, batch)
       _       <- ZIO.foreachDiscard(claimed)(work => client.settle(work.receipt, work.ids, succeeded = true))
     yield ()

@@ -191,21 +191,33 @@ After one `Enqueue` through the running container, Jaeger had:
 Those are **Lettuce spans**. Nobody wrote them; the agent recognised the Redis client and instrumented it.
 Prometheus had 19 `dkq_*` series (JVM heap, GC, CPU, class loading) on the same terms.
 
-And now the honest part. There are **no gRPC server spans in that list.** The agent instruments
-`io.grpc`'s server, but dkq serves through zio-grpc, whose interceptor chain the agent does not recognise —
-so a request produces Redis spans with no parent, and a trace that starts in the middle of the story.
+A note on how that list was gathered, because I got it wrong once: an early count over twenty traces showed
+no gRPC server spans, and I concluded the agent did not recognise zio-grpc. Counting again over a thousand
+traces showed `homelab.keyedqueue.v1.KeyedQueue/*` as the root of every request. The agent instruments the
+server fine; the sample was too small and taken against a build that predated the wiring.
 
-This is the general shape of agent instrumentation, and the thing to expect rather than be surprised by:
+What remains true is the division of labour, and it is the thing to expect rather than be surprised by:
 **an agent covers the libraries it knows, and knows nothing about your domain.** No span says
 "DequeueUseCase", because no library call corresponds to one. Manual instrumentation — dkq's `Monitor`
-port, wrapping use cases — is what supplies the root those library spans hang under, and what names
-operations in your vocabulary rather than Redis's.
+port — is what names operations in your vocabulary rather than Redis's, and what sits between the agent's
+gRPC span and its Lettuce spans to say which of *your* operations connects them.
 
-The two compose rather than compete: when the agent is loaded, `OpenTelemetry.global` returns *its* SDK, so
-manually created spans join the same trace automatically. The one thing to get right is context storage —
-zio-telemetry's default keeps the current span in a `FiberRef`, while the agent uses a thread-local, so
-`OpenTelemetry.contextJVM` is what makes manual spans nest under agent spans instead of forming a second,
-disconnected tree.
+The two compose rather than compete: when the agent is loaded, the global SDK is *its* SDK, so manually
+created spans join the same trace automatically. The one thing to get right is context storage, and it is
+where an agent and a fiber runtime genuinely disagree — the agent keeps the current span in a thread-local,
+zio-telemetry in a `FiberRef`, and neither one alone produces a correct trace.
+
+dkq does not decide this and has no code for it: `homelab-telemetry`'s `OtelMonitor` settles it, uses the
+fiber-local storage always, and adopts the agent's span once at the inbound edge. The full account — why the
+thread-local option loses spans on any path that parks, why the fiber-local one alone leaves you with two
+traces per request, and the measurements for both — is in that repo, at
+`docs/learning-material/tracing-context-across-fibers.md`.
+
+Worth carrying back here, because it shows up when reading a dkq trace: spans the *agent* opens, like
+`EVALSHA`, still read the thread-local, which does not hold our spans. A Redis call made after a wait is
+therefore inside the right trace but at the wrong depth — a sibling of the RPC rather than a child of the
+operation that issued it. The operation span around it measures the same call, which is why that is an
+acceptable trade rather than a gap.
 
 ## If you remember three things
 

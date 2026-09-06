@@ -59,7 +59,7 @@ whoever takes it holds it exclusively. Appended to by `produce`, `complete` and 
 workers.
 
 **`{q:<queue>}:claiming:<worker>`** — `list` of keys, transient, **one per worker**.
-Where a key sits for the instant between `BLMOVE` returning it and `consume.lua` running. It exists only
+Where a key sits for the instant between `BLMOVE` returning it and `claim.lua` running. It exists only
 because Redis scripts cannot block, so a claim has to be two steps.
 
 It is per worker rather than shared for a specific reason. A worker that dies in that seam leaves a key that
@@ -154,7 +154,7 @@ The blocking part is outside on purpose: Redis scripts cannot block. `claiming` 
 and it is swept by the watchdog.
 
 **Where the key actually goes.** `BLMOVE ready claiming:<worker> LEFT RIGHT` takes the key off the head of
-`ready` and parks it on the tail of *that worker's* claiming list; `consume.lua` then removes it with `LREM`. So once the
+`ready` and parks it on the tail of *that worker's* claiming list; `claim.lua` then removes it with `LREM`. So once the
 claim is granted, **the key is in no list at all** — which is the part that reads as a gap. Its location is
 `state` plus `claimed`: those two *are* where a held key lives. Meanwhile the *message* makes its own move,
 from the key's FIFO into `inflight`.
@@ -279,7 +279,7 @@ Two sweeps, because there are two ways to lose a key.
 the **head** of its FIFO so a retry does not reorder the key, bump the fence so the silent worker's
 completion can no longer land, drop the lease, and make the key `queued` and ready again.
 
-**Expired workers.** A worker that died between its `BLMOVE` and `consume.lua` never created a claim, so the
+**Expired workers.** A worker that died between its `BLMOVE` and `claim.lua` never created a claim, so the
 first sweep is blind to it — the key sits in `claiming:<worker>`, still `queued`, with no deadline anywhere.
 The second sweep finds workers whose liveness has lapsed and drains their claiming lists back onto `ready`,
 tail-to-head so the keys keep their relative order at the front of the queue. Nothing else changes: `state`
@@ -344,7 +344,7 @@ claims. Nothing *enforces* that, though: a caller could pass `{q:a}:ready` with 
 both. The typed facade in §4c is what makes that unrepresentable, which is a decent argument for building it
 early rather than "once the scripts settle".
 
-**`watchdog.lua` is the one place the layout is baked in.** It rebuilds `msgs:<key>` and `inflight:<key>`
+**`sweep.lua` is the one place the layout is baked in.** It rebuilds `msgs:<key>` and `inflight:<key>`
 from an `ARGV` prefix, because which keys have expired is not known until the `ZRANGEBYSCORE` runs. It is
 also therefore per queue — N queues means N sweeps, and in cluster mode it cannot be otherwise, since
 different queues carry different hash tags and a script may only touch one slot.
@@ -413,7 +413,7 @@ The scripts above are hand-written rather than generated from Scala. That is a d
   library is stored server-side, survives restarts, replicates, and there is no `NOSCRIPT` fallback to get
   wrong. Valkey supports them too.
 - **Two constraints while writing them.** A script blocks the single-threaded server, so it must be short and
-  bounded — hence `watchdog.lua` taking a `limit` and leaving the rest to the next sweep. And in cluster mode
+  bounded — hence `sweep.lua` taking a `limit` and leaving the rest to the next sweep. And in cluster mode
   every key a script touches must be in one slot, which is what the `{q:<queue>}` hash tag is for; the
   watchdog in particular *builds* key names at runtime, which is only safe because of it.
 
@@ -517,8 +517,8 @@ object Claimer:
   def make(ns: Namespace, worker: WorkerId): ZIO[Scope, RedisError, Claimer] =
     for
       redis <- blockingConnection                             // its own, never a pooled one
-      _     <- scripts.heartbeat(ns, worker, Chunk.empty)     // registration: awaited, not forked
-      _     <- scripts.heartbeat(ns, worker, held).repeat(tick).forkScoped
+      _     <- scripts.renew(ns, worker, Chunk.empty)     // registration: awaited, not forked
+      _     <- scripts.renew(ns, worker, held).repeat(tick).forkScoped
       _     <- ZIO.addFinalizer(release(redis, ns, worker) *> deregister(ns, worker))
     yield new Claimer:
 
@@ -527,7 +527,7 @@ object Claimer:
           .uninterruptibleMask: restore =>
             restore(redis.blMove(ns.ready, ns.claiming(worker), Side.Left, Side.Right, timeout)).flatMap:
               case None      => ZIO.none
-              case Some(key) => scripts.consume(ns, worker, key)  // uninterruptible: we hold the key
+              case Some(key) => scripts.claim(ns, worker, key)  // uninterruptible: we hold the key
           .onInterrupt(release(redis, ns, worker))
 
   /** Give back whatever this connection was holding — at most one key, since it makes one BLMOVE at a time. */

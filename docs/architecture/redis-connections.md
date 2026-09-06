@@ -28,7 +28,7 @@ Nothing else is pooled, because nothing else waits.
 
 Measured on this laptop, not estimated.
 
-**Redis executing a script: ~4µs.** `produce.lua` — the heaviest write path, five keys plus the `XADD` —
+**Redis executing a script: ~4µs.** `enqueue.lua` — the heaviest write path, five keys plus the `XADD` —
 benchmarked over 20,000 `EVALSHA` calls against Valkey 8.1:
 
 ```
@@ -60,7 +60,7 @@ Not CPU. **A parked thread per in-flight Redis call** — the thread waits out t
 doing anything. The question is therefore how many calls are in flight at once, and the answer is bounded by
 concurrency, not by consumers:
 
-- A consumer **waiting** for work holds no thread and no connection. It waits on a promise in `Waiters`, and
+- A consumer **waiting** for work holds no thread and no connection. It waits for a token in `Readiness`, and
   is woken by the listener. This is the part that changed: under the old `BLMOVE` design a parked consumer
   held a thread *and* a connection for its whole patience — up to thirty seconds of doing nothing.
 - A consumer **claiming** holds a blocking thread for the duration of one script — microseconds of Redis
@@ -86,7 +86,7 @@ blocking `XREAD` occupies the connection whether or not it occupies a thread.
 
 ## Where the numbers came from
 
-- Script cost: `valkey-benchmark` driving `EVALSHA` of `produce.lua`, then `INFO commandstats` and
+- Script cost: `valkey-benchmark` driving `EVALSHA` of `enqueue.lua`, then `INFO commandstats` and
   `INFO latencystats` for the server-side split.
 - Hop cost: 200,000 iterations of `ZIO.attemptBlocking(())` against `ZIO.succeed(())` in a scratch spec.
 - Request latency and throughput: the opt-in indicators in `ThroughputSpec`, recorded in

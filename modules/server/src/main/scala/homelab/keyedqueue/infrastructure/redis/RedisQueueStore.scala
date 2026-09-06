@@ -42,7 +42,7 @@ import java.time.Instant
  * @param monitor what each call on the substrate is traced against
  * @param connection where its connection comes from
  * @param scripts the loaded script digests
- * @param waiters where a caller waits when there is nothing to claim
+ * @param readiness where a caller waits for a queue to have something worth looking at
  * @param leaseTtl how long a claim survives without a heartbeat
  * @param buckets how many wake streams the deployment has, which decides every key's hash tag
  */
@@ -50,13 +50,13 @@ final class RedisQueueStore(
   monitor: Monitor,
   connection: Connection,
   scripts: Scripts,
-  waiters: Waiters,
+  readiness: Readiness,
   leaseTtl: Duration,
   buckets: Int,
 ) extends QueueStore:
 
   /**
-   * One `produce` call. The conditional push inside it is what keeps a key in `ready` at most once, and so
+   * One `enqueue` call. The conditional add inside it is what keeps a key in `ready` at most once, and so
    * cannot be split into a read and a write here.
    *
    * The message is serialised here rather than by the caller: what a message looks like at rest is this
@@ -68,42 +68,52 @@ final class RedisQueueStore(
   override def enqueue(submission: Submission): IO[RedisFailure, Long] =
     monitor.trace("RedisQueueStore.enqueue"):
       connection.provide:
-        scripts.produce.run(Namespace(submission.queue, buckets), submission.message)
+        scripts.enqueue.run(Namespace(submission.queue, buckets), submission.message)
 
   /**
-   * One `consume` call, and — when it finds nothing — a wait on the queue's signal.
+   * One `claim` call, and — when it finds nothing — a wait for the queue to be worth another look.
    *
    * '''The claim is a single script, so nothing blocks in Redis.''' A key is either in `ready` or claimed;
    * there is no instant in which it is neither, which is why this adapter has no holding list, no
    * per-connection identity and no recovery for one.
    *
    * '''Waiting costs a fiber, not a connection.''' The listener reads every wake stream in the deployment
-   * on one connection, and raises the signal every caller waiting on the named queue is holding.
+   * on one connection, and offers a readiness token to the named queue, which wakes one consumer.
    *
    * '''Patience is a deadline.''' A caller woken by an entry another instance won keeps waiting with what
    * is left of it, rather than starting again — so a race it loses costs it a round trip, not a full wait.
+   *
+   * '''Every call looks once before it waits.''' A patience of zero asks not to be kept waiting, not to be
+   * answered blind, so a key that is already claimable is handed over regardless. A readiness token cannot
+   * stand in for that first look: one is offered per queue per process, not per call.
    *
    * @param demand the queue to claim from, how long to wait, and the most to take
    * @return the claim, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
    */
   override def claim(demand: Demand): IO[RedisFailure, Option[Claimed]] =
     monitor.trace("RedisQueueStore.claim"):
+      val ns = Namespace(demand.queue, buckets)
       for
         asked   <- Clock.instant
-        claimed <- claimWithin(Namespace(demand.queue, buckets), demand, asked)
+        // Always look once, before any waiting. A caller asking for no patience is saying "do not wait",
+        // not "do not look" — and a readiness token cannot stand in for this, because one is offered per
+        // queue per process rather than per call.
+        found   <- attempt(ns, demand)
+        claimed <- found match
+                     case granted @ Some(_) => ZIO.succeed(granted)
+                     case None              => claimWithin(ns, demand, asked)
       yield claimed
 
   /**
-   * Take a signal, look, and — finding nothing — wait on it, until the patience is spent.
+   * Wait for a readiness token, claim when one arrives, and keep at it until the patience is spent.
    *
-   * '''The signal is taken before the look, and that ordering is the whole mechanism.''' A wake that lands
-   * while the claim attempt is in flight completes the signal this caller is already holding, so it is
-   * waited on and returns immediately. Looking first and subscribing after would drop exactly that wake,
-   * and the consumer would sleep out its patience beside claimable work.
+   * '''There is no subscribe-then-look ordering to get right.''' A token offered while a claim is in
+   * flight waits in its buffer for the next take, so this can simply loop. The signal it replaced had to
+   * be held before looking or a wake landing during the attempt was lost.
    *
-   * A wake is a hint, not a handover: every instance reads the same entry, and every consumer waiting on
-   * this queue holds the same signal, so a caller that finds nothing goes back to waiting rather than
-   * reporting empty.
+   * A token is a hint, not a handover: every instance reads the same wake stream, so a consumer that
+   * takes a token and finds nothing has lost a race rather than been misled, and goes back to waiting with
+   * what is left of its patience.
    *
    * @param ns the queue being claimed from
    * @param demand what the caller asked for
@@ -111,18 +121,14 @@ final class RedisQueueStore(
    * @return the claim, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
    */
   private def claimWithin(ns: Namespace, demand: Demand, asked: Instant): IO[RedisFailure, Option[Claimed]] =
-    waiters.subscribe(demand.queue).flatMap { signal =>
-      attempt(ns, demand).flatMap:
-        case granted @ Some(_) => ZIO.succeed(granted)
-        case None              =>
-          remainingTime(demand.patience, asked).flatMap:
-            case None       => ZIO.none
-            case Some(left) =>
-              signal.await(left).flatMap {
-                case true  => claimWithin(ns, demand, asked)
-                case false => ZIO.none
-              }
-    }
+    remainingTime(demand.patience, asked).flatMap:
+      case None       => ZIO.none
+      case Some(left) =>
+        readiness
+          .await(demand.queue, left)(attempt(ns, demand))
+          .flatMap:
+            case granted @ Some(_) => ZIO.succeed(granted)
+            case None              => claimWithin(ns, demand, asked)
 
   /**
    * Claim whatever is claimable, without waiting.
@@ -134,7 +140,7 @@ final class RedisQueueStore(
   private def attempt(ns: Namespace, demand: Demand): IO[RedisFailure, Option[Claimed]] =
     monitor.trace("RedisQueueStore.attempt"):
       connection.provide:
-        scripts.consume.run(ns, leaseTtl, demand.batch)
+        scripts.claim.run(ns, leaseTtl, demand.batch)
 
   /**
    * What is left of a caller's patience.
@@ -149,7 +155,7 @@ final class RedisQueueStore(
       Option.when(left.toMillis > 0)(left)
 
   /**
-   * One `complete` call, which checks the token every time and advances it only when the claim ends — a
+   * One `settle` call, which checks the token every time and advances it only when the claim ends — a
    * partial settle has to leave the receipt usable for the rest of the batch.
    *
    * So it is not the fence that makes a replay harmless here: settling removes the id from the claim's
@@ -162,10 +168,10 @@ final class RedisQueueStore(
   override def settle(settlement: Settlement): IO[RedisFailure, Boolean] =
     monitor.trace("RedisQueueStore.settle"):
       connection.provide:
-        scripts.complete.run(Namespace(settlement.claimed.queue, buckets), settlement)
+        scripts.settle.run(Namespace(settlement.claimed.queue, buckets), settlement)
 
   /**
-   * One `heartbeat` call '''per queue''', because claims are namespaced by queue while a caller's receipts
+   * One `renew` call '''per queue''', because claims are namespaced by queue while a caller's receipts
    * are not: a consumer holding work in three queues costs three round trips here.
    *
    * No worker entry is written, because there are none: a consumer is known by its receipts, and its
@@ -179,13 +185,13 @@ final class RedisQueueStore(
       connection.provide:
         ZIO
           .foreach(claims.groupBy(_.queue).toList): (queue, held) =>
-            scripts.heartbeat.run(Namespace(queue, buckets), leaseTtl, held)
+            scripts.renew.run(Namespace(queue, buckets), leaseTtl, held)
           .map: results =>
             val (when, chunk) = results.unzip
             when.maxOption.getOrElse(Instant.EPOCH) -> Chunk.fromIterable(chunk).flatten
 
   /**
-   * One `watchdog` call, which carries both sweeps — lapsed claims and elapsed backoffs — so
+   * One `sweep` call, which carries both passes — lapsed claims and elapsed backoffs — so
    * a repair pass is a single round trip and a single idle window on the server.
    *
    * @param queue the queue to repair
@@ -195,7 +201,7 @@ final class RedisQueueStore(
   override def sweep(queue: QueueName, limit: Int): IO[RedisFailure, QueueStore.Swept] =
     monitor.trace("RedisQueueStore.sweep"):
       connection.provide:
-        scripts.watchdog.run(Namespace(queue, buckets), limit)
+        scripts.sweep.run(Namespace(queue, buckets), limit)
 
 
 object RedisQueueStore:
@@ -209,7 +215,7 @@ object RedisQueueStore:
    * @param monitor what each call on the substrate is traced against
    * @param connection where its connection comes from
    * @param scripts the loaded digests
-   * @param waiters where a caller waits
+   * @param readiness where a caller waits for a queue to have something worth looking at
    * @param buckets how many wake streams the deployment has, which decides every key's hash tag
    * @param leaseTtl how long a claim survives without a heartbeat
    * @return the store
@@ -218,8 +224,8 @@ object RedisQueueStore:
     monitor: Monitor,
     connection: Connection,
     scripts: Scripts,
-    waiters: Waiters,
+    readiness: Readiness,
     leaseTtl: Duration,
     buckets: Int,
   ): UIO[RedisQueueStore] =
-    ZIO.succeed(RedisQueueStore(monitor, connection, scripts, waiters, leaseTtl, buckets))
+    ZIO.succeed(RedisQueueStore(monitor, connection, scripts, readiness, leaseTtl, buckets))

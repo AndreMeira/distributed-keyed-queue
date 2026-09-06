@@ -37,7 +37,7 @@ local msgs     = prefix .. ':msgs:' .. key
 local payloads = prefix .. ':payloads:' .. key
 local owned    = prefix .. ':owned:' .. key
 
--- The head of the list, oldest first. RPUSH in produce.lua plus reading from index 0 here is FIFO; reading
+-- The head of the list, oldest first. RPUSH in enqueue.lua plus reading from index 0 here is FIFO; reading
 -- from the tail would make it a stack and silently reverse the per-key ordering this design guarantees.
 local ids = redis.call('LRANGE', msgs, 0, batch - 1)
 

@@ -14,7 +14,7 @@ import java.time.Instant
 
 
 /**
- * Take the next claimable key and claim a batch of its messages — `lua/consume.lua`.
+ * Take the next claimable key and claim a batch of its messages — `lua/claim.lua`.
  *
  * '''The whole claim, including choosing the key.''' The script pops `ready` itself, so there is no moment
  * in which a key has left the queue and is not yet claimed — which is why the reply has to say *which* key
@@ -22,7 +22,7 @@ import java.time.Instant
  *
  * @param ref the digest this script was loaded under, from [[Scripts]]
  */
-final class ConsumeScript(ref: LuaScript.Sha):
+final class ClaimScript(ref: LuaScript.Sha):
 
   /** Multi, because a claim comes back as three numbers and three arrays. */
   private val output: ScriptOutputType = ScriptOutputType.MULTI
@@ -55,7 +55,7 @@ final class ConsumeScript(ref: LuaScript.Sha):
    * the queue's hash tag and therefore its slot.
    *
    * @param ns the queue to claim from
-   * @return `ready`, `claimed`, `fence`, `attempts`, in the order `lua/consume.lua` reads them
+   * @return `ready`, `claimed`, `fence`, `attempts`, in the order `lua/claim.lua` reads them
    */
   private def keys(ns: Namespace): Array[String] =
     Array(ns.ready, ns.claimed, ns.fence, ns.attempts)
@@ -67,7 +67,7 @@ final class ConsumeScript(ref: LuaScript.Sha):
    * @param ns the queue to claim from
    * @param leaseTtl how long the claim survives without a heartbeat
    * @param maxBatch the most messages to take at once
-   * @return `prefix`, `ttl`, `batch`, in the order `lua/consume.lua` reads them
+   * @return `prefix`, `ttl`, `batch`, in the order `lua/claim.lua` reads them
    */
   private def args(ns: Namespace, leaseTtl: Duration, maxBatch: Int): Array[Array[Byte]] =
     Array(
@@ -155,12 +155,12 @@ final class ConsumeScript(ref: LuaScript.Sha):
       .orNone
 
 
-object ConsumeScript:
+object ClaimScript:
 
   /**
-   * Register `lua/consume.lua` and hold the digest it was given.
+   * Register `lua/claim.lua` and hold the digest it was given.
    *
    * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
-  def make: ZIO[Connection.Commands, RedisFailure, ConsumeScript] =
-    LuaScript.register("lua/consume.lua").map(ConsumeScript(_))
+  def make: ZIO[Connection.Commands, RedisFailure, ClaimScript] =
+    LuaScript.register("lua/claim.lua").map(ClaimScript(_))
