@@ -46,7 +46,10 @@ message EnqueueResponse {
 message DequeueRequest {
   string                   queue     = 1;
   // Named `max_wait` rather than `wait`: on the JVM a field called `wait` collides with Object.wait().
-  google.protobuf.Duration max_wait  = 2;  // how long to block; the RPC deadline should exceed it
+  // How long to block. Required, and must be greater than zero: a dequeue that will not wait is a
+  // different operation from the one this API offers, and an unset Duration reads as zero, so leaving it
+  // out is refused rather than inferred. The RPC deadline should exceed it.
+  google.protobuf.Duration max_wait  = 2;
   // The most messages to claim at once, clamped to the service's ceiling. One is the default and the
   // minimum. A batch is one claim over several of a key's messages, settled individually — not several
   // claims, and not a licence to work them concurrently: the key is what is owned, and its order still

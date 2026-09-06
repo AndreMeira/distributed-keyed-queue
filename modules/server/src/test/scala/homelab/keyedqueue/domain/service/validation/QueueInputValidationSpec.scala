@@ -149,6 +149,23 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
         noKey == ValidationError(NonEmptyChunk(InvalidInput.EmptyMessageKey)),
       )
     },
+    test("a dequeue that will not wait is refused, and so is one that never said") {
+      // Rejected rather than served: a claim that will not wait is a different operation from the one this
+      // API offers. An absent `max_wait` reads as zero on the wire, so it lands here too — a caller has to
+      // say how long it is prepared to wait.
+      for
+        impatient <- validation.parse(QueueRequest.Dequeue("jobs", Duration.Zero, maxBatch = 1)).orFail.flip
+        backwards <- validation.parse(QueueRequest.Dequeue("jobs", -1.second, maxBatch = 1)).orFail.flip
+        // Accumulated with the others rather than short-circuiting, which is the point of the whole scheme.
+        both      <- validation.parse(QueueRequest.Dequeue("", Duration.Zero, maxBatch = -1)).orFail.flip
+      yield assertTrue(
+        impatient == ValidationError(NonEmptyChunk(InvalidInput.NonPositiveMaxWait)),
+        backwards == ValidationError(NonEmptyChunk(InvalidInput.NonPositiveMaxWait)),
+        both == ValidationError(
+          NonEmptyChunk(InvalidInput.EmptyQueueName, InvalidInput.NonPositiveMaxWait, InvalidInput.NegativeMaxBatch)
+        ),
+      )
+    },
     test("a dequeue asking for more than the service offers is clamped, not refused") {
       // What the parse buys: a Demand is bounded by construction, so nothing downstream can be handed an
       // hour-long wait or a batch of a thousand, and nothing downstream has to remember to check.

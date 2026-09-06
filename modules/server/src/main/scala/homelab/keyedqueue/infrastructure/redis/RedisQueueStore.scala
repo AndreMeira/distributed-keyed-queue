@@ -83,25 +83,14 @@ final class RedisQueueStore(
    * '''Patience is a deadline.''' A caller woken by an entry another instance won keeps waiting with what
    * is left of it, rather than starting again — so a race it loses costs it a round trip, not a full wait.
    *
-   * '''Every call looks once before it waits.''' A patience of zero asks not to be kept waiting, not to be
-   * answered blind, so a key that is already claimable is handed over regardless. A readiness token cannot
-   * stand in for that first look: one is offered per queue per process, not per call.
-   *
    * @param demand the queue to claim from, how long to wait, and the most to take
    * @return the claim, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
    */
   override def claim(demand: Demand): IO[RedisFailure, Option[Claimed]] =
     monitor.trace("RedisQueueStore.claim"):
-      val ns = Namespace(demand.queue, buckets)
       for
         asked   <- Clock.instant
-        // Always look once, before any waiting. A caller asking for no patience is saying "do not wait",
-        // not "do not look" — and a readiness token cannot stand in for this, because one is offered per
-        // queue per process rather than per call.
-        found   <- attemptClaim(ns, demand)
-        claimed <- found match
-                     case granted @ Some(_) => ZIO.succeed(granted)
-                     case None              => claimWithin(ns, demand, asked)
+        claimed <- claimWithin(Namespace(demand.queue, buckets), demand, asked)
       yield claimed
 
   /**

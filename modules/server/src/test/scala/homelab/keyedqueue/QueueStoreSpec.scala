@@ -152,21 +152,6 @@ object QueueStoreSpec extends ZIOSpecDefault:
                               worker.settle(settlement(held.claim, acks(held))).as(held.claim.key)
       yield assertTrue(Chunk.fromIterable(served) == keys)
     },
-    test("a dequeue that will not wait still looks once") {
-      // `max_wait: 0` means "do not wait", not "do not look". A caller polling without patience must still
-      // be handed work that is already claimable — and a readiness token cannot stand in for that, because
-      // one is offered per queue rather than per call. Regression: a wait-first claim answered empty here.
-      for
-        (worker, _, _) <- ZIO.service[(QueueStore, QueueStore, RedisClusterCommands[String, Array[Byte]])]
-        queue           = QueueName("no-patience")
-        _              <- worker.enqueue(Submission(queue, message(MessageKey("k1"), "a")))
-        // Twice, because the first call may consume the queue's one readiness token: the second proves the
-        // look is unconditional rather than token-driven. Distinct keys, so exclusivity is not what answers.
-        _              <- worker.claim(Demand(queue, Duration.Zero, 1))
-        _              <- worker.enqueue(Submission(queue, message(MessageKey("k2"), "b")))
-        impatient      <- worker.claim(Demand(queue, Duration.Zero, 1))
-      yield assertTrue(impatient.isDefined)
-    },
     test("a key being worked is not handed to anybody else, and its next message waits") {
       // The invariant the whole design is built around. While k1 is held, a second claim must find k2 —
       // never k1's next message, and never k1 again.

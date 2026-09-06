@@ -3,12 +3,12 @@ package homelab.keyedqueue.domain.service.validation
 
 import homelab.common.Validated
 import homelab.keyedqueue.domain.error.InvalidInput
-import homelab.keyedqueue.domain.model.{ Claim, Demand, Message, Renewal, Settlement, Submission }
+import homelab.keyedqueue.domain.model.*
 import homelab.keyedqueue.domain.request.v1.QueueRequest
+import homelab.keyedqueue.domain.service.validation.CommonValidation.{ nonNegative, nonEmpty as nonEmptyString }
 import homelab.keyedqueue.domain.types.*
 import zio.prelude.Validation
-import zio.duration2DurationOps
-import zio.{ Chunk, Duration, NonEmptyChunk }
+import zio.{ Chunk, Duration, NonEmptyChunk, duration2DurationOps }
 
 
 /**
@@ -53,15 +53,16 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    */
   def parse(request: QueueRequest.Enqueue): Validated[Submission] =
     Validation
-      .validate(queue(request.queue), message(request.message))
+      .validate(nonEmptyQueueName(request.queue), message(request.message))
       .map(Submission.apply)
 
   /**
    * Everything `Dequeue` needs to be actionable.
    *
-   * The queue, and that the batch size is not negative. How *much* a caller asks for — of patience or of
-   * messages — is clamped rather than refused, because asking for more than the service offers is not a
-   * mistake. Asking for a negative amount is.
+   * The queue, that the batch size is not negative, and that the caller is prepared to wait at all. Asking
+   * for *more* than the service offers — of patience or of messages — is clamped rather than refused,
+   * because it is not a mistake. Asking for a negative amount is, and so is asking to wait no time: see
+   * [[InvalidInput.NonPositiveMaxWait]].
    *
    * '''Clamping is part of the parse, not of what follows it.''' `Demand` means "within this service's
    * limits", and a value that means that has to be built somewhere that knows them — which is why this
@@ -69,15 +70,17 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * unbounded value would have the same type, and nothing would say which one a caller of the store held.
    *
    * @param request what the caller sent, untrusted
-   * @return the demand to hand the store, bounded; accumulates `EmptyQueueName` and `NegativeMaxBatch`
+   * @return the demand to hand the store, bounded; accumulates `EmptyQueueName`, `NonPositiveMaxWait` and
+   *         `NegativeMaxBatch`
    */
   def parse(request: QueueRequest.Dequeue): Validated[Demand] =
     Validation
       .validate(
-        queue(request.queue),
-        CommonValidation.nonNegative(request.maxBatch, InvalidInput.NegativeMaxBatch),
+        nonEmptyQueueName(request.queue),
+        positiveWaitingTime(request.maxWait),
+        nonNegative(request.maxBatch, InvalidInput.NegativeMaxBatch),
       )
-      .map((name, batch) => Demand(name, patience(request.maxWait), this.batch(batch)))
+      .map((name, wait, batch) => Demand(name, wait, this.batch(batch)))
 
   /**
    * Everything `Settle` needs to be actionable.
@@ -145,8 +148,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * @return the outcome in domain terms; fails with `EmptyDiscardId` when it names nothing
    */
   private def outcome(outcome: QueueRequest.MessageOutcome): Validated[Settlement.Outcome] =
-    CommonValidation
-      .nonEmpty(outcome.messageId, InvalidInput.EmptyDiscardId)
+    nonEmptyString(outcome.messageId, InvalidInput.EmptyDiscardId)
       .map(id => Settlement.Outcome(MessageId(id), outcome.outcome))
 
   /**
@@ -163,16 +165,20 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
     Option.when(retryAfter.toMillis > 0)(retryAfter)
 
   /**
-   * How long this service will actually wait.
+   * How long this service will actually wait, once it is satisfied the caller means to wait at all.
    *
-   * A caller asking for longer is not refused: patience is a preference, and the response says when the
-   * wait ended. What it may not do is park a connection for as long as it likes.
+   * Bounded at both ends, and only one end is a refusal. A caller asking for longer than the ceiling is
+   * clamped, because patience is a preference and the response says when the wait ended. A caller asking
+   * for none is refused, because a dequeue that will not wait is a different operation from the one this
+   * API offers.
    *
    * @param asked what the caller is prepared to wait
-   * @return that, or the service's ceiling, whichever is shorter
+   * @return that, or the service's ceiling, whichever is shorter; fails with `NonPositiveMaxWait` when the
+   *         caller asked to wait no time at all
    */
-  private def patience(asked: Duration): Duration =
-    if asked > config.maxWait then config.maxWait else asked
+  private def positiveWaitingTime(asked: Duration): Validated[Duration] =
+    if asked.toMillis <= 0 then Validation.fail(InvalidInput.NonPositiveMaxWait)
+    else Validation.succeed(if asked > config.maxWait then config.maxWait else asked)
 
   /**
    * How many messages this claim may take.
@@ -192,8 +198,8 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * @param value the name as it arrived
    * @return the name; fails with `EmptyQueueName`
    */
-  private def queue(value: String): Validated[QueueName] =
-    CommonValidation.nonEmpty(value, InvalidInput.EmptyQueueName).map(QueueName.apply)
+  private def nonEmptyQueueName(value: String): Validated[QueueName] =
+    nonEmptyString(value, InvalidInput.EmptyQueueName).map(QueueName.apply)
 
   /**
    * A message the store can file: keyed, and addressable by its own name.
@@ -211,8 +217,8 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
   private def message(message: QueueRequest.Enqueue.Message): Validated[Message] =
     Validation
       .validate(
-        CommonValidation.nonEmpty(message.key, InvalidInput.EmptyMessageKey).map(MessageKey.apply),
-        CommonValidation.nonEmpty(message.messageId, InvalidInput.EmptyMessageId).map(MessageId.apply),
+        nonEmptyString(message.key, InvalidInput.EmptyMessageKey).map(MessageKey.apply),
+        nonEmptyString(message.messageId, InvalidInput.EmptyMessageId).map(MessageId.apply),
       )
       .map((key, id) => Message(key, id, message.payloadType, message.encoding, message.sentAt, message.payload))
 

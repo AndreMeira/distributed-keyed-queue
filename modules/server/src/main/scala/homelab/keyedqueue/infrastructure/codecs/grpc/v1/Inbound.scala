@@ -51,7 +51,11 @@ object Inbound:
 
   private given Transformer[Timestamp, Instant] = stamp => Instant.ofEpochSecond(stamp.seconds, stamp.nanos.toLong)
 
-  /** An absent duration means "do not wait", which is a legitimate request rather than a missing field. */
+  /**
+   * An absent duration reads as zero, which validation then refuses: a caller must say how long it will
+   * wait rather than leave it to be inferred. Decoded rather than rejected here so the problem is reported
+   * with the others in one pass, in the vocabulary of the domain.
+   */
   private given Transformer[Option[WireDuration], Duration] =
     _.fold(Duration.Zero)(duration => Duration.fromSeconds(duration.seconds) + Duration.fromNanos(duration.nanos.toLong))
 

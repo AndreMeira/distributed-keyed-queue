@@ -83,6 +83,16 @@ enum InvalidInput extends ValidationError.InvalidInput:
   case NegativeMaxBatch
 
   /**
+   * A dequeue asked to wait for no time at all, or for a negative time.
+   *
+   * Refused rather than served, because a claim that will not wait is not what this API offers: the store
+   * would have to look once and answer, which is a different operation with different costs. An absent
+   * `max_wait` lands here too — a `Duration` that was never set reads as zero — so a caller must say how
+   * long it is prepared to wait rather than leaving it to be inferred.
+   */
+  case NonPositiveMaxWait
+
+  /**
    * What to tell the caller.
    *
    * @return the problem, phrased in terms of the request
@@ -96,3 +106,4 @@ enum InvalidInput extends ValidationError.InvalidInput:
     case UnreadableReceipt  => "the receipt is not one this service issued"
     case EmptySettle        => "a settle must name at least one message"
     case NegativeMaxBatch   => "max_batch cannot be negative; zero or one means one message"
+    case NonPositiveMaxWait => "max_wait is required and must be greater than zero"
