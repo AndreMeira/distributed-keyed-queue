@@ -3,6 +3,7 @@ package homelab.keyedqueue.infrastructure.redis.script
 
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.{ Claim, Settlement }
+import homelab.keyedqueue.domain.model.Settlement.Verdict
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }

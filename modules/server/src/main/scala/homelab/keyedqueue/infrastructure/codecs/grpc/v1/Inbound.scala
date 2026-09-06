@@ -5,6 +5,8 @@ import com.google.protobuf.ByteString
 import com.google.protobuf.duration.Duration as WireDuration
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.domain.model.Message
+import homelab.keyedqueue.domain.model.Message.Encoding
+import homelab.keyedqueue.domain.model.Settlement.Verdict
 import homelab.keyedqueue.domain.request.v1.*
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.v1

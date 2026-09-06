@@ -28,7 +28,20 @@ final case class Message(
   key: MessageKey,
   messageId: MessageId,
   payloadType: String,
-  encoding: Encoding,
+  encoding: Message.Encoding,
   sentAt: Option[Instant],
   payload: Chunk[Byte],
 )
+
+
+object Message:
+
+  /**
+   * How a payload is serialised.
+   *
+   * There is no `Unspecified` here, unlike on the wire: a message that does not say how to read it cannot
+   * be acted on, so it is refused at the boundary rather than carried inwards as a state every later match
+   * has to remember to reject.
+   */
+  enum Encoding:
+    case Json, Protobuf

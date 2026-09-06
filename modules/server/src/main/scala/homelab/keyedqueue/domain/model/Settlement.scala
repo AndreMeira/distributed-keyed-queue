@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.model
 
 
 import homelab.keyedqueue.domain.model.Settlement.Outcome
-import homelab.keyedqueue.domain.types.{ MessageId, Verdict }
+import homelab.keyedqueue.domain.types.MessageId
 import zio.{ Duration, NonEmptyChunk }
 
 
@@ -33,6 +33,10 @@ final case class Settlement(
 
 
 object Settlement:
+
+  /** What a consumer did with a message. */
+  enum Verdict:
+    case Done, Failed
 
   /**
    * What became of one message of a batch.

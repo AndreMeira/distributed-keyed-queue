@@ -113,7 +113,13 @@ object QueueResponse:
    *
    * @param applied whether it landed, or the claim had already been revoked
    */
-  final case class Settle(applied: Applied)
+  final case class Settle(applied: Settle.Applied)
+
+  object Settle:
+
+    /** Whether a call applied, or found the caller's claim already revoked. */
+    enum Applied:
+      case Ok, Stale
 
   /**
    * The outcome of a heartbeat.

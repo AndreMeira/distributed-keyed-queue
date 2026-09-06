@@ -4,7 +4,9 @@ package homelab.keyedqueue.infrastructure.codecs.grpc.v1
 import com.google.protobuf.ByteString
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.domain.model.Message
+import homelab.keyedqueue.domain.model.Message.Encoding
 import homelab.keyedqueue.domain.response.v1.*
+import homelab.keyedqueue.domain.response.v1.QueueResponse.Settle.Applied
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.v1
 import io.scalaland.chimney.Transformer

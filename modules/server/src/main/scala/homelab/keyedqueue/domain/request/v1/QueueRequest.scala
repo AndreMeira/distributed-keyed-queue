@@ -1,6 +1,8 @@
 package homelab.keyedqueue.domain.request.v1
 
 
+import homelab.keyedqueue.domain.model.Message.Encoding
+import homelab.keyedqueue.domain.model.Settlement.Verdict
 import homelab.keyedqueue.domain.types.*
 import zio.{ Chunk, Duration }
 

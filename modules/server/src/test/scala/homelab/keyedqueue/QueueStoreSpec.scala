@@ -4,6 +4,8 @@ package homelab.keyedqueue
 import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.model.{ Claim, Claimed, Demand, Message, Settlement, Submission }
+import homelab.keyedqueue.domain.model.Message.Encoding
+import homelab.keyedqueue.domain.model.Settlement.Verdict
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig

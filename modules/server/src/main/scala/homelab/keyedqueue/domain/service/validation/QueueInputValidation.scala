@@ -80,7 +80,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
         positiveWaitingTime(request.maxWait),
         nonNegative(request.maxBatch, InvalidInput.NegativeMaxBatch),
       )
-      .map((name, wait, batch) => Demand(name, wait, this.batch(batch)))
+      .map((name, wait, batch) => Demand(name, wait, batchSize(batch)))
 
   /**
    * Everything `Settle` needs to be actionable.
@@ -189,7 +189,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * @param asked how many the caller wants, already known not to be negative
    * @return that, bounded to one at the bottom and the service's limit at the top
    */
-  private def batch(asked: Int): Int =
+  private def batchSize(asked: Int): Int =
     asked.max(1).min(config.maxBatchLimit)
 
   /**
