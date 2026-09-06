@@ -83,7 +83,8 @@ object Connection:
   private val listeningSlack: Duration = 10.seconds
 
   /** Keys as UTF-8 strings, values as raw bytes. */
-  private val codec: RedisCodec[String, Array[Byte]] = RedisCodec.of(StringCodec.UTF8, ByteArrayCodec.INSTANCE)
+  private val codec: RedisCodec[String, Array[Byte]] =
+    RedisCodec.of(StringCodec.UTF8, ByteArrayCodec.INSTANCE)
 
   /**
    * A connection this object opened, and so one carrying the codec everything here assumes.
@@ -99,7 +100,8 @@ object Connection:
    * operation here is exactly one script, so that there are no interleavings to reason about. Losing it
    * from the type makes that a rule the compiler keeps rather than one the docs assert.
    */
-  opaque type Commands <: RedisClusterCommands[String, Array[Byte]] = RedisClusterCommands[String, Array[Byte]]
+  opaque type Commands <: RedisClusterCommands[String, Array[Byte]] =
+    RedisClusterCommands[String, Array[Byte]]
 
   /**
    * Ask for the connection in the environment, and run something with it.
