@@ -77,11 +77,11 @@ object Inbound:
    * An enqueue without a message is a request with nothing in it. Chimney would refuse the absent field on
    * its own, but with a generic reason; this says what the caller left out.
    *
-   * Targets the request's own [[QueueRequest.Enqueue.Message]], not the domain's: the domain one carries a
+   * Targets the request's own [[EnqueueRequest.Message]], not the domain's: the domain one carries a
    * key and an id that have been checked, and this boundary checks nothing — it reads what arrived.
    */
-  private given PartialTransformer[Option[v1.Message], QueueRequest.Enqueue.Message] = PartialTransformer:
-    case Some(message) => message.transformIntoPartial[QueueRequest.Enqueue.Message]
+  private given PartialTransformer[Option[v1.Message], EnqueueRequest.Message] = PartialTransformer:
+    case Some(message) => message.transformIntoPartial[EnqueueRequest.Message]
     case None          => partial.Result.fromErrorString("a message is required")
 
   /**
@@ -101,16 +101,16 @@ object Inbound:
     /**
      * @return the domain request; fails with the reasons the wire message could not be read
      */
-    def toDomain: partial.Result[QueueRequest.Enqueue] = request.transformIntoPartial[QueueRequest.Enqueue]
+    def toDomain: partial.Result[EnqueueRequest] = request.transformIntoPartial[EnqueueRequest]
 
   extension (request: v1.DequeueRequest)
     /** @return the domain request */
-    def toDomain: partial.Result[QueueRequest.Dequeue] = request.transformIntoPartial[QueueRequest.Dequeue]
+    def toDomain: partial.Result[DequeueRequest] = request.transformIntoPartial[DequeueRequest]
 
   extension (request: v1.SettleRequest)
     /** @return the domain request; fails when the outcome is unspecified */
-    def toDomain: partial.Result[QueueRequest.Settle] = request.transformIntoPartial[QueueRequest.Settle]
+    def toDomain: partial.Result[SettleRequest] = request.transformIntoPartial[SettleRequest]
 
   extension (request: v1.HeartbeatRequest)
     /** @return the domain request */
-    def toDomain: partial.Result[QueueRequest.Heartbeat] = request.transformIntoPartial[QueueRequest.Heartbeat]
+    def toDomain: partial.Result[HeartbeatRequest] = request.transformIntoPartial[HeartbeatRequest]

@@ -1,0 +1,19 @@
+package homelab.keyedqueue.domain.response.v1
+
+
+import homelab.keyedqueue.domain.types.ClaimRef
+import zio.Chunk
+
+import java.time.Instant
+
+
+/**
+ * The outcome of a heartbeat.
+ *
+ * @param stale the receipts the caller no longer holds, echoed as it sent them; it must stop working
+ *              those. Strings rather than [[ClaimRef]]s because the set includes receipts this service
+ *              never issued — calling those evidence of a claim would be a lie, and a caller matches
+ *              them against what it sent either way
+ * @param renewedUntil the new deadline for everything else, on the store's clock
+ */
+final case class HeartbeatResponse(stale: Chunk[String], renewedUntil: Instant)

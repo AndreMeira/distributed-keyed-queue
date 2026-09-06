@@ -3,11 +3,11 @@ package homelab.keyedqueue.domain.service.usecase.v1
 
 import homelab.common.orFail
 import homelab.common.error.{ ApplicationError, ValidationError }
-import homelab.keyedqueue.domain.request.v1.QueueRequest
-import homelab.keyedqueue.domain.response.v1.QueueResponse
+import homelab.keyedqueue.domain.request.v1.*
+import homelab.keyedqueue.domain.response.v1.*
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
-import homelab.keyedqueue.domain.response.v1.QueueResponse.Settle.Applied
+import homelab.keyedqueue.domain.response.v1.SettleResponse.Applied
 import zio.IO
 
 
@@ -35,9 +35,9 @@ final class SettleUseCase(store: QueueStore, validation: QueueInputValidation):
    *         issued, or the request names no messages, an empty id, or the same id twice — or with
    *         `ApplicationError` when the store fails
    */
-  def apply(request: QueueRequest.Settle): IO[ApplicationError, QueueResponse.Settle] =
+  def apply(request: SettleRequest): IO[ApplicationError, SettleResponse] =
     validation.parse(request).orFail.flatMap { settlement =>
       store.settle(settlement).map { applied =>
-        QueueResponse.Settle(if applied then Applied.Ok else Applied.Stale)
+        SettleResponse(if applied then Applied.Ok else Applied.Stale)
       }
     }

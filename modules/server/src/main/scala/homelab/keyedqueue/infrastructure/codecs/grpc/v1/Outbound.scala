@@ -6,7 +6,7 @@ import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.domain.model.Message
 import homelab.keyedqueue.domain.model.Message.Encoding
 import homelab.keyedqueue.domain.response.v1.*
-import homelab.keyedqueue.domain.response.v1.QueueResponse.Settle.Applied
+import homelab.keyedqueue.domain.response.v1.SettleResponse.Applied
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.v1
 import io.scalaland.chimney.Transformer
@@ -68,8 +68,8 @@ object Outbound:
   private given Transformer[Message, Option[v1.Message]] =
     message => Some(toProto(message))
 
-  private given Transformer[QueueResponse.Delivery, v1.Delivery] =
-    Transformer.derive[QueueResponse.Delivery, v1.Delivery]
+  private given Transformer[DequeueResponse.Delivery, v1.Delivery] =
+    Transformer.derive[DequeueResponse.Delivery, v1.Delivery]
 
   /**
    * The wire form of a message, which is also how it is stored.
@@ -80,12 +80,12 @@ object Outbound:
   def toProto(message: Message): v1.Message =
     message.transformInto[v1.Message]
 
-  extension (response: QueueResponse.Enqueue)
+  extension (response: EnqueueResponse)
     /** @return the wire response */
     def toProto: v1.EnqueueResponse =
       response.transformInto[v1.EnqueueResponse]
 
-  extension (response: QueueResponse.Dequeue)
+  extension (response: DequeueResponse)
     /**
      * The one response the derivation cannot carry alone: the domain states "claim or nothing" as a choice,
      * the wire states it as fields that are absent together. Matching here is what keeps that flattening in
@@ -94,13 +94,13 @@ object Outbound:
      * @return the wire response; an empty one is a timeout, not an error
      */
     def toProto: v1.DequeueResponse = response match
-      case QueueResponse.Dequeue.Empty             => v1.DequeueResponse()
-      case granted: QueueResponse.Dequeue.NonEmpty => granted.transformInto[v1.DequeueResponse]
+      case DequeueResponse.Empty             => v1.DequeueResponse()
+      case granted: DequeueResponse.NonEmpty => granted.transformInto[v1.DequeueResponse]
 
-  extension (response: QueueResponse.Settle)
+  extension (response: SettleResponse)
     /** @return the wire response */
     def toProto: v1.SettleResponse = response.transformInto[v1.SettleResponse]
 
-  extension (response: QueueResponse.Heartbeat)
+  extension (response: HeartbeatResponse)
     /** @return the wire response */
     def toProto: v1.HeartbeatResponse = response.transformInto[v1.HeartbeatResponse]

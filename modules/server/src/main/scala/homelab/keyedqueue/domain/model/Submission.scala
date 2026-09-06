@@ -5,7 +5,7 @@ import homelab.keyedqueue.domain.types.QueueName
 /**
  * A message accepted for a queue: where it goes, and what it is.
  *
- * '''The trusted counterpart of `QueueRequest.Enqueue`.''' The request holds two strings and cargo; this
+ * '''The trusted counterpart of `EnqueueRequest`.''' The request holds two strings and cargo; this
  * holds a [[QueueName]] and a [[Message]] whose key and id are named. Obtainable only from the parse, so a
  * caller of the store cannot have skipped it.
  *

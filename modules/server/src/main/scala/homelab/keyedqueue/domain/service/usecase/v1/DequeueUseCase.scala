@@ -4,8 +4,8 @@ package homelab.keyedqueue.domain.service.usecase.v1
 import homelab.common.orFail
 import homelab.common.error.{ ApplicationError, ValidationError }
 import homelab.keyedqueue.domain.model.Claimed
-import homelab.keyedqueue.domain.request.v1.QueueRequest
-import homelab.keyedqueue.domain.response.v1.QueueResponse
+import homelab.keyedqueue.domain.request.v1.*
+import homelab.keyedqueue.domain.response.v1.*
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
@@ -39,7 +39,7 @@ final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, validation: Qu
    * @return the delivery, or nothing when none became ready in time; aborts with `ValidationError` when the
    *         queue is unnamed or the batch is negative, or with `ApplicationError` when the store fails
    */
-  def apply(request: QueueRequest.Dequeue): IO[ApplicationError, QueueResponse.Dequeue] =
+  def apply(request: DequeueRequest): IO[ApplicationError, DequeueResponse] =
     validation.parse(request).orFail.flatMap { demand =>
       watchdog.watch(demand.queue) *> store.claim(demand).map(response)
     }
@@ -54,8 +54,8 @@ final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, validation: Qu
    * @param claimed what the store handed over, or nothing when the wait elapsed first
    * @return the response, carrying a claim only when there was one
    */
-  private def response(claimed: Option[Claimed]): QueueResponse.Dequeue =
+  private def response(claimed: Option[Claimed]): DequeueResponse =
     claimed match {
-      case None          => QueueResponse.Dequeue.Empty
-      case Some(claimed) => QueueResponse.Dequeue.fromClaimed(claimed)
+      case None          => DequeueResponse.Empty
+      case Some(claimed) => DequeueResponse.fromClaimed(claimed)
     }

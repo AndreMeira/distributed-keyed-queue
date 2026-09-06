@@ -4,7 +4,7 @@ package homelab.keyedqueue.domain.service.validation
 import homelab.common.Validated
 import homelab.keyedqueue.domain.error.InvalidInput
 import homelab.keyedqueue.domain.model.*
-import homelab.keyedqueue.domain.request.v1.QueueRequest
+import homelab.keyedqueue.domain.request.v1.*
 import homelab.keyedqueue.domain.service.validation.CommonValidation.{ nonNegative, nonEmpty as nonEmptyString }
 import homelab.keyedqueue.domain.types.*
 import zio.prelude.Validation
@@ -51,7 +51,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * @return the submission to hand the store; accumulates `EmptyQueueName`, `EmptyMessageKey` and
    *         `EmptyMessageId`
    */
-  def parse(request: QueueRequest.Enqueue): Validated[Submission] =
+  def parse(request: EnqueueRequest): Validated[Submission] =
     Validation
       .validate(nonEmptyQueueName(request.queue), message(request.message))
       .map(Submission.apply)
@@ -73,7 +73,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * @return the demand to hand the store, bounded; accumulates `EmptyQueueName`, `NonPositiveMaxWait` and
    *         `NegativeMaxBatch`
    */
-  def parse(request: QueueRequest.Dequeue): Validated[Demand] =
+  def parse(request: DequeueRequest): Validated[Demand] =
     Validation
       .validate(
         nonEmptyQueueName(request.queue),
@@ -96,7 +96,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * @return the settlement to hand the store; accumulates `UnreadableReceipt`, `EmptySettle`,
    *         `EmptyDiscardId` and `DuplicateDiscardId`
    */
-  def parse(request: QueueRequest.Settle): Validated[Settlement] =
+  def parse(request: SettleRequest): Validated[Settlement] =
     Validation
       .validate(
         receipt(request.receipt),
@@ -136,7 +136,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * @return them in domain terms, non-empty; fails with `EmptySettle` when there are none, or accumulates
    *         `EmptyDiscardId` for each that names nothing
    */
-  private def batch(outcomes: Chunk[QueueRequest.MessageOutcome]): Validated[NonEmptyChunk[Settlement.Outcome]] =
+  private def batch(outcomes: Chunk[SettleRequest.MessageOutcome]): Validated[NonEmptyChunk[Settlement.Outcome]] =
     NonEmptyChunk.fromChunk(outcomes) match
       case Some(named) => Validation.validateAll(named.map(outcome))
       case None        => Validation.fail(InvalidInput.EmptySettle)
@@ -147,7 +147,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * @param outcome what the caller said about it
    * @return the outcome in domain terms; fails with `EmptyDiscardId` when it names nothing
    */
-  private def outcome(outcome: QueueRequest.MessageOutcome): Validated[Settlement.Outcome] =
+  private def outcome(outcome: SettleRequest.MessageOutcome): Validated[Settlement.Outcome] =
     nonEmptyString(outcome.messageId, InvalidInput.EmptyDiscardId)
       .map(id => Settlement.Outcome(MessageId(id), outcome.outcome))
 
@@ -214,7 +214,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * @param message the message as it arrived
    * @return it in domain terms; accumulates `EmptyMessageKey` and `EmptyMessageId`
    */
-  private def message(message: QueueRequest.Enqueue.Message): Validated[Message] =
+  private def message(message: EnqueueRequest.Message): Validated[Message] =
     Validation
       .validate(
         nonEmptyString(message.key, InvalidInput.EmptyMessageKey).map(MessageKey.apply),

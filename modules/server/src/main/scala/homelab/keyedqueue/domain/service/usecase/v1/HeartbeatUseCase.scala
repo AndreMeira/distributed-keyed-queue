@@ -3,8 +3,8 @@ package homelab.keyedqueue.domain.service.usecase.v1
 
 import homelab.common.error.{ ApplicationError, ValidationError }
 import homelab.keyedqueue.domain.model.{ Claim, Renewal }
-import homelab.keyedqueue.domain.request.v1.QueueRequest
-import homelab.keyedqueue.domain.response.v1.QueueResponse
+import homelab.keyedqueue.domain.request.v1.*
+import homelab.keyedqueue.domain.response.v1.*
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import zio.IO
 
@@ -30,10 +30,10 @@ final class HeartbeatUseCase(store: QueueStore):
    * @param request everything the consumer believes it holds
    * @return the new deadline and what it no longer holds; aborts with `RedisFailure` when the store fails
    */
-  def apply(request: QueueRequest.Heartbeat): IO[ApplicationError, QueueResponse.Heartbeat] =
+  def apply(request: HeartbeatRequest): IO[ApplicationError, HeartbeatResponse] =
     val renewal = parse(request)
     store.renew(renewal.held).map { (until, lost) =>
-      QueueResponse.Heartbeat(renewal.unreadable ++ lost.map(_.reference), until)
+      HeartbeatResponse(renewal.unreadable ++ lost.map(_.reference), until)
     }
 
   /**
@@ -51,7 +51,7 @@ final class HeartbeatUseCase(store: QueueStore):
    * @param request what the caller sent, untrusted
    * @return its receipts, sorted
    */
-  private def parse(request: QueueRequest.Heartbeat): Renewal =
+  private def parse(request: HeartbeatRequest): Renewal =
     val read = request.receipts.map(receipt => receipt -> Claim.fromReference(receipt))
     Renewal(
       held = read.collect { case (_, Some(claim)) => claim },

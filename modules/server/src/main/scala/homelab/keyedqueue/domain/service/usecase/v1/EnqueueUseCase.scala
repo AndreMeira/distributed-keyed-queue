@@ -3,8 +3,8 @@ package homelab.keyedqueue.domain.service.usecase.v1
 
 import homelab.common.orFail
 import homelab.common.error.{ ApplicationError, ValidationError }
-import homelab.keyedqueue.domain.request.v1.QueueRequest
-import homelab.keyedqueue.domain.response.v1.QueueResponse
+import homelab.keyedqueue.domain.request.v1.*
+import homelab.keyedqueue.domain.response.v1.*
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
@@ -32,8 +32,8 @@ final class EnqueueUseCase(store: QueueStore, watchdog: Watchdog, validation: Qu
    * @return the key's depth after the append; aborts with `ValidationError` naming everything wrong with the
    *         request, or with `ApplicationError` when the store fails
    */
-  def apply(request: QueueRequest.Enqueue): IO[ApplicationError, QueueResponse.Enqueue] =
+  def apply(request: EnqueueRequest): IO[ApplicationError, EnqueueResponse] =
     validation.parse(request).orFail.flatMap { submission =>
       watchdog.watch(submission.queue)
-        *> store.enqueue(submission).map(QueueResponse.Enqueue.apply)
+        *> store.enqueue(submission).map(EnqueueResponse.apply)
     }
