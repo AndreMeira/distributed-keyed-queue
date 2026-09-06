@@ -21,6 +21,9 @@ import java.time.Instant
  * Wire to domain.
  *
  * Partial: a request that names no encoding, or carries no message at all, is refused here.
+ *
+ * `uint32` decodes to a signed `Int`, so a batch size at or above 2^31 reaches the domain negative — which
+ * is why `NegativeMaxBatch` is reachable at all.
  */
 object Inbound:
 
