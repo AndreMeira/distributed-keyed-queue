@@ -75,22 +75,25 @@ final class Readiness(queues: Ref[Map[QueueName, Queue[Unit]]]):
    * @return `claim`'s answer, or `None` when nothing became ready in time; aborts with `E` when `claim` does
    */
   def awaitReady[E, A](queue: QueueName, patience: Duration)(claim: IO[E, Option[A]]): IO[E, Option[A]] =
-    for
-      found  <- buffer(queue)
-      // Recovers a token the interruption would otherwise swallow. Attached outside the timeout on
-      // purpose: when the timeout discards an element the take itself was never interrupted, so a
-      // finaliser on the take never runs.
-      ready  <- found.take.timeout(patience).onInterrupt(found.offer(()))
-      // Flattened here, where the nesting is created: the outer `Option` says whether the claim ran, the
-      // inner what it found, and conflating the two is how a fruitless look ends up handing the token on
-      // and consumers spin.
-      result <- claim.when(ready.isDefined).map(_.flatten).onExit {
-                  case Exit.Success(None) => ZIO.unit        // No work, make the next claim wait
-                  case _                  => found.offer(()) // Work found or failure, make the next claim NOT wait
-                }
-      // The take gave up. It may have given up holding an element, which is unknowable, so put one back.
-      _      <- found.offer(()).when(ready.isEmpty)
-    yield result
+    buffer(queue).flatMap: found =>
+      // Uninterruptible except where restored, so a token cannot be taken and then dropped in the gap
+      // before its recovery is installed: interruption there would run neither handler.
+      ZIO.uninterruptibleMask: restore =>
+        for
+          // Recovers a token the interruption would otherwise swallow. Attached outside the timeout on
+          // purpose: when the timeout discards an element the take itself was never interrupted, so a
+          // finaliser on the take never runs.
+          ready  <- restore(found.take.timeout(patience)).onInterrupt(found.offer(()))
+          // Flattened here, where the nesting is created: the outer `Option` says whether the claim ran,
+          // the inner what it found, and conflating the two is how a fruitless look ends up handing the
+          // token on and consumers spin.
+          result <- restore(claim.when(ready.isDefined).map(_.flatten)).onExit {
+                      case Exit.Success(None) => ZIO.unit        // No work, make the next claim wait
+                      case _                  => found.offer(()) // Work or failure, do not make it wait
+                    }
+          // The take gave up. It may have given up holding an element, which is unknowable, so put one back.
+          _      <- found.offer(()).when(ready.isEmpty)
+        yield result
 
   /**
    * A queue's token buffer, made on first use.
