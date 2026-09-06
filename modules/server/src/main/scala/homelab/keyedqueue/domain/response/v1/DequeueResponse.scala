@@ -12,9 +12,8 @@ import java.time.Instant
  * The outcome of a wait: a grant over some of one key's messages, or nothing. Empty is an ordinary result
  * of an idle queue, not an error.
  *
- * An enum rather than a record of options, because the fields are not independently optional: a claim
- * either happened — receipt, first message and lease — or it did not, and none of them exist. Matching is
- * what stops the empty case being reached for through a field that is only sometimes there.
+ * A claim either happened, and there is a receipt, a first message and a lease, or it did not and there is
+ * none of them.
  */
 enum DequeueResponse:
 
@@ -48,10 +47,6 @@ object DequeueResponse:
    * Carries no handle of its own: the receipt belongs to the claim, and every message in a batch is settled
    * against it by naming this id. That is the shape of the guarantee — a key is owned, and its messages are
    * what ownership gives access to.
-   *
-   * Lives here rather than in `domain/model/` because it is not something the queue holds: nothing is
-   * stored as a delivery, and no port speaks in them. It exists only as the shape a dequeue hands back,
-   * which is what makes it a response type.
    *
    * @param messageId what a settle names this message by
    * @param message the message

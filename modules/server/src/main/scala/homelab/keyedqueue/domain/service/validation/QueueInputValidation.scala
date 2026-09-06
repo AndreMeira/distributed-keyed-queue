@@ -15,37 +15,16 @@ import zio.{ Chunk, Duration, NonEmptyChunk, duration2DurationOps }
  * The crossing from what a caller sent to what this service will act on: every problem with a request, in
  * one pass.
  *
- * '''Parses, it does not check.''' Each method returns the type the store accepts — `Submission`, `Demand`,
- * `Settlement` — rather than a verdict on the request it was given. A use case therefore cannot proceed
- * with the unchecked thing: the only way to hold something the store takes is to have come through here.
- * The domain types those carry — a `QueueName`, a `MessageId`, a `Claim` — are the evidence that someone
- * looked.
+ * Each method answers with the type the store accepts, so the only way to hold one is to have come through
+ * here. A receipt is read for shape only: whether the claim it names is still held is answered by the store
+ * and reported as `Stale`.
  *
- * '''A class, though it holds only limits.''' It is wired as a dependency (see [[Module]]) rather than
- * called as an object, so a use case declares that it parses, a test can substitute one that refuses
- * everything, and the day a check needs the store — is this queue known? is this key parked? — that check
- * arrives as a constructor parameter instead of a rewrite of every call site. What it holds today is
- * [[QueueInputValidation.Config]], the bounds a `Demand` may not exceed.
- *
- * '''A receipt is read here; whether it is still live is not.''' A settle names a claim, and a string that
- * was never a receipt is refused as `UnreadableReceipt` — nothing issued it, and no retry makes it valid.
- * Whether the claim it names is still held is a different question, answered by the store's fence and
- * reported as `Stale` rather than refused.
- *
- * `Heartbeat` is parsed by `HeartbeatUseCase` instead. It carries nothing but receipts, and an unreadable
- * one is *not* an error there — it comes back among what the consumer has lost — so that parse cannot
- * fail. A total method among these would have to promise a failure it could never deliver.
+ * `Heartbeat` is parsed by `HeartbeatUseCase`, where an unreadable receipt is an answer rather than an error.
  */
 final class QueueInputValidation(config: QueueInputValidation.Config):
 
   /**
    * Everything `Enqueue` needs to be actionable.
-   *
-   * The checks are combined with `Validation.validate` rather than sequenced, so a request that names no
-   * queue *and* no key comes back naming both. That is the only reason this is not a row of `if`s.
-   *
-   * The id is required because the store keys messages by it: two queued under one id for one key are one
-   * message, and an empty id would collapse every unnamed message on that key into a single entry.
    *
    * @param request what the caller sent, untrusted
    * @return the submission to hand the store; accumulates `EmptyQueueName`, `EmptyMessageKey` and
@@ -59,15 +38,8 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
   /**
    * Everything `Dequeue` needs to be actionable.
    *
-   * The queue, that the batch size is not negative, and that the caller is prepared to wait at all. Asking
-   * for *more* than the service offers — of patience or of messages — is clamped rather than refused,
-   * because it is not a mistake. Asking for a negative amount is, and so is asking to wait no time: see
-   * [[InvalidInput.NonPositiveMaxWait]].
-   *
-   * '''Clamping is part of the parse, not of what follows it.''' `Demand` means "within this service's
-   * limits", and a value that means that has to be built somewhere that knows them — which is why this
-   * class carries [[QueueInputValidation.Config]]. Clamped downstream instead, the bounded and the
-   * unbounded value would have the same type, and nothing would say which one a caller of the store held.
+   * Asking for more patience or more messages than the service offers is clamped; asking for a negative
+   * batch, or for no patience at all, is refused.
    *
    * @param request what the caller sent, untrusted
    * @return the demand to hand the store, bounded; accumulates `EmptyQueueName`, `NonPositiveMaxWait` and
@@ -85,12 +57,8 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
   /**
    * Everything `Settle` needs to be actionable.
    *
-   * Only the ids named. The receipt is not checked here — see the note on this class — and each verdict is
-   * an enum the wire layer has already refused if unspecified.
-   *
-   * Whether those ids are actually owned by the claim is deliberately *not* checked: the script looks them
-   * up under the claim, where the answer cannot go stale between the check and the act, and an id it does
-   * not own is simply ignored.
+   * Only the ids named. Whether the claim owns them is not checked here — the store looks them up under the
+   * claim, and one it does not own is ignored.
    *
    * @param request what the caller sent, untrusted
    * @return the settlement to hand the store; accumulates `UnreadableReceipt`, `EmptySettle`,
@@ -108,10 +76,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
   /**
    * A receipt must be one this service issued.
    *
-   * The receipt is the only field whose parse produces something the caller could not have written: a
-   * `Claim` names a queue, a key and a token, and getting one back is what says the string was ours.
-   * Whether that claim is still *live* is a different question, answered by the store's fence — being
-   * unreadable and being revoked are not the same failure and are not reported the same way.
+   * Unreadable and revoked are different failures: this answers the first, the store's fence the second.
    *
    * @param value the receipt as it arrived
    * @return the claim it names; fails with `UnreadableReceipt` when it names none
@@ -124,14 +89,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
   /**
    * The messages a settle names, parsed, and known to be at least one.
    *
-   * Both halves belong together: `Settlement` needs a `NonEmptyChunk`, and this is the only place that can
-   * hand one over. Checking emptiness *before* parsing the elements — rather than as a step in front of it
-   * — is what keeps the whole parse to a single `validate`, so a bad receipt and a bad id are reported in
-   * the same answer instead of one hiding the other.
-   *
-   * Nothing accumulates against `EmptySettle`, and nothing needs to: a settle that names no messages has
-   * no ids to be wrong about.
-   *
+
    * @param outcomes what the caller sent
    * @return them in domain terms, non-empty; fails with `EmptySettle` when there are none, or accumulates
    *         `EmptyDiscardId` for each that names nothing
@@ -154,10 +112,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
   /**
    * A zero backoff is no backoff.
    *
-   * An absent `retry_after` decodes to zero, and "wait no time" and "did not ask to wait" are the same
-   * request — so the domain says it once, as `None`, rather than carrying a sentinel the store has to know
-   * about.
-   *
+
    * @param retryAfter what the caller asked for
    * @return the wait, or `None` when none was asked for
    */
@@ -167,10 +122,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
   /**
    * How long this service will actually wait, once it is satisfied the caller means to wait at all.
    *
-   * Bounded at both ends, and only one end is a refusal. A caller asking for longer than the ceiling is
-   * clamped, because patience is a preference and the response says when the wait ended. A caller asking
-   * for none is refused, because a dequeue that will not wait is a different operation from the one this
-   * API offers.
+   * Longer than the ceiling is clamped; none at all is refused.
    *
    * @param asked what the caller is prepared to wait
    * @return that, or the service's ceiling, whichever is shorter; fails with `NonPositiveMaxWait` when the
@@ -183,8 +135,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
   /**
    * How many messages this claim may take.
    *
-   * Zero and one mean the same thing — one message — so the floor is one rather than a refusal: a caller
-   * that says nothing about batching gets the unbatched behaviour.
+   * Zero and one both mean one message, so the floor is one rather than a refusal.
    *
    * @param asked how many the caller wants, already known not to be negative
    * @return that, bounded to one at the bottom and the service's limit at the top

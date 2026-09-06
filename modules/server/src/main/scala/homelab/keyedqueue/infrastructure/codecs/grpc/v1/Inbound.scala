@@ -20,14 +20,7 @@ import java.time.Instant
 /**
  * Wire to domain.
  *
- * Every transformer here is derived. That is the test: the domain requests mirror their wire messages field
- * for field, so anything Chimney cannot work out on its own is a place the two have drifted, not a place
- * for a hand-written mapping to paper over.
- *
- * '''Partial, because the wire can say things the domain cannot hold.''' A proto3 enum always carries an
- * `UNSPECIFIED`, and a message field is always optional, so a request that says nothing about its encoding
- * or carries no message at all is representable on the wire and meaningless here. Those are refused at
- * this boundary rather than becoming states every later match has to remember to reject.
+ * Partial: a request that names no encoding, or carries no message at all, is refused here.
  */
 object Inbound:
 

@@ -26,10 +26,6 @@ import scala.jdk.CollectionConverters.*
  * costs nothing; pub/sub would lose whatever arrived while it was away, and a lost wake is a consumer
  * asleep beside work it asked for.
  *
- * '''Why a wake carries no work.''' It says "look again", and the consumer looks. Every instance reads every
- * entry, so several instances may look at once and one wins — but within an instance a token wakes exactly
- * one consumer, so the losers are counted in instances rather than in consumers.
- *
  * @param connection where the listening connection comes from
  * @param readiness whose queues to announce
  * @param positions wake stream → the last id delivered from it; the key set never changes
@@ -45,16 +41,12 @@ final class WakeListener(
   /**
    * Read the wake streams forever, announcing the queues named in what arrives.
    *
-   * '''Supervised, because a dead listener is silent.''' A failed read — a connection blip, a topology
-   * change — is retried rather than being allowed to kill the fiber. A listener that stopped would leave
-   * every consumer on this instance waiting out its patience while work sat claimable, and nothing else
-   * would report it.
+   * '''Supervised, because a dead listener is silent.''' A failed read is retried rather than killing the
+   * fiber: a stopped listener leaves every consumer here waiting out its patience beside claimable work.
    *
-   * '''A failure announces everything before retrying.''' Entries can be trimmed while a reader is away, and
-   * `XREAD` does not report having stepped over any, so after a failure the only safe assumption is that
-   * something was announced and missed. The backoff is short and separate from [[block]] on purpose: the
-   * block can be seconds because nothing waits on it, while this is the one place the interval is a
-   * consumer's latency.
+   * '''A failure announces everything before retrying.''' Entries can be trimmed while a reader is away and
+   * `XREAD` does not report stepping over any, so after a failure the safe assumption is that something was
+   * missed. The backoff is short: it is the one interval that is a consumer's latency.
    *
    * @return never completes
    */
@@ -94,10 +86,6 @@ final class WakeListener(
 
   /**
    * Announce each named queue, once.
-   *
-   * '''Deduplicated, which the token buffer makes correct.''' A queue holds one token whatever arrives, so
-   * a thousand entries for one queue say exactly what one says — and a consumer claims whatever it finds
-   * rather than the key it was told about. It is what lets a batch be large.
    *
    * @param woken the queues named by this batch, one occurrence per entry
    * @return noop

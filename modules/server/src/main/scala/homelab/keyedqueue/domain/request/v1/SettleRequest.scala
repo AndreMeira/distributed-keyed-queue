@@ -7,19 +7,13 @@ import zio.{ Chunk, Duration }
 
 
 /**
- * Report what happened to some of what a claim owns.
- *
- * '''Nothing here is a domain type, and that is the point.''' A `ClaimRef` or a `MessageId` here would
- * assert that someone checked a value nobody has looked at. Raw strings make no such claim, so the only way
- * to obtain the evidence is [[homelab.keyedqueue.domain.service.validation.QueueInputValidation]], which is
- * what turns this into a `Settlement`. `Verdict` is the exception: it is total on arrival, so it asserts
- * nothing.
+ * A consumer's report of what became of some of what a claim owns.
  *
  * @param receipt the handle from the delivery, as it arrived
  * @param outcomes what became of each message named. What is not named stays owed, and the claim ends
  *                 once nothing is
  * @param retryAfter how long the key should wait before anyone works it again, asked for by a nack; zero
- *                   is what an absent duration decodes to
+ *                   is no wait
  */
 final case class SettleRequest(
   receipt: String,

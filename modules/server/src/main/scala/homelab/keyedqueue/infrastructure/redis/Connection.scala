@@ -14,12 +14,6 @@ import java.time.Duration as JavaDuration
 /**
  * Where an effect gets a connection from.
  *
- * '''Only one thing in this process blocks, and it gets its own connection.''' Every operation on the queue
- * is a script that answers at once, so they all share one; the listener's `XREAD` parks for as long as it is
- * told, so sharing would put every claim and settle behind that read. Which of the two an effect is, is
- * known where it is written and nowhere else, so it is declared there rather than guessed at by whatever
- * holds the connections.
- *
  * The connection arrives in the environment as [[Connection.Commands]]: an effect asks for one by type, and
  * this decides which one it gets.
  *
@@ -31,9 +25,6 @@ final case class Connection(sync: Connection.Commands, wake: Connection.Commands
 
   /**
    * Run an effect on the shared connection.
-   *
-   * Everything except the listener answers immediately — a claim is one script, a settle is one script — so
-   * one connection serves all of it.
    *
    * @param effect what to run, needing a connection
    * @tparam R what it needs besides a connection
@@ -47,11 +38,6 @@ final case class Connection(sync: Connection.Commands, wake: Connection.Commands
   /**
    * Run an effect on the connection reserved for listening.
    *
-   * '''One connection, one listener.''' A blocking `XREAD` owns its connection for the whole wait, so it
-   * gets one of its own — sharing would put every claim and settle behind that read. Nothing guards it,
-   * because there is exactly one listener: a second caller would park behind the first one's block, which
-   * is a bug in the caller rather than something to serialise here.
-   *
    * @param effect what to run, needing a connection
    * @tparam R what it needs besides a connection
    * @tparam E how it fails
@@ -64,21 +50,10 @@ final case class Connection(sync: Connection.Commands, wake: Connection.Commands
 
 /**
  * One Redis connection, and the lifecycle around it.
- *
- * '''Keys are text, values are bytes.''' The scripts build key names by concatenation, so keys must be
- * exactly the UTF-8 the code wrote; payloads are opaque protobuf, so values must survive any byte. That is
- * what the mixed codec below buys, and it is why this adapter does not apply a client that encodes keys
- * through a schema codec.
- *
- * '''The listening connection is exclusive.''' A blocking `XREAD` occupies its connection for the whole
- * wait, so the listener owns one outright rather than sharing.
  */
 object Connection:
 
   /**
-   * The listening connection's command ceiling must exceed the longest block it will be asked to make, or
-   * Lettuce abandons an `XREAD` that is doing exactly what it was told to. Derived here rather than passed
-   * in, because nothing outside can get it right without knowing that.
    */
   private val listeningSlack: Duration = 10.seconds
 
@@ -92,28 +67,12 @@ object Connection:
    * Opaque so a connection cannot be conjured from any commands object: the scripts depend on keys being the
    * exact UTF-8 they wrote and values passing through untouched, which is true of [[open]]'s codec and not
    * guaranteed of anything else. The `<:` keeps it usable as the Lettuce API at the use site.
-   *
-   * '''Bounded by `RedisClusterCommands`, which is the supertype of both backends.''' Lettuce has
-   * `RedisCommands extends RedisClusterCommands`, and `RedisAdvancedClusterCommands` extends it too, so one
-   * type covers a standalone server and a cluster. What the narrower bound would have added is
-   * `RedisTransactionalCommands` — `MULTI` / `EXEC` — which this adapter must never use anyway: every
-   * operation here is exactly one script, so that there are no interleavings to reason about. Losing it
-   * from the type makes that a rule the compiler keeps rather than one the docs assert.
    */
   opaque type Commands <: RedisClusterCommands[String, Array[Byte]] =
     RedisClusterCommands[String, Array[Byte]]
 
   /**
    * Ask for the connection in the environment, and run something with it.
-   *
-   * '''The requiring side, not the providing one.''' A [[Connection]]'s `provide` and `provideBlocking`
-   * decide which connection an effect gets; this is how the effect says it needs one at all. The two meet
-   * in the environment: everything below the port — every script's `run`, and script registration — is
-   * written as `ZIO[Commands, …]` and never learns whether the connection it was handed is shared,
-   * borrowed, standalone or clustered.
-   *
-   * Takes a function rather than an effect because the Lettuce API is not effectful: the callers all wrap a
-   * blocking call, and handing them the connection directly saves each one a `ZIO.service` of its own.
    *
    * @param effect what to run with the connection
    * @tparam R what it needs besides the connection
@@ -138,9 +97,6 @@ object Connection:
    * Two connections, closed with the scope: one shared by everything that answers immediately, and one
    * reserved for the listener.
    *
-   * Two rather than a pool because only one thing blocks — a claim is a single script that returns at once,
-   * so the listener's `XREAD` is the sole long-lived wait in the process.
-   *
    * @param config where Redis is, and the longest wait to honour
    * @return the connections; aborts with `Unavailable` when one cannot be opened
    */
@@ -153,10 +109,6 @@ object Connection:
 
   /**
    * The client both connections are opened from — the one place the two backends are chosen between.
-   *
-   * One per instance, not one per connection: a client owns Netty event loops and a timer wheel and is what
-   * `shutdown` releases, while a connection is a socket taken from it. Creating one per connection would
-   * double those threads to no purpose.
    *
    * @param config where the substrate lives, and whether it is a cluster
    * @return the client, shut down with the scope; aborts with `Unavailable` when the URL is unusable

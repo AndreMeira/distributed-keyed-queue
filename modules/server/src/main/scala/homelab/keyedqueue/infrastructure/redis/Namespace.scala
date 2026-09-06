@@ -36,11 +36,6 @@ final case class Namespace(queue: QueueName, buckets: Int):
 
   /**
    * Keys with work and nobody working them, scored by when each became claimable.
-   *
-   * A sorted set rather than a list, because the structure is also the bookkeeping: membership makes "this
-   * key is already queued" the set's own property rather than a separate hash to keep in step, and the
-   * score carries oldest-first ordering across keys. Membership is O(log N), which is what a claim by name
-   * would need.
    */
   val ready: String = s"$prefix:ready"
 
@@ -67,10 +62,6 @@ final case class Namespace(queue: QueueName, buckets: Int):
   /**
    * The stream this queue announces on: one entry per key made claimable, appended by the same script
    * that made it so, and shared with every other queue in the bucket.
-   *
-   * A stream rather than a pub/sub channel because a reader that reconnects resumes from the id it holds
-   * instead of losing what it missed. Entries name the queue they concern, because the stream no longer
-   * does.
    */
   val wake: String = Namespace.wake(bucket)
 
@@ -134,10 +125,8 @@ object Namespace:
   /**
    * Which bucket a queue falls in.
    *
-   * `String`'s hash is specified by the JVM rather than left to an implementation, so every instance of the
-   * service agrees on where a queue lives without being told — which is the only property this needs, since
-   * nothing outside the service computes it. `floorMod` rather than `%` because a negative hash would
-   * otherwise produce a negative bucket.
+   * `String`'s hash is specified by the JVM, so every instance agrees on where a queue lives without being
+   * told. `floorMod`, because a negative hash would otherwise produce a negative bucket.
    *
    * @param queue the queue
    * @param buckets how many buckets the deployment is divided into

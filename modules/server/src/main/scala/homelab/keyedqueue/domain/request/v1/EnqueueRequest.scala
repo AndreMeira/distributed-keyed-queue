@@ -9,10 +9,7 @@ import java.time.Instant
 
 
 /**
- * A caller's unchecked ask to append a message to a key.
- *
- * The queue is separate from the message because it is the address a message was sent to, not a property
- * of the message.
+ * A caller's ask to append a message to a key.
  *
  * @param queue the queue to append to, as it arrived
  * @param message the message, as it arrived
@@ -24,10 +21,6 @@ object EnqueueRequest:
 
   /**
    * A message as a caller stated it, before anyone has checked it.
-   *
-   * The twin of [[homelab.keyedqueue.domain.model.Message]], and deliberately not it: the domain message
-   * carries a [[MessageKey]] and a [[MessageId]], which assert that someone checked. Here they are the
-   * strings a caller sent, and parsing is what turns them into names the store can address.
    *
    * @param key what ordering is to be defined by
    * @param messageId what this message is to be addressed by

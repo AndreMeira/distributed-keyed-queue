@@ -77,9 +77,6 @@ final class RedisQueueStore(
    * there is no instant in which it is neither, which is why this adapter has no holding list, no
    * per-connection identity and no recovery for one.
    *
-   * '''Waiting costs a fiber, not a connection.''' The listener reads every wake stream in the deployment
-   * on one connection, and offers a readiness token to the named queue, which wakes one consumer.
-   *
    * '''Patience is a deadline.''' A caller woken by an entry another instance won keeps waiting with what
    * is left of it, rather than starting again — so a race it loses costs it a round trip, not a full wait.
    *
@@ -95,14 +92,6 @@ final class RedisQueueStore(
 
   /**
    * Wait for a readiness token, claim when one arrives, and keep at it until the patience is spent.
-   *
-   * '''There is no subscribe-then-look ordering to get right.''' A token offered while a claim is in
-   * flight waits in its buffer for the next take, so this can simply loop. The signal it replaced had to
-   * be held before looking or a wake landing during the attempt was lost.
-   *
-   * A token is a hint, not a handover: every instance reads the same wake stream, so a consumer that
-   * takes a token and finds nothing has lost a race rather than been misled, and goes back to waiting with
-   * what is left of its patience.
    *
    * @param ns the queue being claimed from
    * @param demand what the caller asked for
