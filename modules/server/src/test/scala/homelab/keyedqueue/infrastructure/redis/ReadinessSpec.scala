@@ -22,10 +22,10 @@ object ReadinessSpec extends ZIOSpecDefault:
       // The whole point of the design: a broadcast would let both look.
       for
         readiness <- Readiness.make
-        _         <- readiness.await(queue, 1.second)(ZIO.none) // spend the seed
+        _         <- readiness.awaitReady(queue, 1.second)(ZIO.none) // spend the seed
         looked    <- Ref.make(0)
         _         <- readiness.ready(queue)
-        _         <- ZIO.foreachPar(1 to 2)(_ => readiness.await(queue, 150.millis)(looked.update(_ + 1).as(None)))
+        _         <- ZIO.foreachPar(1 to 2)(_ => readiness.awaitReady(queue, 150.millis)(looked.update(_ + 1).as(None)))
         count     <- looked.get
       yield assertTrue(count == 1)
     },
@@ -35,7 +35,7 @@ object ReadinessSpec extends ZIOSpecDefault:
       for
         readiness <- Readiness.make
         looked    <- Ref.make(0)
-        found     <- readiness.await(QueueName("cold"), 50.millis)(looked.update(_ + 1).as(Some(1)))
+        found     <- readiness.awaitReady(QueueName("cold"), 50.millis)(looked.update(_ + 1).as(Some(1)))
         count     <- looked.get
       yield assertTrue(found.contains(1), count == 1)
     },
@@ -45,21 +45,21 @@ object ReadinessSpec extends ZIOSpecDefault:
       for
         readiness <- Readiness.make
         looked    <- Ref.make(0)
-        first     <- readiness.await(queue, 50.millis)(looked.update(_ + 1).as(Some(1)))
-        second    <- readiness.await(queue, 50.millis)(looked.update(_ + 1).as(Some(2)))
-        third     <- readiness.await(queue, 50.millis)(looked.update(_ + 1).as(None))
-        fourth    <- readiness.await(queue, 50.millis)(looked.update(_ + 1).as(Some(4)))
+        first     <- readiness.awaitReady(queue, 50.millis)(looked.update(_ + 1).as(Some(1)))
+        second    <- readiness.awaitReady(queue, 50.millis)(looked.update(_ + 1).as(Some(2)))
+        third     <- readiness.awaitReady(queue, 50.millis)(looked.update(_ + 1).as(None))
+        fourth    <- readiness.awaitReady(queue, 50.millis)(looked.update(_ + 1).as(Some(4)))
         count     <- looked.get
       yield assertTrue(first.contains(1), second.contains(2), third.isEmpty, fourth.isEmpty, count == 3)
     },
     test("a queue announced for is not confused with another") {
       for
         readiness <- Readiness.make
-        _         <- readiness.await(queue, 1.second)(ZIO.none)
-        _         <- readiness.await(QueueName("elsewhere"), 1.second)(ZIO.none)
+        _         <- readiness.awaitReady(queue, 1.second)(ZIO.none)
+        _         <- readiness.awaitReady(QueueName("elsewhere"), 1.second)(ZIO.none)
         _         <- readiness.ready(queue)
-        mine      <- readiness.await(queue, 100.millis)(ZIO.succeed(Some(1)))
-        other     <- readiness.await(QueueName("elsewhere"), 50.millis)(ZIO.succeed(Some(1)))
+        mine      <- readiness.awaitReady(queue, 100.millis)(ZIO.succeed(Some(1)))
+        other     <- readiness.awaitReady(QueueName("elsewhere"), 50.millis)(ZIO.succeed(Some(1)))
       yield assertTrue(mine.contains(1), other.isEmpty)
     },
     test("readiness announced as the patience expires is not lost") {
@@ -69,14 +69,14 @@ object ReadinessSpec extends ZIOSpecDefault:
         .foreach(1 to 500): _ =>
           for
             readiness <- Readiness.make
-            _         <- readiness.await(queue, 1.second)(ZIO.none)
+            _         <- readiness.awaitReady(queue, 1.second)(ZIO.none)
             // Claims rather than looking-and-finding-nothing: a fruitless look would consume the token
             // legitimately, which is not what this test is about.
-            awaiting  <- readiness.await(queue, 20.millis)(ZIO.succeed(Some(1))).fork
+            awaiting  <- readiness.awaitReady(queue, 20.millis)(ZIO.succeed(Some(1))).fork
             _         <- ZIO.sleep(20.millis)
             _         <- readiness.ready(queue)
             first     <- awaiting.join
-            second    <- readiness.await(queue, 3.seconds)(ZIO.succeed(Some(1)))
+            second    <- readiness.awaitReady(queue, 3.seconds)(ZIO.succeed(Some(1)))
           yield assertTrue(first.isDefined || second.isDefined)
         .map(_.reduce(_ && _))
     },
@@ -87,13 +87,13 @@ object ReadinessSpec extends ZIOSpecDefault:
         .foreach(1 to 500): _ =>
           for
             readiness  <- Readiness.make
-            _          <- readiness.await(queue, 1.second)(ZIO.none)
-            awaiting   <- readiness.await(queue, 30.seconds)(ZIO.succeed(Some(1))).fork
+            _          <- readiness.awaitReady(queue, 1.second)(ZIO.none)
+            awaiting   <- readiness.awaitReady(queue, 30.seconds)(ZIO.succeed(Some(1))).fork
             _          <- ZIO.sleep(1.milli)
             announcing <- readiness.ready(queue).fork
             exit       <- awaiting.interrupt
             _          <- announcing.join
-            later      <- readiness.await(queue, 3.seconds)(ZIO.succeed(Some(1)))
+            later      <- readiness.awaitReady(queue, 3.seconds)(ZIO.succeed(Some(1)))
           yield assertTrue(exit.isSuccess || later.isDefined)
         .map(_.reduce(_ && _))
     },

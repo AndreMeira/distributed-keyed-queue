@@ -98,7 +98,7 @@ final class RedisQueueStore(
         // Always look once, before any waiting. A caller asking for no patience is saying "do not wait",
         // not "do not look" — and a readiness token cannot stand in for this, because one is offered per
         // queue per process rather than per call.
-        found   <- attempt(ns, demand)
+        found   <- attemptClaim(ns, demand)
         claimed <- found match
                      case granted @ Some(_) => ZIO.succeed(granted)
                      case None              => claimWithin(ns, demand, asked)
@@ -121,14 +121,16 @@ final class RedisQueueStore(
    * @return the claim, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
    */
   private def claimWithin(ns: Namespace, demand: Demand, asked: Instant): IO[RedisFailure, Option[Claimed]] =
-    remainingTime(demand.patience, asked).flatMap:
-      case None       => ZIO.none
-      case Some(left) =>
+    remainingTime(demand.patience, asked).flatMap {
+      case None               => ZIO.none
+      case Some(patienceLeft) =>
         readiness
-          .await(demand.queue, left)(attempt(ns, demand))
+          .awaitReady(demand.queue, patienceLeft):
+            attemptClaim(ns, demand)
           .flatMap:
             case granted @ Some(_) => ZIO.succeed(granted)
             case None              => claimWithin(ns, demand, asked)
+    }
 
   /**
    * Claim whatever is claimable, without waiting.
@@ -137,7 +139,7 @@ final class RedisQueueStore(
    * @param demand how much to take
    * @return the claim, or `None` when nothing was claimable; aborts with `RedisFailure` when the store fails
    */
-  private def attempt(ns: Namespace, demand: Demand): IO[RedisFailure, Option[Claimed]] =
+  private def attemptClaim(ns: Namespace, demand: Demand): IO[RedisFailure, Option[Claimed]] =
     monitor.trace("RedisQueueStore.attempt"):
       connection.provide:
         scripts.claim.run(ns, leaseTtl, demand.batch)

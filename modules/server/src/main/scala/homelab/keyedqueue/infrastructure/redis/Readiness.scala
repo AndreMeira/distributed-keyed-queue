@@ -15,7 +15,7 @@ import zio.*
  *
  * '''One token, one consumer.''' This is the point of the design. A broadcast wakes every consumer parked
  * on a queue so that one of them can win a claim and the rest waste a round trip; taking a token wakes
- * exactly one. What replaces the broadcast is the hand-on in [[await]]: a consumer that finds work offers
+ * exactly one. What replaces the broadcast is the hand-on in [[awaitReady]]: a consumer that finds work offers
  * the token onwards, so a burst drains one consumer at a time and stops on the first fruitless look.
  *
  * '''A token is a hint that may be wrong, never a promise that may be lost.''' Every path that could
@@ -74,7 +74,7 @@ final class Readiness(queues: Ref[Map[QueueName, Queue[Unit]]]):
    * @tparam A what `claim` produces
    * @return `claim`'s answer, or `None` when nothing became ready in time; aborts with `E` when `claim` does
    */
-  def await[E, A](queue: QueueName, patience: Duration)(claim: IO[E, Option[A]]): IO[E, Option[A]] =
+  def awaitReady[E, A](queue: QueueName, patience: Duration)(claim: IO[E, Option[A]]): IO[E, Option[A]] =
     for
       found  <- buffer(queue)
       // Recovers a token the interruption would otherwise swallow. Attached outside the timeout on

@@ -120,13 +120,6 @@ user=<your-github-username>
 password=<a-classic-pat>
 ```
 
-## Performance
-
-On a laptop, two instances against one Valkey: **1,100–4,000 msg/s** end to end, the ceiling set by how
-many consumers are running rather than by keys or connections. A message reaching an idle consumer takes
-about 10ms, of which ~7ms is the enqueue round trip itself. Method and numbers:
-[`docs/research/throughput-first-numbers.md`](docs/research/throughput-first-numbers.md).
-
 ## Status
 
 **A POC, and honest about it.** The semantics are settled and tested — unit, integration against a real
