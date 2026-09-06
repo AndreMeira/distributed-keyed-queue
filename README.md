@@ -1,4 +1,4 @@
-# distributed-keyed-queue
+# distributed-keyed-queue (DKQ)
 
 A queue over gRPC where **one key is worked by one consumer at a time** — enforced by the storage layer,
 not by a lock inside your process.
@@ -13,8 +13,12 @@ Enqueue(queue, key, message)  ──▶  ┌──────────┐  �
 ## The problem it solves
 
 Plenty of systems give you ordering per partition. Few give you *per-key serial processing with long-lived
-handlers*: "everything for customer 42 happens one at a time, in order, and a handler may take a minute",
-while thousands of other keys run concurrently.
+handlers*.
+
+> **Example**: Say you are sending commands to a fleet of machines. 
+Each machine must be given its commands in order and needs to acknowledge each command 
+before the next can be sent — which may take a minute. You want thousands of commands moving across 
+thousands of machines at once, while any one machine is still only ever working on a single command.
 
 The usual answers each cost something:
 
@@ -23,10 +27,22 @@ The usual answers each cost something:
 - **Serialise in the consumer.** A lock keyed by the message key, held in process memory. Correct on one
   instance; meaningless across two, which is where the requirement usually came from.
 
-dkq puts the exclusivity where every instance can see it. A consumer **claims a key**, gets a lease and a
+DKQ puts the exclusivity in the queue itself. A consumer **claims a key**, gets a lease and a
 fencing token, and nothing else may work that key until the claim ends or the lease lapses. Restarts,
 deployments and network partitions are all covered by the same mechanism, because the claim lives in the
 store rather than in a process.
+
+## Where it fits
+
+**Treat DKQ the way you treat a database: one per service.**
+
+It is not a message bus, and it is not for moving data between services — that is a broker's job, and a
+contract between two services belongs somewhere both of them agree on. DKQ spreads *one* service's work
+across *its own* instances, serialised per key. A queue's producers and its consumers are the same service,
+and its keys mean something only inside it.
+
+Sharing one DKQ between two services couples them the way a shared database does: they inherit each other's
+key space, each other's semantics, and each other's outages.
 
 ## What it guarantees
 
@@ -59,7 +75,7 @@ service KeyedQueue {
 A `Dequeue` answers with a **receipt** (the claim), a **head** delivery, any **tail** the batch included,
 and the **lease expiry**. Every `Settle` names the receipt and what became of which message id. A consumer
 that works longer than the lease must `Heartbeat` on a tick, and must stop the moment a heartbeat reports a
-claim stale — that is the half of the contract dkq cannot enforce for you.
+claim stale — that is the half of the contract DKQ cannot enforce for you.
 
 ## Using it from a service
 
