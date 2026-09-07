@@ -118,7 +118,7 @@ final class RedisQueueStore(
    * @return the claim, or `None` when nothing was claimable; aborts with `RedisFailure` when the store fails
    */
   private def attemptClaim(ns: Namespace, demand: Demand): IO[RedisFailure, Option[Grant]] =
-    monitor.trace("RedisQueueStore.attempt"):
+    monitor.trace("RedisQueueStore.attemptClaim"):
       connection.provide:
         scripts.claim.run(ns, leaseTtl, demand.batch)
 

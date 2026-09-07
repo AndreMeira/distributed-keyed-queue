@@ -40,9 +40,11 @@ final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, validation: Qu
    *         queue is unnamed or the batch is negative, or with `ApplicationError` when the store fails
    */
   def apply(request: DequeueRequest): IO[ApplicationError, DequeueResponse] =
-    validation.parse(request).orFail.flatMap { demand =>
-      watchdog.watch(demand.queue) *> store.claim(demand).map(response)
-    }
+    for
+      demand <- validation.parse(request).orFail
+      _      <- watchdog.watch(demand.queue)
+      grant  <- store.claim(demand)
+    yield response(grant)
 
   /**
    * Present what the store returned as the answer the caller gets.
@@ -51,7 +53,7 @@ final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, validation: Qu
    * work has behaved exactly as asked. Reporting that as an error would push every consumer's quiet case
    * into error handling, and make an idle queue indistinguishable from a broken one.
    *
-   * @param claimed what the store handed over, or nothing when the wait elapsed first
+   * @param grant what the store handed over, or nothing when the wait elapsed first
    * @return the response, carrying a claim only when there was one
    */
   private def response(grant: Option[Grant]): DequeueResponse =
