@@ -20,8 +20,10 @@ import java.time.Instant
  * waits for needs no reclaiming — which is why there is no watchdog here.
  *
  * '''Blocking acquire reuses the queue's readiness path.''' [[acquire]] loops the named try behind
- * [[Readiness]] exactly as `RedisQueueStore.claim` loops `attempt`. The wake is offered in-process on
- * release; across instances it would ride the same wake stream the queue uses (not built in this sketch).
+ * [[Readiness]] exactly as `RedisQueueStore.claim` loops `attempt`. A real release wakes a waiter on that
+ * lock — keyed by name, so only its own waiters stir, and only when something was actually freed. The wake
+ * is offered in-process here; across instances it would ride the same wake stream the queue uses (not built
+ * in this sketch).
  *
  * @param connection where its connection comes from
  * @param scripts the loaded lock scripts
@@ -34,7 +36,8 @@ final class RedisLockStore(
 ) extends LockStore:
 
   override def tryAcquire(name: String, ttl: Duration): IO[RedisFailure, Option[Hold]] =
-    connection.provide(scripts.acquire.run(name, ttl))
+    connection.provide:
+      scripts.acquire.run(name, ttl)
 
   override def acquire(name: String, ttl: Duration, patience: Duration): IO[RedisFailure, Option[Hold]] =
     Clock.instant.flatMap(asked => acquireWithin(name, ttl, patience, asked))
@@ -42,11 +45,14 @@ final class RedisLockStore(
   override def release(hold: Hold): IO[RedisFailure, Boolean] =
     connection
       .provide(scripts.release.run(hold.name, hold.token))
-      // Wake a waiter parked on this lock. In-process here; a cross-instance build appends a wake entry.
-      .tap(_ => readiness.ready(QueueName(hold.name)))
+      // Wake a waiter parked on this lock, but only on a real release: a stale one freed nothing, so a wake
+      // would send waiters to look at a lock still held. In-process here; a cross-instance build would
+      // publish the wake to a shared channel instead, under the same condition.
+      .tap(released => readiness.ready(QueueName(hold.name)).when(released))
 
   override def refresh(hold: Hold, ttl: Duration): IO[RedisFailure, (Instant, Boolean)] =
-    connection.provide(scripts.refresh.run(hold.name, hold.token, ttl))
+    connection.provide:
+      scripts.refresh.run(hold.name, hold.token, ttl)
 
   /**
    * Wait for a release, retry the acquire, until it succeeds or the patience is spent — the lock's twin of
