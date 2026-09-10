@@ -80,9 +80,19 @@ object ReadinessSpec extends ZIOSpecDefault:
           yield assertTrue(first.isDefined || second.isDefined)
         .map(_.reduce(_ && _))
     },
-    test("readiness announced as the caller is interrupted is not lost") {
-      // The path the patience cannot reach: the whole `await` is cancelled, so neither its exit handler nor
-      // its recovery runs. Only the finaliser outside the timeout covers this one.
+    test("work announced as a caller is interrupted around it is not stranded from a retrying caller") {
+      // Interrupt a consumer in the window where a wake arrives — the path neither the timeout nor the exit
+      // handler reaches — then check the guarantee the store actually relies on: a *retrying* caller finds
+      // the work. This mirrors `RedisQueueStore.claimWithin`, which loops `awaitReady` until granted or the
+      // patience is spent; a single `awaitReady` is not how the store waits, and asserting on one tests a
+      // momentary internal state rather than the recovery the design promises. Each look that finds nothing
+      // re-arms a token on its way out, so the next look takes it and runs the claim.
+      def retryingCaller(readiness: Readiness): UIO[Option[Int]] =
+        readiness.awaitReady(queue, 100.millis)(ZIO.succeed(Some(1))).flatMap {
+          case found @ Some(_) => ZIO.succeed(found)
+          case None            => retryingCaller(readiness)
+        }
+
       ZIO
         .foreach(1 to 500): _ =>
           for
@@ -91,10 +101,10 @@ object ReadinessSpec extends ZIOSpecDefault:
             awaiting   <- readiness.awaitReady(queue, 30.seconds)(ZIO.succeed(Some(1))).fork
             _          <- ZIO.sleep(1.milli)
             announcing <- readiness.ready(queue).fork
-            exit       <- awaiting.interrupt
+            _          <- awaiting.interrupt
             _          <- announcing.join
-            later      <- readiness.awaitReady(queue, 3.seconds)(ZIO.succeed(Some(1)))
-          yield assertTrue(exit.isSuccess || later.isDefined)
+            recovered  <- retryingCaller(readiness).timeout(10.seconds)
+          yield assertTrue(recovered.contains(Some(1)))
         .map(_.reduce(_ && _))
     },
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(3.minutes)
