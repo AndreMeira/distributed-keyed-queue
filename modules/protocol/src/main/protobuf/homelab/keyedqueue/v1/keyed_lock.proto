@@ -1,0 +1,48 @@
+// The lock contract: the request/response shapes for a per-name distributed lock.
+// The service that carries them is keyed_lock_service.proto; design: docs/research/distributed-lock.md
+syntax = "proto3";
+
+package homelab.keyedqueue.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "scalapb/scalapb.proto";
+
+option (scalapb.options) = {
+  flat_package: true
+};
+
+message AcquireRequest {
+  string                   name     = 1;  // the lock to take; empty is rejected
+  google.protobuf.Duration ttl      = 2;  // how long the hold survives without a refresh; required, > 0
+  // How long to block for a holder to release. Required and > 0, like Dequeue's max_wait: a lock that will
+  // not wait is a different operation, and an unset Duration reads as zero.
+  google.protobuf.Duration max_wait = 3;
+}
+message AcquireResponse {
+  bool                      acquired         = 1;  // false when the wait elapsed with the lock still held
+  // The opaque handle to release or refresh with; empty when not acquired. A consumer treats it as a token,
+  // not a value — it cannot reason about the fencing from it.
+  string                    receipt          = 2;
+  // The fencing token, exposed on purpose: a correct holder stamps its writes to the protected resource
+  // with this, and the resource rejects a write carrying a stale one. This is what makes the lock safe for
+  // long holds, where a paused holder may lose the lock without knowing (docs/research/distributed-lock.md).
+  uint64                    fence            = 3;
+  google.protobuf.Timestamp lease_expires_at = 4;
+}
+
+message ReleaseRequest {
+  string receipt = 1;  // the handle from Acquire
+}
+message ReleaseResponse {
+  bool released = 1;  // false when the hold had already been revoked
+}
+
+message RefreshRequest {
+  string                   receipt = 1;
+  google.protobuf.Duration ttl     = 2;  // how much longer to grant
+}
+message RefreshResponse {
+  bool                      renewed          = 1;  // false when the hold has been lost
+  google.protobuf.Timestamp lease_expires_at = 2;
+}

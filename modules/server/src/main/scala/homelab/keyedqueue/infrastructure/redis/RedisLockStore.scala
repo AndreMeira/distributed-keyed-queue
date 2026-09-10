@@ -42,15 +42,15 @@ final class RedisLockStore(
   override def acquire(name: String, ttl: Duration, patience: Duration): IO[RedisFailure, Option[Hold]] =
     Clock.instant.flatMap(asked => acquireWithin(name, ttl, patience, asked))
 
-  override def release(hold: Hold): IO[RedisFailure, Boolean] =
+  override def release(name: String, token: Long): IO[RedisFailure, Boolean] =
     // The wake is the script's job now: lock_release.lua appends to the wake stream on a real release, and
     // the shared listener delivers it to every instance's readiness — so a waiter on another instance wakes,
     // which an in-process call could never reach.
-    connection.provide(scripts.release.run(hold.name, hold.token))
+    connection.provide(scripts.release.run(name, token))
 
-  override def refresh(hold: Hold, ttl: Duration): IO[RedisFailure, (Instant, Boolean)] =
+  override def refresh(name: String, token: Long, ttl: Duration): IO[RedisFailure, (Instant, Boolean)] =
     connection.provide:
-      scripts.refresh.run(hold.name, hold.token, ttl)
+      scripts.refresh.run(name, token, ttl)
 
   /**
    * Wait for a release, retry the acquire, until it succeeds or the patience is spent — the lock's twin of

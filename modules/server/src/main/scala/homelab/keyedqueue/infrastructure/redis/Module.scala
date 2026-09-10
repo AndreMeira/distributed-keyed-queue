@@ -3,7 +3,9 @@ package homelab.keyedqueue.infrastructure.redis
 
 import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
+import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.persistence.QueueStore
+import homelab.keyedqueue.infrastructure.redis.script.LockKeys
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import io.lettuce.core.api.sync.RedisCommands
 import zio.*
@@ -51,17 +53,24 @@ object Module:
    *
    * @return the layer
    */
-  val store: ZLayer[Connection & Scripts & QueueConfig & Monitor, ApplicationError, QueueStore] = ZLayer.scoped {
-    for
-      monitor    <- ZIO.service[Monitor]
-      connection <- ZIO.service[Connection]
-      scripts    <- ZIO.service[Scripts]
-      config     <- ZIO.service[QueueConfig]
-      readiness  <- Readiness.make
-      listener   <- WakeListener.make(connection, readiness, config.wakeBuckets, config.wakeBlock)
-      // Forked here rather than in the composition root because the store is unusable without it: a
-      // consumer that finds nothing waits for a readiness token, and an unrun listener offers none.
-      _          <- listener.run.forkScoped
-      store      <- RedisQueueStore.make(monitor, connection, scripts, readiness, config.leaseTtl, config.wakeBuckets)
-    yield store
-  }
+  val stores: ZLayer[Connection & Scripts & QueueConfig & Monitor, ApplicationError, QueueStore & LockStore] =
+    ZLayer.scopedEnvironment {
+      for
+        monitor    <- ZIO.service[Monitor]
+        connection <- ZIO.service[Connection]
+        scripts    <- ZIO.service[Scripts]
+        config     <- ZIO.service[QueueConfig]
+        queueReady <- Readiness.make
+        lockReady  <- Readiness.make
+        // One listener over both stores' wake streams, routing each to its own readiness — see WakeListener.
+        // The queue's bucket streams wake `queueReady`; the lock's one stream wakes `lockReady`.
+        routes      = Namespace.wakeStreams(config.wakeBuckets).toChunk.map(_ -> queueReady).toMap
+                        + (LockKeys.wake -> lockReady)
+        listener   <- WakeListener.make(connection, config.wakeBlock, routes)
+        // Forked here rather than in the composition root because both stores are unusable without it: a
+        // waiter that finds nothing parks on a readiness token, and an unrun listener offers none.
+        _          <- listener.run.forkScoped
+        queueStore <- RedisQueueStore.make(monitor, connection, scripts, queueReady, config.leaseTtl, config.wakeBuckets)
+        lockStore  <- connection.provide(RedisLockStore.make(connection, lockReady))
+      yield ZEnvironment[QueueStore](queueStore) ++ ZEnvironment[LockStore](lockStore)
+    }

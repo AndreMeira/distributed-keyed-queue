@@ -65,8 +65,8 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
       for
         lock     <- ZIO.serviceWithZIO[QueueConfig](instance)
         held     <- lock.tryAcquire("b", ttl).someOrFailException
-        released <- lock.release(held)
-        twice    <- lock.release(held)
+        released <- lock.release(held.name, held.token)
+        twice    <- lock.release(held.name, held.token)
         retaken  <- lock.tryAcquire("b", ttl)
       yield assertTrue(released, !twice, retaken.isDefined)
     },
@@ -83,10 +83,10 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
       for
         lock      <- ZIO.serviceWithZIO[QueueConfig](instance)
         held      <- lock.tryAcquire("d", ttl).someOrFailException
-        (_, ok)   <- lock.refresh(held, ttl)
+        (_, ok)   <- lock.refresh(held.name, held.token, ttl)
         _         <- ZIO.sleep(ttl + 300.millis)
         stolen    <- lock.tryAcquire("d", ttl).someOrFailException
-        (_, lost) <- lock.refresh(held, ttl)
+        (_, lost) <- lock.refresh(held.name, held.token, ttl)
       yield assertTrue(ok, stolen.token > held.token, !lost)
     },
     test("blocking acquire waits for a release, then completes") {
@@ -96,7 +96,7 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
         waiter    <- lock.acquire("e", 30.seconds, 5.seconds).fork
         _         <- ZIO.sleep(300.millis)
         parked    <- waiter.poll.map(_.isEmpty)
-        _         <- lock.release(held)
+        _         <- lock.release(held.name, held.token)
         recovered <- waiter.join
       yield assertTrue(parked, recovered.isDefined)
     },
@@ -112,7 +112,7 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
         waiter            <- b.acquire("cross", 30.seconds, 10.seconds).timed.fork
         _                 <- ZIO.sleep(300.millis)
         parked            <- waiter.poll.map(_.isEmpty)
-        _                 <- a.release(held)
+        _                 <- a.release(held.name, held.token)
         (took, recovered) <- waiter.join
       yield assertTrue(parked, recovered.isDefined, took < 5.seconds)
     },
@@ -124,7 +124,9 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
         inside   <- Ref.make(0)
         breach   <- Ref.make(false)
         worker    = ZIO.foreachDiscard(1 to perFiber): _ =>
-                      ZIO.acquireReleaseWith(lock.acquire("f", 30.seconds, 30.seconds))(h => ZIO.foreachDiscard(h)(lock.release(_).ignore)) {
+                      ZIO.acquireReleaseWith(lock.acquire("f", 30.seconds, 30.seconds))(h =>
+                        ZIO.foreachDiscard(h)(held => lock.release(held.name, held.token).ignore)
+                      ) {
                         case Some(_) =>
                           for
                             n <- inside.updateAndGet(_ + 1)

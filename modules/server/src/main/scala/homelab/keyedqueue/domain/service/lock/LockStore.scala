@@ -47,23 +47,28 @@ trait LockStore:
   def acquire(name: String, ttl: Duration, patience: Duration): IO[ApplicationError.AdapterError, Option[Hold]]
 
   /**
-   * Release a hold, so a waiter may take it.
+   * Release a lock this caller holds, so a waiter may take it.
    *
-   * @param hold the hold returned by an acquire
+   * Takes name and token rather than a [[Hold]], because that is all a release presents — the pair a
+   * receipt decodes to — and a wire caller never had the lease deadline to hand back.
+   *
+   * @param name the lock to release
+   * @param token the fence token the hold was granted under
    * @return true when released, false when the hold had already been revoked; aborts with an `AdapterError`
    *         when the store fails
    */
-  def release(hold: Hold): IO[ApplicationError.AdapterError, Boolean]
+  def release(name: String, token: Long): IO[ApplicationError.AdapterError, Boolean]
 
   /**
    * Push a hold's lease forward.
    *
-   * @param hold the hold to keep alive
+   * @param name the lock to keep alive
+   * @param token the fence token the hold was granted under
    * @param ttl how much longer to grant
    * @return the new deadline and whether the hold is still valid; aborts with an `AdapterError` when the
    *         store fails
    */
-  def refresh(hold: Hold, ttl: Duration): IO[ApplicationError.AdapterError, (Instant, Boolean)]
+  def refresh(name: String, token: Long, ttl: Duration): IO[ApplicationError.AdapterError, (Instant, Boolean)]
 
 
 object LockStore:
@@ -75,4 +80,43 @@ object LockStore:
    * @param token the fence generation this hold was granted under
    * @param leaseUntil when the hold lapses unless refreshed, on the store's clock
    */
-  final case class Hold(name: String, token: Long, leaseUntil: Instant)
+  final case class Hold(name: String, token: Long, leaseUntil: Instant):
+
+    /**
+     * The opaque handle a caller carries to release or refresh — name and token, which is all either needs.
+     *
+     * @return the receipt
+     */
+    def receipt: String = LockReceipt.encode(name, token)
+
+  /**
+   * Encoding of a lock receipt: the pair a release or refresh presents, as one opaque string.
+   *
+   * Base64url over a space-separated `name token`, so a name may contain anything and the separator stays
+   * out of reach of its content — the same scheme [[homelab.keyedqueue.domain.model.Claim]] uses.
+   */
+  object LockReceipt:
+
+    /**
+     * Encode a name and token as a receipt.
+     *
+     * @param name the lock
+     * @param token the fence token
+     * @return the receipt
+     */
+    def encode(name: String, token: Long): String =
+      java.util.Base64.getUrlEncoder.withoutPadding
+        .encodeToString(s"$name $token".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+    /**
+     * Read a receipt back to the name and token it names.
+     *
+     * @param receipt the opaque handle from an acquire
+     * @return the name and token, or `None` when it is not a receipt this service issued
+     */
+    def decode(receipt: String): Option[(String, Long)] =
+      scala.util
+        .Try(String(java.util.Base64.getUrlDecoder.decode(receipt), java.nio.charset.StandardCharsets.UTF_8))
+        .toOption
+        .map(_.split(' '))
+        .collect { case Array(name, token) if token.toLongOption.isDefined => (name, token.toLong) }

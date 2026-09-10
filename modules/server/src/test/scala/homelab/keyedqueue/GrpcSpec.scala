@@ -5,6 +5,7 @@ import com.google.protobuf.duration.Duration as ProtoDuration
 import homelab.keyedqueue.application.grpc.v1.GrpcApplication
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.v1.*
+import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLockClient
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
 import io.grpc.{ ManagedChannelBuilder, Status, StatusException }
 import org.testcontainers.containers.GenericContainer
@@ -23,9 +24,9 @@ object GrpcSpec extends ZIOSpecDefault:
 
   private val port = 19_099
 
-  /** A Valkey container, the service on a port, and a client pointed at it. */
-  private val running: ZLayer[Any, Any, KeyedQueueClient] =
-    ZLayer.scoped:
+  /** A Valkey container, the service on a port, and both clients pointed at it — one server, two APIs. */
+  private val running: ZLayer[Any, Any, KeyedQueueClient & KeyedLockClient] =
+    ZLayer.scopedEnvironment:
       for
         container <- ZIO.acquireRelease(
                        ZIO.attemptBlocking:
@@ -39,10 +40,13 @@ object GrpcSpec extends ZIOSpecDefault:
         config     = QueueConfig(url, cluster = false, port, 30.seconds, 1.second, 100, 200.millis, 1, 5.seconds, maxBatchLimit = 32)
         _         <- GrpcApplication.serve(config).forkScoped
         _         <- ZIO.sleep(1.second) // let the server bind before the client dials
-        client    <- KeyedQueueClient.scoped(
+        queue     <- KeyedQueueClient.scoped(
                        ZManagedChannel(ManagedChannelBuilder.forAddress("localhost", port).usePlaintext())
                      )
-      yield client
+        lock      <- KeyedLockClient.scoped(
+                       ZManagedChannel(ManagedChannelBuilder.forAddress("localhost", port).usePlaintext())
+                     )
+      yield ZEnvironment[KeyedQueueClient](queue) ++ ZEnvironment[KeyedLockClient](lock)
 
   private def message(key: String, body: String): Message =
     Message(
@@ -68,6 +72,26 @@ object GrpcSpec extends ZIOSpecDefault:
     claimed(reply).flatMap(_.message).map(_.payload.toStringUtf8)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("KeyedQueue over gRPC")(
+    test("the lock API over the wire: acquire, refuse, release, re-acquire, fence, refresh") {
+      for
+        lock    <- ZIO.service[KeyedLockClient]
+        secs     = (n: Int) => Some(ProtoDuration(n.toLong))
+        first   <- lock.acquire(AcquireRequest("job", secs(30), secs(1)))
+        // held now, so a no-wait-ish second acquire returns not-acquired
+        again   <- lock.acquire(AcquireRequest("job", secs(30), secs(1)))
+        _       <- lock.release(ReleaseRequest(first.receipt))
+        // re-acquirable after release, and the fence advanced
+        retaken <- lock.acquire(AcquireRequest("job", secs(30), secs(1)))
+        renewed <- lock.refresh(RefreshRequest(retaken.receipt, secs(30)))
+      yield assertTrue(
+        first.acquired,
+        first.fence > 0L,
+        !again.acquired,
+        retaken.acquired,
+        retaken.fence > first.fence, // fenced: a fresh grant is a strictly higher token
+        renewed.renewed,
+      )
+    },
     test("enqueue, dequeue, settle — the loop a consumer writes") {
       for
         client  <- ZIO.service[KeyedQueueClient]
