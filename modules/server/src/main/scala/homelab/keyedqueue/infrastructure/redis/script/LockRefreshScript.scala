@@ -34,7 +34,7 @@ final class LockRefreshScript(ref: LuaScript.Sha):
   def run(name: String, token: Long, ttl: Duration): ZIO[Connection.Commands, RedisFailure, (Instant, Boolean)] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking(redis.evalsha[Any](ref, output, LockKeys.all, args(name, token, ttl)*))
+        .attemptBlocking(redis.evalsha[Any](ref, output, LockKeys.core, args(name, token, ttl)*))
         .mapError(LuaScript.failure)
         .flatMap(reply => ZIO.fromEither(read(reply)))
 

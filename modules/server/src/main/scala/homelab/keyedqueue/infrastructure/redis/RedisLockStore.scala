@@ -20,10 +20,10 @@ import java.time.Instant
  * waits for needs no reclaiming — which is why there is no watchdog here.
  *
  * '''Blocking acquire reuses the queue's readiness path.''' [[acquire]] loops the named try behind
- * [[Readiness]] exactly as `RedisQueueStore.claim` loops `attempt`. A real release wakes a waiter on that
- * lock — keyed by name, so only its own waiters stir, and only when something was actually freed. The wake
- * is offered in-process here; across instances it would ride the same wake stream the queue uses (not built
- * in this sketch).
+ * [[Readiness]] exactly as `RedisQueueStore.claim` loops `attempt`. The wake is cross-instance: a real
+ * release appends to a wake stream (in `lock_release.lua`, so it cannot precede the freeing and fires only
+ * on a real release), and the shared [[WakeListener]] delivers it to every instance's readiness. A waiter
+ * blocked on another instance wakes promptly — no polling, no backstop.
  *
  * @param connection where its connection comes from
  * @param scripts the loaded lock scripts
@@ -43,12 +43,10 @@ final class RedisLockStore(
     Clock.instant.flatMap(asked => acquireWithin(name, ttl, patience, asked))
 
   override def release(hold: Hold): IO[RedisFailure, Boolean] =
-    connection
-      .provide(scripts.release.run(hold.name, hold.token))
-      // Wake a waiter parked on this lock, but only on a real release: a stale one freed nothing, so a wake
-      // would send waiters to look at a lock still held. In-process here; a cross-instance build would
-      // publish the wake to a shared channel instead, under the same condition.
-      .tap(released => readiness.ready(QueueName(hold.name)).when(released))
+    // The wake is the script's job now: lock_release.lua appends to the wake stream on a real release, and
+    // the shared listener delivers it to every instance's readiness — so a waiter on another instance wakes,
+    // which an in-process call could never reach.
+    connection.provide(scripts.release.run(hold.name, hold.token))
 
   override def refresh(hold: Hold, ttl: Duration): IO[RedisFailure, (Instant, Boolean)] =
     connection.provide:

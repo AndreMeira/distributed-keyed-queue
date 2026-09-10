@@ -32,7 +32,7 @@ final class LockReleaseScript(ref: LuaScript.Sha):
   def run(name: String, token: Long): ZIO[Connection.Commands, RedisFailure, Boolean] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking(redis.evalsha[Any](ref, output, LockKeys.all, args(name, token)*))
+        .attemptBlocking(redis.evalsha[Any](ref, output, LockKeys.withWake, args(name, token)*))
         .mapError(LuaScript.failure)
         .flatMap(reply => ZIO.fromEither(LuaScript.Decode.long.map(_ == 1L).decode("lock.release", reply)))
 
