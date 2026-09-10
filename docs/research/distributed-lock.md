@@ -14,7 +14,9 @@ token is the thing naive locks (Redlock, famously) get wrong; DKQ has it built i
 capability — it is a matter of *packaging*. There are two ways, and the more elegant one is the idea in the
 brain-dump: **make DKQ a client of itself.**
 
-Draft; a design study. The mechanism claims below are checked against the current Lua.
+Draft; a design study, now backed by two working sketches on the `lock-sketch` branch — the
+self-client (`DistributedLock`) and the dedicated store (`RedisLockStore`) — each with a spec passing
+against real Valkey. The mechanism claims below are checked against the Lua.
 
 ## The self-client design: a lock is a queue with one immortal message
 
@@ -90,8 +92,13 @@ exists:
 - `acquire(name)` — claim a *named* key (no `ZPOPMIN`): `if not held then set lease, INCR fence, return
   token else nil`. Names the specific resource natively — the constraint the self-client model works around.
 - `release(name, token)` / `refresh(name, token)` — fence-checked, as today.
-- one `locks` structure (name → lease) swept in a **single pass**, not N queues — which is the whole point:
-  the sweep cost becomes O(held locks), not O(locks-ever-seen).
+- **no sweep at all** — the sketch found this. Because acquire is *named*, `lock_acquire.lua` checks the
+  one lock's lease inline and reclaims it if expired, so a dead holder is released by the next contender,
+  not a background pass. A lock holds no work, so a lock nobody is waiting for needs no reclaiming — the
+  queue sweeps only because a dead consumer's *messages* must resurface even when its key is idle. Two
+  structures (`held` zset, `fence` hash), three small scripts, and the watchdog dependency gone.
+  (Prompt crash-reclaim for a *blocking* waiter still wants the backstop; `tryAcquire` reclaims inline
+  regardless.)
 
 It costs real server code — a port, three scripts, a release-triggered wake flow, a gRPC surface — to buy
 back the sweep scaling and native named-acquire.
