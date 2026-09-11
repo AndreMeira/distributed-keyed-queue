@@ -13,7 +13,7 @@
 -- ARGV[1] key
 -- ARGV[2] token      the token handed out by claim.lua
 -- ARGV[3] retryAfter millis; applied when a nack asks to be held back, 0 for immediately
--- ARGV[4] queue      named in the wake entry, because the stream is shared by the whole bucket
+-- ARGV[4] queue      named in the wake entry, because the stream is shared by the whole partition
 -- ARGV[5..] id, verdict, id, verdict, ...  verdict is 'ack' | 'nack'
 -- returns            1 when applied, 0 when the claim was stale
 --

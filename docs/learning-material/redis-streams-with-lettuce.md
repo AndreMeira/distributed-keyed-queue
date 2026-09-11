@@ -140,11 +140,12 @@ the timeout of every listening connection, and why each stream reader is given o
 
 `RedisAdvancedClusterCommands` accepts the same calls, but a multi-stream `XREAD` across different slots
 fails with `CROSSSLOT`. Group streams by slot — and remember that keys sharing a hash tag share a slot, so
-`{w:0}:v1:wake` is in the same slot as `{w:0}:v1:q:orders:ready` and can be written by the same Lua script.
+`{p:0}:v1:wake` is in the same slot as `{p:0}:v1:q:orders:ready` and can be written by the same Lua script.
 
-That grouping is what `WakeListener` does: one reader fiber and one connection per slot group, collapsing
-to a single reader on a standalone server, where there are no slots. The advice was written here before the
-listener followed it, and the gap cost a defect that only a real cluster could expose — see
+That grouping is what `Connection` does — it is the piece that knows whether the store is a cluster — and
+`WakeListener` runs one fiber per connection it is given, collapsing to a single reader on a standalone
+server, where there are no slots. The advice was written here before the code followed it, and the gap cost
+a defect that only a real cluster could expose — see
 [`../architecture/redis-cluster.md`](../architecture/redis-cluster.md).
 
 ### From Lua
@@ -170,8 +171,8 @@ was rejected as non-deterministic.
 
 ## Where this is going in this repo
 
-Streams are what dkq's wake path is built on: one `wake` stream **per bucket**, appended to inside the very
-scripts that make a key claimable, and read by one blocking `XREAD` per instance across every bucket at
+Streams are what dkq's wake path is built on: one `wake` stream **per partition**, appended to inside the very
+scripts that make a key claimable, and read by one blocking `XREAD` per instance across every partition at
 once. Two of the notes above turned out to be load-bearing:
 
 - **`COUNT` bounds a reply, not the block** — so the read is issued with `COUNT 1000` and costs nothing in
@@ -180,6 +181,6 @@ once. Two of the notes above turned out to be load-bearing:
   `MAXLEN` has moved past it, which is why a reconnecting listener conservatively wakes every consumer it
   has rather than trusting its position.
 
-Why the stream is per bucket rather than per queue or global is
+Why the stream is per partition rather than per queue or global is
 [`../architecture/redis-cluster.md`](../architecture/redis-cluster.md); the reasoning that got there is
 [`../research/bucketed-wake-streams.md`](../research/bucketed-wake-streams.md).

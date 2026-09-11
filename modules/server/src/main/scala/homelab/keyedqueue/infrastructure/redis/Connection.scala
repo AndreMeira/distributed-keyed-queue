@@ -2,7 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.error.ApplicationError
-import io.lettuce.core.cluster.RedisClusterClient
+import io.lettuce.core.cluster.{ RedisClusterClient, SlotHash }
 import io.lettuce.core.cluster.api.sync.RedisClusterCommands
 import io.lettuce.core.codec.{ ByteArrayCodec, RedisCodec, StringCodec }
 import io.lettuce.core.{ RedisClient, RedisURI }
@@ -15,33 +15,16 @@ import java.time.Duration as JavaDuration
  * Where an effect gets a connection from.
  *
  * The connection arrives in the environment as [[Connection.Commands]]: an effect asks for one by type, and
- * this decides which one it gets. [[sync]] is shared by everything that answers immediately; [[listening]]
- * opens a fresh one for a reader that blocks — one per caller, because a blocked read occupies its
- * connection whole — timed generously enough that a blocking `XREAD` doing its job is not a timeout.
+ * this decides which one it gets. [[sync]] is shared by everything that answers immediately; [[readers]]
+ * are for blocking reads, one per group of keys that a single command may name — because a blocked read
+ * occupies its connection whole, and because Redis Cluster refuses one command spanning slots. All of them
+ * are opened at startup, so how many connections a deployment holds is a fact fixed before it serves.
  *
  * Why the client is synchronous, and what that costs — Redis executes a script in about four microseconds,
  * a blocking-pool hop costs a third of one, and a waiting consumer holds no thread at all — is measured in
  * `docs/architecture/redis-connections.md`.
  */
-final case class Connection(sync: Connection.Commands, client: Connection.Client, listeningTimeout: Duration):
-
-  /**
-   * Whether this talks to a cluster — which bounds what one command may touch, and so how a reader across
-   * several keys has to be split.
-   *
-   * @return true when the client is a cluster client
-   */
-  def clustered: Boolean = client match
-    case _: RedisClusterClient => true
-    case _: RedisClient        => false
-
-  /**
-   * A connection of this caller's own, closed with the scope — for a reader that blocks, since a blocked
-   * read occupies its connection whole.
-   *
-   * @return the commands; aborts with `Unavailable` when the connection cannot be opened
-   */
-  def listening: ZIO[Scope, RedisFailure, Connection.Commands] = Connection.open(client, listeningTimeout)
+final case class Connection(sync: Connection.Commands, readers: Chunk[Connection.Reader]):
 
   /**
    * Run an effect on the shared connection.
@@ -76,8 +59,20 @@ object Connection:
    * exact UTF-8 they wrote and values passing through untouched, which is true of [[open]]'s codec and not
    * guaranteed of anything else. The `<:` keeps it usable as the Lettuce API at the use site.
    */
-  /** The two clients this object knows how to open, named so a [[Connection]] can hold one. */
-  type Client = RedisClient | RedisClusterClient
+  /** The two clients this object knows how to open. */
+  private type Client = RedisClient | RedisClusterClient
+
+  /**
+   * A connection for blocking reads, and the wake streams one command on it may name.
+   *
+   * They are grouped so that a single command never spans cluster slots; on a server that has no slots
+   * there is one group, and so one reader, holding every stream asked for. A deployment's whole set is
+   * fixed in code — one per partition, one for the lock — so this never grows with queues or keys.
+   *
+   * @param commands the connection, reserved for whoever reads these streams
+   * @param streams what one command on it may name
+   */
+  final case class Reader(commands: Commands, streams: Chunk[String])
 
   opaque type Commands <: RedisClusterCommands[String, Array[Byte]] =
     RedisClusterCommands[String, Array[Byte]]
@@ -105,19 +100,64 @@ object Connection:
   final case class Config(maxWait: Duration, redisUrl: String, cluster: Boolean)
 
   /**
-   * The shared connection, closed with the scope, over a client kept for opening listening ones.
+   * Every connection the deployment will hold, opened here and closed with the scope: the shared one, and
+   * one reader per group of `blockingOn` that a single command may name.
    *
-   * Listening connections are opened on demand rather than fixed at one, because how many are needed is
-   * the listener's business: one on a single server, one per slot group on a cluster.
+   * The count is settled at startup rather than left to the caller, so `CLIENT LIST` on a running store
+   * shows what this says it will: one plus the number of groups — one group on a single server, one per
+   * slot on a cluster.
    *
    * @param config where Redis is, and the longest wait to honour
-   * @return the connection; aborts with `Unavailable` when it cannot be opened
+   * @param streams the wake streams that will be read with a blocking command — a fixed set, not one per
+   *                queue or key
+   * @return the connections; aborts with `Unavailable` when one cannot be opened
    */
-  def make(config: Config): ZIO[Scope, RedisFailure, Connection] =
+  def make(config: Config, streams: Chunk[String]): ZIO[Scope, RedisFailure, Connection] =
     for
-      client <- client(config)
-      sync   <- open(client, config.maxWait)
-    yield Connection(sync, client, config.maxWait + listeningSlack)
+      client  <- client(config)
+      sync    <- open(client, config.maxWait)
+      readers <- ZIO.foreach(grouped(client, streams))(reader(client, config.maxWait + listeningSlack))
+    yield Connection(sync, readers)
+
+  /**
+   * One group's reader.
+   *
+   * @param client the client to connect with
+   * @param commandTimeout the ceiling for any single command
+   * @param keys what one command on this connection may name
+   * @return the reader; aborts with `Unavailable` when the connection cannot be opened
+   */
+  private def reader(
+    client: Client,
+    commandTimeout: Duration,
+  )(
+    keys: Chunk[String]
+  ): ZIO[Scope, RedisFailure, Reader] =
+    open(client, commandTimeout).map(commands => Reader(commands, keys))
+
+  /**
+   * The streams, grouped by what one command may name together.
+   *
+   * On a cluster that is a slot: a multi-key command across slots is refused, and the hash tags exist
+   * precisely to spread slots. A single server has no slots, so every stream shares one group — one
+   * connection, as it always was.
+   *
+   * @param client the client, which says whether slots apply
+   * @param streams every stream that will be read with a blocking command
+   * @return the groups, each safe for one command
+   */
+  private def grouped(client: Client, streams: Chunk[String]): Chunk[Chunk[String]] =
+    client match
+      case _: RedisClusterClient => Chunk.fromIterable(streams.groupBy(slotOf).values)
+      case _: RedisClient        => Chunk(streams)
+
+  /**
+   * Which slot a stream's name hashes to.
+   *
+   * @param stream the stream's key
+   * @return its slot
+   */
+  private def slotOf(stream: String): Int = SlotHash.getSlot(stream)
 
   /**
    * The client both connections are opened from — the one place the two backends are chosen between.

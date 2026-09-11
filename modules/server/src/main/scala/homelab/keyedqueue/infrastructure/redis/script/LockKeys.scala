@@ -13,7 +13,7 @@ import homelab.keyedqueue.infrastructure.redis.KeyLayout
  * [[homelab.keyedqueue.infrastructure.redis.Namespace]]: locks share one `held` zset, one `tokens` hash,
  * one `fence` counter and one `waiting` index, with the lock's name as a member or field; only `waiters`
  * is a key per lock, and it exists only while someone queues. All carry one hash tag so a script may touch
- * them together, and so every lock lands in one cluster slot. (Bucketing the tag by lock name — as the
+ * them together, and so every lock lands in one cluster slot. (Partitioning the tag by lock name — as the
  * queue does — is deferred; this is the single-slot form.)
  */
 object LockKeys:

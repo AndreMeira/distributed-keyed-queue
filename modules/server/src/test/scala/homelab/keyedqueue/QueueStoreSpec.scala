@@ -27,7 +27,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
 
   private val leaseTtl = 2.seconds
 
-  /** These tests run one bucket, so the tag every key carries is this one's. */
+  /** These tests run one partition, so the tag every key carries is this one's. */
 
   /** A Valkey container for the suite, and two stores over it — a worker's, and a sweeper's. */
   private val substrate: ZLayer[Any, Any, (QueueStore, QueueStore, RedisClusterCommands[String, Array[Byte]])] =
@@ -78,7 +78,8 @@ object QueueStoreSpec extends ZIOSpecDefault:
   private def store(config: QueueConfig): ZIO[Scope, ApplicationError, (QueueStore, Connection)] =
     for
       connection <- Connection.make(
-                      Connection.Config(config.maxWait, config.redisUrl, config.cluster)
+                      Connection.Config(config.maxWait, config.redisUrl, config.cluster),
+                      Namespace.wakeStreams.toChunk,
                     )
       scripts    <- connection.provide(Scripts.make)
       readiness  <- Readiness.make

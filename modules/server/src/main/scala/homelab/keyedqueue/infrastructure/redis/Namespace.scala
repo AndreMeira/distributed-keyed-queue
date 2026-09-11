@@ -6,33 +6,33 @@ import zio.{ Chunk, NonEmptyChunk }
 
 
 /**
- * Every Redis key one queue owns, derived from its name and the bucket it falls in.
+ * Every Redis key one queue owns, derived from its name and the partition it falls in.
  *
- * '''The hash tag is the bucket, not the queue.''' A Lua script may only touch keys in one cluster slot,
+ * '''The hash tag is the partition, not the queue.''' A Lua script may only touch keys in one cluster slot,
  * and the scripts build some of their key names at runtime from `prefix`, so everything a script touches
- * has to hash together — including the stream that announces them. Tagging by bucket puts a queue's keys and the
+ * has to hash together — including the stream that announces them. Tagging by partition puts a queue's keys and the
  * stream that announces them in one slot, exactly as tagging by queue did, while letting many queues share
  * one wake stream.
  *
- * '''Every key carries the schema version''' — `{w:3}:v1:q:jobs:ready` — after the tag, deliberately: a
+ * '''Every key carries the schema version''' — `{p:3}:v1:q:jobs:ready` — after the tag, deliberately: a
  * key's incarnations under different schemas share a slot, so a future migration step can move state
  * between versions atomically in one script. The version makes any schema's leftovers findable by pattern
  * without knowing its shapes (`docs/research/schema-versioned-keys.md`).
  *
  * '''Why share a wake stream at all.''' A listener's `XREAD` names the streams it was issued with, so a
  * per-queue stream means the set of streams grows as queues are served, and a queue added while a read is
- * in flight goes unheard until that read returns. A fixed set of buckets is heard from the first read
+ * in flight goes unheard until that read returns. A fixed set of partitions is heard from the first read
  * onwards, which takes the block off the latency path entirely.
  *
  * @param queue the queue these keys belong to
  */
 final case class Namespace(queue: QueueName):
 
-  /** Which bucket this queue falls in, and therefore which slot and which wake stream it uses. */
-  val bucket: Int = Namespace.bucketOf(queue)
+  /** Which partition this queue falls in, and therefore which slot and which wake stream it uses. */
+  val partition: Int = Namespace.partitionOf(queue)
 
   /** The tag every key shares, and what the scripts rebuild the per-key names from. */
-  val prefix: String = s"${Namespace.tag(bucket)}:${KeyLayout.segment}:q:$queue"
+  val prefix: String = s"${Namespace.tag(partition)}:${KeyLayout.segment}:q:$queue"
 
   /**
    * Keys with work and nobody working them, scored by when each became claimable.
@@ -61,9 +61,9 @@ final case class Namespace(queue: QueueName):
 
   /**
    * The stream this queue announces on: one entry per key made claimable, appended by the same script
-   * that made it so, and shared with every other queue in the bucket.
+   * that made it so, and shared with every other queue in the partition.
    */
-  val wake: String = Namespace.wake(bucket)
+  val wake: String = Namespace.wake(partition)
 
   /** key -> when a failed message may be retried. */
   val delayed: String = s"$prefix:delayed"
@@ -107,45 +107,45 @@ final case class Namespace(queue: QueueName):
 object Namespace:
 
   /**
-   * How many buckets the deployment is divided into — fixed in code, not configured.
+   * How many partitions the deployment is divided into — fixed in code, not configured.
    *
    * The count is a ceiling on spread (at most this many cluster nodes ever hold this service's data) but a
-   * floor on overhead (the listener names every bucket's stream in every read, maintenance iterates every
-   * bucket), so it is one number chosen once: high enough that no realistic cluster hits the ceiling, low
+   * floor on overhead (the listener names every partition's stream in every read, maintenance iterates every
+   * partition), so it is one number chosen once: high enough that no realistic cluster hits the ceiling, low
    * enough that the floor stays invisible. Sixteen node ceiling; sixteen-stream reads.
    *
    * '''Part of the schema.''' Changing it moves queues between tags and strands whatever was written under
    * the old count, so a change here is a change to the shape of stored data — bump
    * `KeyLayout.schemaVersion` with it, and the boot check turns the stranding into a refusal.
    */
-  val buckets: Int = 16
+  val partitions: Int = 16
 
   /**
-   * The hash tag a bucket's keys share.
+   * The hash tag a partition's keys share.
    *
-   * @param bucket the bucket
+   * @param partition the partition
    * @return the tag, braces included, so Redis hashes only what is inside them
    */
-  def tag(bucket: Int): String = s"{w:$bucket}"
+  def tag(partition: Int): String = s"{p:$partition}"
 
   /**
-   * A bucket's wake stream.
+   * A partition's wake stream.
    *
-   * @param bucket the bucket
+   * @param partition the partition
    * @return the stream name
    */
-  def wake(bucket: Int): String = s"${tag(bucket)}:${KeyLayout.segment}:wake"
+  def wake(partition: Int): String = s"${tag(partition)}:${KeyLayout.segment}:wake"
 
   /**
-   * Which bucket a queue falls in.
+   * Which partition a queue falls in.
    *
    * `String`'s hash is specified by the JVM, so every instance agrees on where a queue lives without being
-   * told. `floorMod`, because a negative hash would otherwise produce a negative bucket.
+   * told. `floorMod`, because a negative hash would otherwise produce a negative partition.
    *
    * @param queue the queue
-   * @return the bucket
+   * @return the partition
    */
-  def bucketOf(queue: QueueName): Int = Math.floorMod(queue.toString.hashCode, buckets)
+  def partitionOf(queue: QueueName): Int = Math.floorMod(queue.toString.hashCode, partitions)
 
   /**
    * Every wake stream in the deployment — the fixed set a listener reads.
@@ -153,7 +153,7 @@ object Namespace:
    * Fixed is the point: the set is known before any queue is served, so no read is ever re-issued because
    * a consumer arrived for a queue nobody had asked for yet.
    *
-   * @return the stream names, in bucket order
+   * @return the stream names, in partition order
    */
   val wakeStreams: NonEmptyChunk[String] =
-    NonEmptyChunk.fromChunk(Chunk.fromIterable(0 until buckets).map(wake)).getOrElse(NonEmptyChunk(wake(0)))
+    NonEmptyChunk.fromChunk(Chunk.fromIterable(0 until partitions).map(wake)).getOrElse(NonEmptyChunk(wake(0)))

@@ -53,7 +53,10 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
    */
   private def instance(config: QueueConfig): ZIO[Scope, ApplicationError, LockStore] =
     for
-      connection <- Connection.make(Connection.Config(config.maxWait, config.redisUrl, config.cluster))
+      connection <- Connection.make(
+                      Connection.Config(config.maxWait, config.redisUrl, config.cluster),
+                      Chunk(LockKeys.wake),
+                    )
       broadcast  <- Broadcast.make
       store      <- connection.provide(RedisLockStore.make(Monitor.Noop, connection, broadcast))
       listener   <- WakeListener.make(connection, config.wakeBlock, Map(LockKeys.wake -> broadcast))

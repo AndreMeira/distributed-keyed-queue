@@ -12,10 +12,10 @@ import java.nio.charset.StandardCharsets
 /**
  * The store's record of the schema it was written under, and the boot-time check against it.
  *
- * The shape of everything this code stores — the structures, their encodings, and the bucket constant that
+ * The shape of everything this code stores — the structures, their encodings, and the partition constant that
  * decides every key's hash tag — is a property of the code, while the keys outlive every instance. Running
  * new-shaped code against old-shaped data does not degrade, it fails in ways no error message will
- * explain: a structure read as the wrong type, a key looked for in a bucket it was never written to. This
+ * explain: a structure read as the wrong type, a key looked for in a partition it was never written to. This
  * records the schema version in the store itself, where the data is, and refuses to start an instance
  * whose code disagrees.
  */
@@ -26,8 +26,8 @@ object KeyLayout:
 
   /**
    * The shape of everything this code stores: the queue's and the lock's structures, the encodings written
-   * into them, and [[Namespace.buckets]]. '''Bump it on any change an older instance would misread''' — a
-   * structure changing type, a field changing meaning, an encoding changing form, the bucket constant
+   * into them, and [[Namespace.partitions]]. '''Bump it on any change an older instance would misread''' — a
+   * structure changing type, a field changing meaning, an encoding changing form, the partition constant
    * changing. That is a review discipline, not something the code can detect; an unbumped version makes
    * the check vouch for a compatibility that is not there.
    *

@@ -5,7 +5,6 @@ import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.types.QueueName
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import io.lettuce.core.XReadArgs.StreamOffset
-import io.lettuce.core.cluster.SlotHash
 import io.lettuce.core.{ Limit, Range, XReadArgs }
 import zio.*
 
@@ -15,11 +14,11 @@ import scala.jdk.CollectionConverters.*
 /**
  * A blocking read per slot group of wake streams, routing each entry to the [[Waker]] that waits on it.
  *
- * '''One reader per slot group, because the cluster demands it.''' `XREAD` is multi-stream, but Redis
- * Cluster rejects a multi-key read whose keys span slots — and the bucket tags exist precisely to spread
- * slots. So the streams are grouped by slot, each group read by its own fiber on its own connection; on a
- * single server there are no slots and the groups collapse to one, which is one connection and one fiber —
- * the original design. Which [[Waker]] an entry wakes is decided by the stream it came from (`routes`), so
+ * '''One fiber per reader, because the cluster bounds what one read may name.''' `XREAD` is multi-stream,
+ * but Redis Cluster rejects a multi-key read whose keys span slots — and the partition tags exist precisely to
+ * spread slots. [[Connection]] therefore opens a reader per group of streams that one command may name, and
+ * this runs a fiber on each; on a single server there is one group, so one connection and one fiber — the
+ * original design. Which [[Waker]] an entry wakes is decided by the stream it came from (`routes`), so
  * queue wakes and lock wakes stay logically separate without separate listeners.
  *
  * '''The set of streams is fixed, and that is the point.''' An `XREAD` names the streams it was issued
@@ -30,13 +29,13 @@ import scala.jdk.CollectionConverters.*
  * costs nothing; pub/sub would lose whatever arrived while it was away, and a lost wake is a waiter asleep
  * beside work it asked for.
  *
- * @param readers each group's connection and the streams it reads
+ * @param readers the connections to block on, each with the streams one read may name
  * @param routes wake stream -> the readiness its entries wake
  * @param positions wake stream -> the last id delivered from it; the key set never changes
  * @param block how long one read waits before going round again
  */
 final class WakeListener(
-  readers: Chunk[(Connection.Commands, Chunk[String])],
+  readers: Chunk[Connection.Reader],
   routes: Map[String, Waker],
   positions: Ref[Map[String, String]],
   block: Duration,
@@ -61,11 +60,11 @@ final class WakeListener(
   /**
    * One group's read loop, forever.
    *
-   * @param reader the group's connection and streams
+   * @param reader the connection to block on, and the streams one read may name
    * @return never completes
    */
-  private def loop(reader: (Connection.Commands, Chunk[String])): UIO[Unit] =
-    val (commands, streams) = reader
+  private def loop(reader: Connection.Reader): UIO[Unit] =
+    val Connection.Reader(commands, streams) = reader
     read(commands, streams)
       .flatMap(announce)
       .catchAll: error =>
@@ -161,69 +160,30 @@ object WakeListener:
    * would be a bug: it is re-evaluated by each read, so anything appended between two reads would be stepped
    * over. Resolving once means every read asks for "after the last entry I actually saw".
    *
-   * @param connection where its connections come from
+   * @param connection whose readers this listens on, and whose shared connection resolves the positions
    * @param block how long one read waits before going round again
    * @param routes wake stream -> the waker its entries wake
-   * @return the listener; aborts with `Unavailable` when a stream's position cannot be read or a
-   *         connection cannot be opened
+   * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
    */
-  def make(connection: Connection, block: Duration, routes: Map[String, Waker]): ZIO[Scope, RedisFailure, WakeListener] =
-    val streams = Chunk.fromIterable(routes.keys)
-    for
-      resolved  <- positioned(connection, streams)
-      positions <- Ref.make(resolved)
-      readers   <- ZIO.foreach(grouped(connection.clustered, streams))(reader(connection))
-    yield WakeListener(readers, routes, positions, block)
+  def make(connection: Connection, block: Duration, routes: Map[String, Waker]): IO[RedisFailure, WakeListener] =
+    positioned(connection).map(WakeListener(connection.readers, routes, _, block))
 
   /**
-   * Where each stream stands right now.
+   * Where each stream this listener will read stands right now.
    *
-   * @param connection where to ask
-   * @param streams every wake stream
-   * @return stream -> the id to read after; aborts with `Unavailable` when a position cannot be read
+   * Taken from the readers rather than from `routes`, so what is positioned is exactly what will be read —
+   * there is no third opinion about which streams exist.
+   *
+   * @param connection whose readers name the streams, and whose shared connection answers
+   * @return the positions, ready to read from; aborts with `Unavailable` when one cannot be read
    */
-  private def positioned(connection: Connection, streams: Chunk[String]): IO[RedisFailure, Map[String, String]] =
-    ZIO.foreach(streams)(stream => position(connection, stream).map(stream -> _)).map(_.toMap)
+  private def positioned(connection: Connection): IO[RedisFailure, Ref[Map[String, String]]] =
+    ZIO
+      .foreach(connection.readers.flatMap(_.streams))(stream => position(connection, stream).map(stream -> _))
+      .flatMap(resolved => Ref.make(resolved.toMap))
 
   /**
-   * One group's reader: a connection of its own, and the streams it reads.
-   *
-   * @param connection where the connection comes from
-   * @param group the streams this reader is responsible for
-   * @return the pair; aborts with `Unavailable` when the connection cannot be opened
-   */
-  private def reader(
-    connection: Connection
-  )(
-    group: Chunk[String]
-  ): ZIO[Scope, RedisFailure, (Connection.Commands, Chunk[String])] =
-    connection.listening.map(commands => commands -> group)
-
-  /**
-   * The streams, grouped by what one `XREAD` may name.
-   *
-   * On a cluster that is a slot: a multi-key read across slots is refused, and the bucket tags exist
-   * precisely to spread slots. On a single server there are no slots, so every stream shares one read —
-   * one connection, one fiber.
-   *
-   * @param clustered whether the store is a cluster
-   * @param streams every wake stream
-   * @return the groups, each safe for one read
-   */
-  private def grouped(clustered: Boolean, streams: Chunk[String]): Chunk[Chunk[String]] =
-    if clustered then Chunk.fromIterable(streams.groupBy(slotOf).values)
-    else Chunk(streams)
-
-  /**
-   * Which slot a stream's name hashes to.
-   *
-   * @param stream the stream's key
-   * @return its slot
-   */
-  private def slotOf(stream: String): Int = SlotHash.getSlot(stream)
-
-  /**
-   * A listener over the queue's bucket wake streams, all waking one readiness — the queue's usual wiring.
+   * A listener over the queue's partition wake streams, all waking one readiness — the queue's usual wiring.
    *
    * @param connection where its connections come from
    * @param readiness whose queues to announce

@@ -49,7 +49,7 @@ object KeyLayoutSpec extends ZIOSpecDefault:
     effect: ZIO[Connection.Commands, Any, A]
   ): ZIO[Scope, Any, A] =
     Connection
-      .make(Connection.Config(configured.maxWait, configured.redisUrl, configured.cluster))
+      .make(Connection.Config(configured.maxWait, configured.redisUrl, configured.cluster), Chunk.empty)
       .flatMap(_.provide(effect))
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("KeyLayout")(

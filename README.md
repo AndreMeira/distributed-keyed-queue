@@ -143,11 +143,11 @@ Settings are HOCON with an environment override for every key
 
 Every instance is identical and stateless — the queue's state is entirely in Redis — so scaling out is
 running more of them against the same store. Redis Cluster is supported and tested: every key a queue uses
-carries its **bucket's** hash tag, so a queue's keys and the stream announcing them live in one slot; the
-bucket count is **fixed in code at 16** — nothing to configure and nothing to get permanently wrong — and
+carries its **partition's** hash tag, so a queue's keys and the stream announcing them live in one slot; the
+partition count is **fixed in code at 16** — nothing to configure and nothing to get permanently wrong — and
 the wake listener reads **per slot group**, one connection each, which on a single server collapses to one.
 The e2e suite runs against a real three-node cluster with
-`DKQ_E2E_COMPOSE=docker-compose.e2e-cluster.yml sbt e2e`
+`DKQ_E2E_STACK=cluster sbt e2e`
 ([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
 
 ## Building from source

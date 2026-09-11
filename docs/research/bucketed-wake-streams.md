@@ -13,8 +13,10 @@ tags: [redis, cluster, hash-tags, wake, streams, latency, design]
 > count is not a deployment parameter (`DKQ_WAKE_BUCKETS` is gone) but a constant of the code, sixteen,
 > gated by the schema version like every other property of the stored shape. The reasoning for the
 > constant is in [`../architecture/redis-cluster.md`](../architecture/redis-cluster.md); the versioning it
-> leans on in [`schema-versioned-keys.md`](schema-versioned-keys.md). Read on for why buckets exist at all
-> — that half is current.
+> leans on in [`schema-versioned-keys.md`](schema-versioned-keys.md). The thing this note calls a *bucket*
+> is now called a **partition**, and its hash tag is `{p:N}` rather than `{w:N}` — the word the docs kept
+> reaching for to explain it became the word for it. Read on for why partitions exist at all — that half
+> is current.
 
 
 Built on `broadcast-bell-one-stream`, and measured below. One change to where the hash tag comes from,

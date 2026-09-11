@@ -10,7 +10,7 @@
 -- ARGV[1] key
 -- ARGV[2] id         the message's id, unique among this key's queued messages
 -- ARGV[3] payload
--- ARGV[4] queue      named in the wake entry, because the stream is shared by the whole bucket
+-- ARGV[4] queue      named in the wake entry, because the stream is shared by the whole partition
 -- returns            the key's queue depth after the append
 --
 -- '''A key must be accounted for exactly once.''' It is accounted for when it is in `ready`, or held by a

@@ -13,16 +13,16 @@ each structure has the type it has, and which script touches it.
 
 `Namespace` builds the queue's names and `LockKeys` the lock's. Nothing else in the codebase constructs a
 key name, apart from `claim.lua`, `sweep.lua` and the lock's `trim.lua`, which rebuild per-key ones at
-runtime — see [Cluster](#one-bucket-one-slot).
+runtime — see [Cluster](#one-partition-one-slot).
 
 ## The layout
 
-Everything a queue owns is prefixed `{w:<bucket>}:v1:q:<queue>`, where the bucket is
-`hash(queue) % 16` (the bucket count is a constant of the code) and decides which cluster slot the queue
+Everything a queue owns is prefixed `{p:<partition>}:v1:q:<queue>`, where the partition is
+`hash(queue) % 16` (the partition count is a constant of the code) and decides which cluster slot the queue
 lives in, and `v1` is the schema version every key carries
 ([`../research/schema-versioned-keys.md`](../research/schema-versioned-keys.md)). Six structures belong to
-the queue and three to a key inside it; the seventh, `wake`, belongs to the bucket and is shared by every
-queue in it. `{Q}` below is one queue's prefix, `{W}` its bucket's (version included in both):
+the queue and three to a key inside it; the seventh, `wake`, belongs to the partition and is shared by every
+queue in it. `{Q}` below is one queue's prefix, `{W}` its partition's (version included in both):
 
 | key | type | maps | written by |
 |---|---|---|---|
@@ -74,12 +74,12 @@ climbs on redelivery, which is what makes a poison message visible.
 **`claimed` and `delayed` are sorted sets** because both are swept by "everything due before now", which is
 `ZRANGEBYSCORE` — the operation they exist to serve.
 
-**`wake` is a stream, and there is one per bucket.** A stream rather than pub/sub because a reader that
+**`wake` is a stream, and there is one per partition.** A stream rather than pub/sub because a reader that
 reconnects resumes from the id it holds, where a subscriber would simply have missed whatever arrived while
-it was away — and a missed wake is a consumer asleep beside claimable work. Tagged by bucket rather than by
-queue because a script may not touch two cluster slots: sharing the *bucket's* hash tag with the keys it
+it was away — and a missed wake is a consumer asleep beside claimable work. Tagged by partition rather than by
+queue because a script may not touch two cluster slots: sharing the *partition's* hash tag with the keys it
 announces is what lets the entry be appended *in the same call* that made the key claimable, so no crash can
-land between the two. Shared by every queue in the bucket because a listener's `XREAD` names the streams it
+land between the two. Shared by every queue in the partition because a listener's `XREAD` names the streams it
 was issued with — a stream per queue means a set that grows as queues are served, and a queue asked for
 while a read is in flight goes unheard until that read returns.
 
@@ -87,7 +87,7 @@ Entries are trimmed with `MAXLEN ~ 1000` on every append and carry two fields: `
 the entry to the right waiting consumers now that the stream name no longer says, and `key`, which is for a
 human reading `XRANGE` — a consumer claims whatever is at the head rather than the key it was told about.
 
-The trim is a budget shared by the bucket, and it is denominated in entries rather than time: at a few
+The trim is a budget shared by the partition, and it is denominated in entries rather than time: at a few
 thousand appends a second, a thousand entries is a fraction of a second of history. That only matters to a
 listener that is *away* — one reading continuously is a handful of entries behind — and a listener that
 reconnects announces every local queue before it resumes, precisely because `XREAD` cannot report having been
@@ -145,9 +145,9 @@ consumers claim it — the fence stops the loser corrupting anything, but it wor
 There used to be a third, draining the holding list of a connection that died mid-claim. With the claim in
 one script there is no such list and no such moment: **the lease is the only thing that expires.**
 
-## One bucket, one slot
+## One partition, one slot
 
-Every name above carries its bucket's `{w:<bucket>}` hash tag, so a queue's keys — and the wake stream that
+Every name above carries its partition's `{p:<partition>}` hash tag, so a queue's keys — and the wake stream that
 announces them — hash to one cluster slot and a script may touch them all. Only the braces are hashed, so
 the `v1` that follows the tag names the schema without moving anything between slots. `claim.lua` and `sweep.lua`
 build `msgs:<key>`, `payloads:<key>` and `owned:<key>` at runtime from `prefix` rather than receiving them
@@ -156,17 +156,17 @@ does not know which key it has until it pops one. That is why both take `prefix`
 
 The same rule is what decides where `wake` lives: a stream tagged differently from the keys it announces
 would be a different slot, so the append could not share a script with the push that made the key claimable.
-Tagging both by bucket is what keeps them together.
+Tagging both by partition is what keeps them together.
 
-The consequence is that **a bucket lives on one node**: sharding spreads buckets, never one queue and never
-one bucket. With sixteen buckets fixed in code, a single node simply holds them all, and a cluster spreads
+The consequence is that **a partition lives on one node**: sharding spreads partitions, never one queue and never
+one partition. With sixteen partitions fixed in code, a single node simply holds them all, and a cluster spreads
 them. See [`redis-cluster.md`](redis-cluster.md).
 
 ## The lock's structures
 
 The lock API shares the store but none of the queue's structures. Everything it owns is prefixed
 `{dkq:locks}:v1` — one hash tag for every lock, so one slot, which is what lets each script touch all of
-them atomically (bucketing the locks is deferred; see [`redis-cluster.md`](redis-cluster.md)). `{L}` below
+them atomically (partitioning the locks is deferred; see [`redis-cluster.md`](redis-cluster.md)). `{L}` below
 is that prefix:
 
 | key | type | maps | written by |

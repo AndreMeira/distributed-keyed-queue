@@ -8,9 +8,11 @@ tags: [redis, lettuce, connections, threads, zio, latency, measurement]
 
 # Connections and threads
 
-Two connections on a single server — the shared one, and the listener's; on a cluster the listener opens
-one per slot group instead, since a blocked read occupies its connection whole. A synchronous client, and
-`ZIO.attemptBlocking` around every call. All three look like
+Two connections on a single server — the shared one, and the reader the listener blocks on; on a cluster,
+one reader per slot group instead, since a blocked read occupies its connection whole and a cluster refuses
+one command spanning slots. All of them are opened by `Connection.make` at startup, so the count is fixed
+before anything serves. A synchronous client, and `ZIO.attemptBlocking` around every call. All three look
+like
 things to apologise for, and this page is the measurement that says they are not.
 
 ## The model
