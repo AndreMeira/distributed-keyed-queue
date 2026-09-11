@@ -1,12 +1,21 @@
 ---
 title: "Bucketed hash tags: a wake stream per bucket, not per queue"
 type: research
-status: current
-updated: 2026-09-04
+status: superseded
+updated: 2026-09-11
 tags: [redis, cluster, hash-tags, wake, streams, latency, design]
 ---
 
 # Bucketed hash tags: a wake stream per bucket, not per queue
+
+> **Superseded — in one respect.** The bucketed layout this note argues for — hash tags per bucket, a wake
+> stream per bucket shared by its queues — is exactly what runs. What no longer exists is the knob: the
+> count is not a deployment parameter (`DKQ_WAKE_BUCKETS` is gone) but a constant of the code, sixteen,
+> gated by the schema version like every other property of the stored shape. The reasoning for the
+> constant is in [`../architecture/redis-cluster.md`](../architecture/redis-cluster.md); the versioning it
+> leans on in [`schema-versioned-keys.md`](schema-versioned-keys.md). Read on for why buckets exist at all
+> — that half is current.
+
 
 Built on `broadcast-bell-one-stream`, and measured below. One change to where the hash tag comes from,
 which makes the listener's subscription set fixed instead of growing — and with it takes `DKQ_WAKE_BLOCK`
