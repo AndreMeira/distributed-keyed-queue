@@ -79,4 +79,23 @@ object KeyLayoutSpec extends ZIOSpecDefault:
         original <- boot(conf)(KeyLayout.verify(conf)).exit
       yield assertTrue(accepted.isSuccess, original.isFailure)
     },
+    test("accept verifies the drain: any key beyond the markers refuses it, an emptied store permits it") {
+      val plant  = Connection.use: redis =>
+        ZIO.attemptBlocking(redis.set("{q:0}:ready", "left-behind".getBytes)).unit
+      val uproot = Connection.use: redis =>
+        ZIO.attemptBlocking(redis.del("{q:0}:ready")).unit
+      for
+        conf    <- ZIO.service[QueueConfig]
+        _       <- boot(conf)(plant)
+        refused <- boot(conf)(KeyLayout.accept(conf)).exit
+        _       <- boot(conf)(uproot)
+        emptied <- boot(conf)(KeyLayout.accept(conf)).exit
+      yield assertTrue(
+        refused.causeOption.flatMap(_.failureOption).exists {
+          case Misconfigured(reason) => reason.contains("drained")
+          case _                     => false
+        },
+        emptied.isSuccess,
+      )
+    },
   ).provideSomeShared[Scope](substrate) @@ TestAspect.sequential @@ TestAspect.timeout(3.minutes)

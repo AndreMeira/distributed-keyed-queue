@@ -49,17 +49,70 @@ object KeyLayout:
   /**
    * Overwrite the store's record with this instance's layout — the `layout accept` run mode.
    *
-   * The deliberate half of the ceremony the boot check enforces. It must only run against a drained store:
-   * every key written under the old layout stays where it was, so accepting over live state is exactly the
-   * breakage the check exists to prevent.
+   * The deliberate half of the ceremony the boot check enforces, and it '''verifies the drain it
+   * requires''': any key beyond the markers themselves means state written under the old layout, so
+   * accepting over it is refused rather than trusted — recording a new layout over live keys is exactly
+   * the breakage the boot check exists to prevent, and this mode must not be the official way to cause it.
+   * What it cannot see is instances: it must run with none attached, since a running instance re-checks
+   * nothing after boot.
    *
    * @param config where this instance's bucket count comes from
-   * @return noop; aborts with `RedisFailure` when the store cannot be reached
+   * @return noop; aborts with `Misconfigured` when the store still holds keys, and with `RedisFailure`
+   *         when it cannot be reached
    */
   def accept(config: QueueConfig): ZIO[Connection.Commands, ApplicationError, Unit] =
-    record(queueBuckets, config.wakeBuckets)
-      *> record(lockBuckets, lockBucketCount)
-      *> ZIO.logInfo(s"layout accepted: wake-buckets=${config.wakeBuckets}, lock buckets=$lockBucketCount")
+    for
+      _        <- drained
+      previous <- ZIO.foreach(Chunk(queueBuckets, lockBuckets))(recorded)
+      _        <- record(queueBuckets, config.wakeBuckets)
+      _        <- record(lockBuckets, lockBucketCount)
+      _        <- ZIO.logInfo(
+                    s"layout accepted: wake-buckets ${previous(0).getOrElse("unset")} -> ${config.wakeBuckets}, " +
+                      s"lock buckets ${previous(1).getOrElse("unset")} -> $lockBucketCount. " +
+                      "Start instances only now: a running instance checks its layout at boot and never again."
+                  )
+    yield ()
+
+  /**
+   * Refuse to proceed while the store holds anything beyond the layout markers.
+   *
+   * `DBSIZE` rather than a pattern scan, because the store is this service's own — one DKQ per service,
+   * like a database — so '''any''' unaccounted key is state the ceremony required to be gone.
+   *
+   * @return noop; aborts with `Misconfigured` when other keys exist
+   */
+  private def drained: ZIO[Connection.Commands, ApplicationError, Unit] =
+    Connection.use: redis =>
+      ZIO
+        .attemptBlocking {
+          val keys    = redis.dbsize()
+          val markers = Chunk(queueBuckets, lockBuckets).count(key => redis.exists(key) > 0)
+          keys - markers
+        }
+        .mapError(error => RedisFailure.Unavailable(error.getMessage))
+        .flatMap: others =>
+          ZIO
+            .fail(
+              Misconfigured(
+                s"the store holds $others key(s) beyond the layout markers, so it has not been drained. " +
+                  "Accepting a layout over existing state strands it under the old one. Drain the store " +
+                  "(no queued work, no outstanding receipts or holds) or flush it, then run 'layout accept' again."
+              )
+            )
+            .when(others > 0)
+            .unit
+
+  /**
+   * What one marker currently records.
+   *
+   * @param key the marker
+   * @return its text, absent when it was never written
+   */
+  private def recorded(key: String): ZIO[Connection.Commands, RedisFailure, Option[String]] =
+    Connection.use: redis =>
+      ZIO
+        .attemptBlocking(Option(redis.get(key)).map(bytes => String(bytes, StandardCharsets.UTF_8)))
+        .mapError(error => RedisFailure.Unavailable(error.getMessage))
 
   /**
    * Claim one marker, or compare against whoever claimed it first.
@@ -74,14 +127,12 @@ object KeyLayout:
       case None                                              => ZIO.unit // first boot: this instance's layout is now the store's
       case Some(recorded) if recorded == configured.toString => ZIO.unit
       case Some(recorded)                                    =>
-        ZIO.fail(
-          Misconfigured(
+        ZIO.fail:
+          Misconfigured:
             s"this store was written with $setting = $recorded, but this instance is configured with " +
               s"$configured. Changing it strands every key written under the old layout and breaks mutual " +
               s"exclusion on live state. If the store has been drained (or flushed) on purpose, run the " +
               s"'layout accept' mode once to record the new layout."
-          )
-        )
 
   /**
    * `SET NX` the marker, reading what is there when the claim loses.

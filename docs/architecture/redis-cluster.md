@@ -52,8 +52,10 @@ compares and **refuses to start on a mismatch**, before anything is served. The 
 catches are both deployment-shaped: a rolling deploy of a changed count would otherwise run both layouts
 against the same data at once, and even a clean stop-change-start strands live state — clients still hold
 receipts against old-tag keys while the new layout grants fresh ones. Changing the count on purpose is a
-ceremony: drain the store (no queued work, no outstanding receipts or holds) or flush it, then run the
-`layout accept` mode once to record the new counts. The lock's count is recorded too (fixed at one until
+ceremony, in this order: **stop every instance**, drain the store (no queued work, no outstanding receipts
+or holds) or flush it, run the `layout accept` mode once, then start instances. `accept` verifies the
+drain itself — it refuses while any key beyond the markers exists — but it cannot see instances, and a
+running one checks its layout at boot and never again. The lock's count is recorded too (fixed at one until
 lock bucketing exists), so the check is already in place when it becomes configurable.
 
 Two consequences are easy to undo by accident:
