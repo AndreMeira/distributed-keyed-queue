@@ -58,23 +58,28 @@ object KeyLayoutSpec extends ZIOSpecDefault:
         again <- boot(conf)(KeyLayout.verify).exit
       yield assertTrue(again.isSuccess)
     },
-    test("accept verifies the drain: any key beyond the marker refuses it, an emptied store permits it") {
+    test("accept verifies the drain of dkq's own keys, and ignores the store's other tenants") {
+      // The store may be a Redis that already existed: a leftover dkq key refuses the accept naming it,
+      // while a foreign key is none of dkq's business — the accept succeeds right past it.
       val plant  = Connection.use: redis =>
-        ZIO.attemptBlocking(redis.set("{q:0}:ready", "left-behind".getBytes)).unit
+        ZIO.attemptBlocking {
+          redis.set("{w:3}:q:jobs:ready", "left-behind".getBytes)
+          redis.set("other-app:cache", "not-ours".getBytes)
+        }.unit
       val uproot = Connection.use: redis =>
-        ZIO.attemptBlocking(redis.del("{q:0}:ready")).unit
+        ZIO.attemptBlocking(redis.del("{w:3}:q:jobs:ready")).unit
       for
         conf    <- ZIO.service[QueueConfig]
         _       <- boot(conf)(plant)
         refused <- boot(conf)(KeyLayout.accept).exit
         _       <- boot(conf)(uproot)
-        emptied <- boot(conf)(KeyLayout.accept).exit
+        shared  <- boot(conf)(KeyLayout.accept).exit
       yield assertTrue(
         refused.causeOption.flatMap(_.failureOption).exists {
-          case Misconfigured(reason) => reason.contains("drained")
+          case Misconfigured(reason) => reason.contains("drained") && reason.contains("{w:3}:q:jobs:ready")
           case _                     => false
         },
-        emptied.isSuccess,
+        shared.isSuccess, // the foreign key is still in the store
       )
     },
     test("a schema the code does not expect refuses the boot, and accept records the code's own") {

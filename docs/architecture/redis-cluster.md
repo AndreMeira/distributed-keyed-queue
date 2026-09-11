@@ -55,10 +55,12 @@ boots cannot both write); every later boot compares and **refuses to start on a 
 is served — a rolling deploy of incompatible code crash-loops loudly instead of misreading live structures.
 The version is bumped in code whenever an older instance would misread the store: a structure changing
 type, an encoding changing form, the bucket constant changing. Gate-only, never migrated: the remedy is a
-ceremony, in this order — **stop every instance**, drain the store (no queued work, no outstanding receipts
-or holds) or flush it, run the `layout accept` mode once, then start instances. `accept` verifies the drain
-itself — it refuses while any key beyond the marker exists — but it cannot see instances, and a running one
-checks its schema at boot and never again. What no store-side marker can cover is client-held state such as
+ceremony, in this order — **stop every instance**, drain dkq (no queued work, no outstanding receipts or
+holds; delete dkq's keys, or flush the store **only if it is dkq's alone** — an existing shared Redis is a
+supported home, and its other tenants are not dkq's to flush), run the `layout accept` mode once, then
+start instances. `accept` verifies the drain itself — it refuses while any key under dkq's own prefixes
+exists, and ignores everything else in the store — but it cannot see instances, and a running one checks
+its schema at boot and never again. What no store-side marker can cover is client-held state such as
 receipts: a receipt-format change breaks holds the store never sees.
 
 Two consequences are easy to undo by accident:

@@ -16,8 +16,8 @@ import homelab.keyedqueue.domain.types.LockName
  */
 object LockKeys:
 
-  /** The hash tag every lock key shares. */
-  private val tag: String = "{dkq:locks}"
+  /** The hash tag every lock key shares — and how anything scanning for the lock's footprint names it. */
+  val tag: String = "{dkq:locks}"
 
   /** Held leases, `name -> deadline`. */
   val held: String = s"$tag:held"

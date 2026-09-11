@@ -44,6 +44,9 @@ and its keys mean something only inside it.
 Sharing one DKQ between two services couples them the way a shared database does: they inherit each other's
 key space, each other's semantics, and each other's outages.
 
+The *Redis* underneath is a different matter: "we already have a Redis running" is a supported way to
+deploy. DKQ keeps to its own key prefixes and never counts, scans, or flushes anything outside them.
+
 ## What it guarantees
 
 - **Per-key exclusivity.** At most one consumer is authorised to work a key at a time, across every

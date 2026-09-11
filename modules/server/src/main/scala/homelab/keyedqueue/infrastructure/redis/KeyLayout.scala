@@ -3,7 +3,8 @@ package homelab.keyedqueue.infrastructure.redis
 
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.infrastructure.configuration.Misconfigured
-import io.lettuce.core.SetArgs
+import homelab.keyedqueue.infrastructure.redis.script.LockKeys
+import io.lettuce.core.{ ScanArgs, ScanCursor, SetArgs }
 import zio.*
 
 import java.nio.charset.StandardCharsets
@@ -62,9 +63,10 @@ object KeyLayout:
    * Overwrite the store's record with this code's schema — the `layout accept` run mode.
    *
    * The deliberate half of the ceremony the boot check enforces, and it '''verifies the drain it
-   * requires''': any key beyond the marker itself means state written under the old schema, so accepting
-   * over it is refused rather than trusted. What it cannot see is instances: it must run with none
-   * attached, since a running instance re-checks nothing after boot.
+   * requires''': any key under dkq's own prefixes means state written under the old schema, so accepting
+   * over it is refused rather than trusted. Keys outside those prefixes are ignored — a Redis that already
+   * existed is a supported home, and its other tenants are none of dkq's business. What accept cannot see
+   * is instances: it must run with none attached, since a running instance re-checks nothing after boot.
    *
    * @return noop; aborts with `Misconfigured` when the store still holds keys, and with `RedisFailure`
    *         when it cannot be reached
@@ -80,37 +82,70 @@ object KeyLayout:
                   )
     yield ()
 
+  /** The prefixes dkq's keys live under: every queue bucket's tag, and the lock's. */
+  private val footprint: Chunk[String] =
+    Chunk.fromIterable(0 until Namespace.buckets).map(bucket => s"${Namespace.tag(bucket)}*")
+      :+ s"${LockKeys.tag}*"
+
+  /** The most leftover keys a refusal names, so the message stays a message. */
+  private val examples: Int = 5
+
   /**
-   * Refuse to proceed while the store holds anything beyond the marker.
+   * Refuse to proceed while the store holds any key under dkq's own prefixes.
    *
-   * `DBSIZE` rather than a pattern scan, because the store is this service's own — one DKQ per service,
-   * like a database — so '''any''' unaccounted key is state the ceremony required to be gone.
+   * A scan over [[footprint]], not `DBSIZE`: the store may be shared — "we already have a Redis running"
+   * is a supported way to deploy — so only dkq's keys are evidence of an undrained dkq, and everything
+   * else in the store is deliberately not looked at.
    *
-   * @return noop; aborts with `Misconfigured` when other keys exist
+   * @return noop; aborts with `Misconfigured` naming some of the keys when any exist
    */
   private def drained: ZIO[Connection.Commands, ApplicationError, Unit] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking {
-          // EXISTS counts named keys that are present (0 or 1 here) — the marker's value is not read.
-          // The marker itself is the one key a drained store may legitimately hold, so it is excluded
-          // from the count of leftover state.
-          val keys          = redis.dbsize()
-          val markerPresent = redis.exists(schema)
-          keys - markerPresent
-        }
+        .attemptBlocking(leftovers(redis))
         .mapError(error => RedisFailure.Unavailable(error.getMessage))
-        .flatMap: others =>
+        .flatMap: found =>
           ZIO
             .fail(
               Misconfigured(
-                s"the store holds $others key(s) beyond the layout marker, so it has not been drained. " +
-                  "Accepting a schema over existing state strands it under the old one. Drain the store " +
-                  "(no queued work, no outstanding receipts or holds) or flush it, then run 'layout accept' again."
+                s"the store still holds dkq keys (${found.mkString(", ")}${if found.size >= examples then ", …" else ""}), " +
+                  "so dkq has not been drained. Accepting a schema over existing state strands it under " +
+                  "the old one. Delete dkq's keys — or flush the store if it is dkq's alone — then run " +
+                  "'layout accept' again."
               )
             )
-            .when(others > 0)
+            .when(found.nonEmpty)
             .unit
+
+  /**
+   * Some keys under dkq's prefixes, up to [[examples]] of them.
+   *
+   * Any hit is grounds to refuse; the rest are collected only to make the refusal concrete. Each prefix is
+   * scanned to its end or until enough examples are in hand, whichever comes first.
+   *
+   * @param redis the connection
+   * @return the keys found, possibly fewer than exist
+   */
+  private def leftovers(redis: Connection.Commands): Chunk[String] =
+    footprint.foldLeft(Chunk.empty[String]): (found, pattern) =>
+      if found.size >= examples then found else found ++ matching(redis, pattern, examples - found.size)
+
+  /**
+   * Keys matching one pattern, up to a cap.
+   *
+   * @param redis the connection
+   * @param pattern the prefix pattern to scan for
+   * @param cap the most keys to bring back
+   * @return the keys found under the pattern, at most `cap`
+   */
+  private def matching(redis: Connection.Commands, pattern: String, cap: Int): Chunk[String] =
+    val args                 = ScanArgs.Builder.matches(pattern).limit(500)
+    var cursor               = redis.scan(args)
+    var found: Chunk[String] = Chunk.fromIterable(cursor.getKeys.toArray.map(_.toString))
+    while !cursor.isFinished && found.size < cap do
+      cursor = redis.scan(ScanCursor.of(cursor.getCursor), args)
+      found = found ++ Chunk.fromIterable(cursor.getKeys.toArray.map(_.toString))
+    found.take(cap)
 
   /**
    * `SET NX` the marker, reading what is there when the claim loses.
