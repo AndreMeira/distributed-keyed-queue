@@ -66,19 +66,22 @@ object KeyLayout:
       queueBuckets,
       "wake-buckets",
       config.wakeBuckets,
-      "Changing it strands every key written under the old layout and breaks mutual exclusion on live state.",
+      "Changing it strands every key written under the old layout " +
+        "and breaks mutual exclusion on live state.",
     )
       *> check(
         lockBuckets,
         "the lock's bucket count",
         lockBucketCount,
-        "Changing it strands every key written under the old layout and breaks mutual exclusion on live state.",
+        "Changing it strands every key written under the old layout " +
+          "and breaks mutual exclusion on live state.",
       )
       *> check(
         schema,
         "schema version",
         schemaVersion,
-        "The stored structures have a different shape than this code expects, and running against them fails in ways no error message will explain.",
+        "The stored structures have a different shape than this code expects, " +
+          "and running against them fails in ways no error message will explain.",
       )
 
   /**
