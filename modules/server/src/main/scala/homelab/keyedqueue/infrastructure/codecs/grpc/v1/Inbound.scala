@@ -96,3 +96,15 @@ object Inbound:
   extension (request: v1.HeartbeatRequest)
     /** @return the domain request */
     def toDomain: partial.Result[HeartbeatRequest] = request.transformIntoPartial[HeartbeatRequest]
+
+  extension (request: v1.AcquireRequest)
+    /** @return the domain request; total, because validation happens in the use case, not the codec */
+    def toDomain: AcquireRequest = request.transformInto[AcquireRequest]
+
+  extension (request: v1.ReleaseRequest)
+    /** @return the domain request */
+    def toDomain: ReleaseRequest = request.transformInto[ReleaseRequest]
+
+  extension (request: v1.RefreshRequest)
+    /** @return the domain request */
+    def toDomain: RefreshRequest = request.transformInto[RefreshRequest]

@@ -12,6 +12,8 @@ What is specific to this repo:
   claims "this is how it works" while the design is still moving is worse than no page. So far:
   - [`architecture/guarantees.md`](architecture/guarantees.md) — what the service promises, in terms a
     caller can design against and a test can assert. The page to read first.
+  - [`architecture/lock-guarantees.md`](architecture/lock-guarantees.md) — the same, for the lock API:
+    exclusion, the fence, fairness, and what a holder owes.
   - [`architecture/redis-data-structures.md`](architecture/redis-data-structures.md) — what is kept in
     Redis, and what each structure is for.
   - [`architecture/redis-cluster.md`](architecture/redis-cluster.md) — the key layout was built for cluster

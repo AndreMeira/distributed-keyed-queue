@@ -12,7 +12,7 @@ import zio.*
 
 
 /**
- * Append a message and make its key claimable — `lua/enqueue.lua`.
+ * Append a message and make its key claimable — `lua/queue/enqueue.lua`.
  *
  * The conditional push inside the script is what keeps a key in `ready` at most once, which is why this is
  * one call and not a read followed by a write.
@@ -50,7 +50,7 @@ final class EnqueueScript(ref: LuaScript.Sha):
    * @param ns the queue to append in
    * @param message the message; the key it carries decides where it lands
    * @return `ready`, `claimed`, `delayed`, `msgs`, `payloads`, `wake`, `sequence`, in the order
-   *         `lua/enqueue.lua` reads them
+   *         `lua/queue/enqueue.lua` reads them
    */
   private def keys(ns: Namespace, message: Message): Array[String] =
     Array(ns.ready, ns.claimed, ns.delayed, ns.msgs(message.key), ns.payloads(message.key), ns.wake, ns.sequence)
@@ -59,7 +59,7 @@ final class EnqueueScript(ref: LuaScript.Sha):
    * The key to append under, and the message as it will be stored.
    *
    * @param message the message to serialise
-   * @return `key`, `id`, `payload`, in the order `lua/enqueue.lua` reads them
+   * @return `key`, `id`, `payload`, in the order `lua/queue/enqueue.lua` reads them
    */
   private def args(ns: Namespace, message: Message): Array[Array[Byte]] =
     Array(
@@ -82,9 +82,9 @@ final class EnqueueScript(ref: LuaScript.Sha):
 object EnqueueScript:
 
   /**
-   * Register `lua/enqueue.lua` and hold the digest it was given.
+   * Register `lua/queue/enqueue.lua` and hold the digest it was given.
    *
    * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
   def make: ZIO[Connection.Commands, RedisFailure, EnqueueScript] =
-    LuaScript.register("lua/enqueue.lua").map(EnqueueScript(_))
+    LuaScript.register("lua/queue/enqueue.lua").map(EnqueueScript(_))

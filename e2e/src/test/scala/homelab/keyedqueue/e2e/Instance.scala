@@ -3,13 +3,14 @@ package homelab.keyedqueue.e2e
 
 import com.google.protobuf.ByteString
 import com.google.protobuf.duration.Duration as ProtoDuration
+import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLockClient
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
 import homelab.keyedqueue.v1.*
 import zio.{ Duration, Task }
 
 
 /**
- * One deployed dkq, and the four calls a consumer makes against it.
+ * One deployed dkq, and the calls a consumer makes against it — the queue's four and the lock's three.
  *
  * Named after its compose service, so a test that kills an instance and a test that talks to one are naming
  * the same thing. The wrapper exists to keep the assertions readable: what a test is *about* is "enqueue on
@@ -17,9 +18,10 @@ import zio.{ Duration, Task }
  *
  * @param name the compose service name — also what [[Compose.kill]] takes
  * @param address where it answers, as `host:port`
- * @param client the generated stub, over its own channel
+ * @param client the generated queue stub, over its own channel
+ * @param locks the generated lock stub, over its own channel
  */
-final case class Instance(name: String, address: String, client: KeyedQueueClient):
+final case class Instance(name: String, address: String, client: KeyedQueueClient, locks: KeyedLockClient):
 
   /** The host half of [[address]]. */
   def host: String = address.split(":").head
@@ -99,6 +101,36 @@ final case class Instance(name: String, address: String, client: KeyedQueueClien
   def heartbeat(receipts: Seq[String]): Task[HeartbeatResponse] =
     client.heartbeat(HeartbeatRequest(receipts))
 
+  /**
+   * Take a named lock, waiting up to `patience`.
+   *
+   * @param name the lock to take
+   * @param ttl how long the hold survives without a refresh
+   * @param patience how long to wait for a holder to let go
+   * @return the response — `acquired = false` when the wait elapsed; fails when the call does
+   */
+  def acquire(name: String, ttl: Duration, patience: Duration): Task[AcquireResponse] =
+    locks.acquire(AcquireRequest(name, Some(Instance.wire(ttl)), Some(Instance.wire(patience))))
+
+  /**
+   * Free a held lock.
+   *
+   * @param receipt the handle the acquire returned
+   * @return whether it applied — false when the hold had already been revoked; fails when the call does
+   */
+  def release(receipt: String): Task[Boolean] =
+    locks.release(ReleaseRequest(receipt)).map(_.released)
+
+  /**
+   * Push a held lock's lease forward.
+   *
+   * @param receipt the handle the acquire returned
+   * @param ttl how much longer to grant
+   * @return the response — `renewed = false` when the hold has been lost; fails when the call does
+   */
+  def refresh(receipt: String, ttl: Duration): Task[RefreshResponse] =
+    locks.refresh(RefreshRequest(receipt, Some(Instance.wire(ttl))))
+
 
 object Instance:
 
@@ -112,3 +144,11 @@ object Instance:
    * @return the messages, in producer order; empty when nothing was claimed
    */
   def claimed(reply: DequeueResponse): Seq[Delivery] = reply.head.toSeq ++ reply.tail
+
+  /**
+   * A duration as the wire carries it.
+   *
+   * @param duration the duration
+   * @return its proto form
+   */
+  def wire(duration: Duration): ProtoDuration = ProtoDuration(duration.getSeconds, duration.getNano)

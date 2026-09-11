@@ -3,6 +3,7 @@ package homelab.keyedqueue.application.grpc.v1
 
 import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
+import homelab.keyedqueue.domain.service.usecase.v1.SyncLockUseCases
 import homelab.keyedqueue.domain.service.usecase.v1.SyncUseCases
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import io.grpc.ServerBuilder
@@ -28,6 +29,15 @@ object Module:
       QueueService(monitor, useCases)
 
   /**
+   * The lock service, over the lock store.
+   *
+   * @return the layer
+   */
+  val lockService: ZLayer[SyncLockUseCases & Monitor, Nothing, LockService] =
+    ZLayer.fromFunction: (monitor: Monitor, useCases: SyncLockUseCases) =>
+      LockService(monitor, useCases)
+
+  /**
    * The server, started when the layer is built and shut down when the scope closes.
    *
    * Its failure is narrowed to `ApplicationError` so the whole graph fails with one type: a port already taken is
@@ -36,12 +46,12 @@ object Module:
    *
    * @return the layer
    */
-  val server: ZLayer[QueueService & QueueConfig, ApplicationError, Server] =
+  val server: ZLayer[QueueService & LockService & QueueConfig, ApplicationError, Server] =
     ZLayer
       .service[QueueConfig]
       .flatMap: environment =>
         ServerLayer.fromServiceList(
           ServerBuilder.forPort(environment.get[QueueConfig].port),
-          ServiceList.addFromEnvironment[QueueService],
+          ServiceList.addFromEnvironment[QueueService].addFromEnvironment[LockService],
         )
       .mapError(error => StartupFailed(s"the gRPC server did not start: ${error.getMessage}"))

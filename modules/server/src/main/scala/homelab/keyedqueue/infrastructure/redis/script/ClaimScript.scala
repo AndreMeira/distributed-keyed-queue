@@ -12,7 +12,7 @@ import java.time.Instant
 
 
 /**
- * Take the next claimable key and claim a batch of its messages — `lua/claim.lua`.
+ * Take the next claimable key and claim a batch of its messages — `lua/queue/claim.lua`.
  *
  * '''The whole claim, including choosing the key.''' The script pops `ready` itself, so no key is ever out
  * of the queue and unclaimed — and the reply has to name the key, because the caller does not choose it.
@@ -52,7 +52,7 @@ final class ClaimScript(ref: LuaScript.Sha):
    * tag, and so its slot.
    *
    * @param ns the queue to claim from
-   * @return `ready`, `claimed`, `fence`, `attempts`, in the order `lua/claim.lua` reads them
+   * @return `ready`, `claimed`, `fence`, `attempts`, in the order `lua/queue/claim.lua` reads them
    */
   private def keys(ns: Namespace): Array[String] =
     Array(ns.ready, ns.claimed, ns.fence, ns.attempts)
@@ -64,7 +64,7 @@ final class ClaimScript(ref: LuaScript.Sha):
    * @param ns the queue to claim from
    * @param leaseTtl how long the claim survives without a heartbeat
    * @param maxBatch the most messages to take at once
-   * @return `prefix`, `ttl`, `batch`, in the order `lua/claim.lua` reads them
+   * @return `prefix`, `ttl`, `batch`, in the order `lua/queue/claim.lua` reads them
    */
   private def args(ns: Namespace, leaseTtl: Duration, maxBatch: Int): Array[Array[Byte]] =
     Array(
@@ -162,9 +162,9 @@ final class ClaimScript(ref: LuaScript.Sha):
 object ClaimScript:
 
   /**
-   * Register `lua/claim.lua` and hold the digest it was given.
+   * Register `lua/queue/claim.lua` and hold the digest it was given.
    *
    * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
   def make: ZIO[Connection.Commands, RedisFailure, ClaimScript] =
-    LuaScript.register("lua/claim.lua").map(ClaimScript(_))
+    LuaScript.register("lua/queue/claim.lua").map(ClaimScript(_))

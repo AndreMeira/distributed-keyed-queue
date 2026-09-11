@@ -32,7 +32,7 @@ import zio.*
  *
  * @param queues queue → its token buffer, made on first use
  */
-final class Readiness(queues: Ref[Map[QueueName, Queue[Unit]]]):
+final class Readiness(queues: Ref[Map[QueueName, Queue[Unit]]]) extends Waker:
 
   /**
    * Announce that a queue may have work.
@@ -43,7 +43,7 @@ final class Readiness(queues: Ref[Map[QueueName, Queue[Unit]]]):
    * @param queue what became claimable
    * @return noop
    */
-  def ready(queue: QueueName): UIO[Unit] =
+  override def ready(queue: QueueName): UIO[Unit] =
     buffer(queue).flatMap(_.offer(())).unit
 
   /**
@@ -56,7 +56,7 @@ final class Readiness(queues: Ref[Map[QueueName, Queue[Unit]]]):
    *
    * @return noop
    */
-  def readyAll: UIO[Unit] =
+  override def readyAll: UIO[Unit] =
     queues.get.flatMap(current => ZIO.foreachDiscard(current.keys)(ready))
 
   /**

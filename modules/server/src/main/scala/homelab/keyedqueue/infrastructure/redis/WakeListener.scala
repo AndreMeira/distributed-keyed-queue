@@ -12,61 +12,68 @@ import scala.jdk.CollectionConverters.*
 
 
 /**
- * The wake streams: one blocking read across every bucket in the deployment, announcing each queue that had
- * a key become claimable.
+ * One blocking read across every wake stream in the deployment, routing each entry to the [[Waker]]
+ * that waits on it.
+ *
+ * '''One listener, many streams, `XREAD` being multi-stream.''' A single blocking read covers every wake
+ * stream at once and returns the instant any of them has an entry — so the queue's bucket streams and the
+ * lock's wake stream are served by one connection and one fiber. Which [[Waker]] an entry wakes is
+ * decided by the stream it came from (`routes`), so queue wakes and lock wakes stay logically separate
+ * without a second listener or a second reserved connection.
  *
  * '''The set of streams is fixed, and that is the point.''' An `XREAD` names the streams it was issued
- * with, so a per-queue wake stream meant the set grew as queues were served, and a queue asked for while
- * a read was in flight went unheard until that read returned — `block` on the latency path of every
- * queue's first consumer. Buckets are known before any queue is served, so every wake stream is in every
- * read from the first one: a queue nobody has ever asked for is heard the instant something is appended
- * for it.
+ * with, so the set is resolved once at startup — a queue or lock nobody has asked for yet is still heard
+ * the instant something is appended for it, with no read re-issued.
  *
  * '''Why a stream and not pub/sub.''' A reader that reconnects resumes from the id it holds, so a blip
- * costs nothing; pub/sub would lose whatever arrived while it was away, and a lost wake is a consumer
- * asleep beside work it asked for.
+ * costs nothing; pub/sub would lose whatever arrived while it was away, and a lost wake is a waiter asleep
+ * beside work it asked for.
  *
  * @param connection where the listening connection comes from
- * @param readiness whose queues to announce
- * @param positions wake stream → the last id delivered from it; the key set never changes
+ * @param routes wake stream -> the readiness its entries wake
+ * @param positions wake stream -> the last id delivered from it; the key set never changes
  * @param block how long one read waits before going round again
  */
 final class WakeListener(
   connection: Connection,
-  readiness: Readiness,
+  routes: Map[String, Waker],
   positions: Ref[Map[String, String]],
   block: Duration,
 ):
 
   /**
-   * Read the wake streams forever, announcing the queues named in what arrives.
+   * Read the wake streams forever, routing each entry to its readiness.
    *
    * '''Supervised, because a dead listener is silent.''' A failed read is retried rather than killing the
-   * fiber: a stopped listener leaves every consumer here waiting out its patience beside claimable work.
+   * fiber: a stopped listener leaves every waiter here parked beside work that is ready.
    *
-   * '''A failure announces everything before retrying.''' Entries can be trimmed while a reader is away and
-   * `XREAD` does not report stepping over any, so after a failure the safe assumption is that something was
-   * missed. The backoff is short: it is the one interval that is a consumer's latency.
+   * '''A failure re-announces everything before retrying.''' Entries can be trimmed while a reader is away
+   * and `XREAD` does not report stepping over any, so after a failure the safe assumption is that something
+   * was missed — every readiness served is told to re-look. The backoff is short: it is the one interval a
+   * waiter actually waits on.
    *
    * @return never completes
    */
   def run: UIO[Nothing] =
-    (read.flatMap(announce) *> ZIO.unit)
-      .catchAll(_ => readiness.readyAll *> ZIO.sleep(WakeListener.retryBackoff))
+    read
+      .flatMap(announce)
+      .catchAll(_ => announceAll *> ZIO.sleep(WakeListener.retryBackoff))
       .forever *> ZIO.never
 
   /**
-   * One `XREAD` across every wake stream, resuming from where each was left.
+   * One `XREAD` across every wake stream, resuming from where each was left, paired with the readiness each
+   * entry belongs to.
    *
-   * @return the queues named by the entries that arrived, one occurrence per entry
+   * @return the (readiness, name) wakes the entries carry, one per entry
    */
-  private def read: IO[RedisFailure, Chunk[QueueName]] =
+  private def read: IO[RedisFailure, Chunk[(Waker, QueueName)]] =
     positions.get.flatMap: current =>
       val offsets = current.map((stream, id) => StreamOffset.from(stream, id)).toArray
       connection
         .listening(entries(offsets))
         .flatMap: delivered =>
-          val woken = Chunk.fromIterable(delivered.flatMap(WakeListener.queueOf))
+          val woken = Chunk.fromIterable(delivered.flatMap: entry =>
+            routes.get(entry.getStream).zip(WakeListener.nameOf(entry)))
           val ahead = delivered.map(entry => entry.getStream -> entry.getId).toMap
           positions.update(_.map((stream, id) => stream -> ahead.getOrElse(stream, id))).as(woken)
 
@@ -74,7 +81,7 @@ final class WakeListener(
    * The raw read.
    *
    * @param offsets what to read, and from where
-   * @return the entries that arrived, oldest first; aborts with `StoreUnavailable` when the read fails
+   * @return the entries that arrived, oldest first; aborts with `Unavailable` when the read fails
    */
   private def entries(
     offsets: Array[StreamOffset[String]]
@@ -85,77 +92,84 @@ final class WakeListener(
         .mapBoth(LuaScript.failure, reply => Option(reply).map(_.asScala.toList).getOrElse(Nil))
 
   /**
-   * Announce each named queue, once.
+   * Deliver each wake to its readiness, once.
    *
-   * @param woken the queues named by this batch, one occurrence per entry
+   * @param woken the (readiness, name) pairs this batch carried
    * @return noop
    */
-  private def announce(woken: Chunk[QueueName]): UIO[Unit] = ZIO.foreachDiscard(woken.distinct)(readiness.ready)
+  private def announce(woken: Chunk[(Waker, QueueName)]): UIO[Unit] =
+    ZIO.foreachDiscard(woken.distinct)((waker, name) => waker.ready(name))
+
+  /**
+   * Tell every readiness this listener serves to re-look — the failure path, where a wake may have been
+   * missed and the safe move is to assume so.
+   *
+   * @return noop
+   */
+  private def announceAll: UIO[Unit] =
+    ZIO.foreachDiscard(routes.values.toSet)(_.readyAll)
 
 
 object WakeListener:
 
   /**
-   * The most entries one read may return.
-   *
-   * A cap on a single reply, not a batch to fill: a read returns as soon as one entry exists, so a high
-   * count costs nothing in latency. What it buys is catch-up — a reader that fell behind drains in one
-   * round trip rather than twenty — and after [[WakeListener.announce]] deduplicates, the work a batch causes
-   * is proportional to the queues in it rather than to its size.
+   * The most entries one read may return — a cap on a single reply, not a batch to fill. A high count
+   * costs nothing in latency (a read returns as soon as one entry exists) and buys catch-up for a reader
+   * that fell behind.
    */
   private val count: Long = 1000
 
-  /**
-   * How long to wait after a failed read.
-   *
-   * Separate from the block, and much shorter: this is the one interval a consumer actually waits on, since
-   * a listener that is retrying is a listener hearing nothing.
-   */
+  /** How long to wait after a failed read; short, because a retrying listener is a listener hearing nothing. */
   private val retryBackoff: Duration = 200.millis
 
   /**
-   * Which queue an entry concerns.
-   *
-   * The stream no longer says — a wake stream is shared by every queue in its bucket — so the queue travels
-   * in the entry, written by the script that appended it.
+   * The name an entry names — read from the `queue` field, which both queue and lock entries carry (a lock
+   * release writes the lock name there), so one extractor serves every stream.
    *
    * @param entry one stream entry
-   * @return the queue it names, or `None` when the entry has no `queue` field
+   * @return the name it carries, or `None` when the entry has no `queue` field
    */
-  private def queueOf(entry: io.lettuce.core.StreamMessage[String, Array[Byte]]): Option[QueueName] =
+  private def nameOf(entry: io.lettuce.core.StreamMessage[String, Array[Byte]]): Option[QueueName] =
     Option(entry.getBody)
       .flatMap(body => Option(body.get("queue")))
       .map(bytes => QueueName(String(bytes, "UTF-8")))
 
   /**
-   * A listener over every wake stream in the deployment, each positioned at its end.
+   * A listener over the given wake streams, each positioned at its end, routing entries to their readiness.
    *
-   * '''"From now" is resolved here, to a concrete id.''' Storing the `$` that means "the end of the
-   * stream" would be a bug: it is evaluated by each read, so anything appended between two reads would be
-   * stepped over and never delivered. Resolving once means every read asks for "after the last entry I
-   * actually saw".
+   * '''"From now" is resolved here, to a concrete id.''' Storing the `$` that means "the end of the stream"
+   * would be a bug: it is re-evaluated by each read, so anything appended between two reads would be stepped
+   * over. Resolving once means every read asks for "after the last entry I actually saw".
    *
-   * From now rather than from the beginning, because a wake that arrived before this instance existed
-   * announced work that is either still claimable — and found by the next claim — or already taken.
+   * @param connection where its connections come from
+   * @param block how long one read waits before going round again
+   * @param routes wake stream -> the waker its entries wake
+   * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
+   */
+  def make(connection: Connection, block: Duration, routes: Map[String, Waker]): IO[RedisFailure, WakeListener] =
+    ZIO
+      .foreach(Chunk.fromIterable(routes.keys))(stream => position(connection, stream).map(stream -> _))
+      .flatMap(resolved => Ref.make(resolved.toMap))
+      .map(WakeListener(connection, routes, _, block))
+
+  /**
+   * A listener over the queue's bucket wake streams, all waking one readiness — the queue's usual wiring.
    *
    * @param connection where its connections come from
    * @param readiness whose queues to announce
    * @param buckets how many wake streams the deployment has
    * @param block how long one read waits before going round again
-   * @return the listener; aborts with `StoreUnavailable` when a wake stream's position cannot be read
+   * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
    */
   def make(connection: Connection, readiness: Readiness, buckets: Int, block: Duration): IO[RedisFailure, WakeListener] =
-    ZIO
-      .foreach(Namespace.wakeStreams(buckets).toChunk)(stream => position(connection, stream).map(stream -> _))
-      .flatMap(resolved => Ref.make(resolved.toMap))
-      .map(WakeListener(connection, readiness, _, block))
+    make(connection, block, Namespace.wakeStreams(buckets).toChunk.map(s => s -> (readiness: Waker)).toMap)
 
   /**
    * Where a wake stream is right now: the id of its last entry, or `0-0` when nothing has been appended.
    *
    * @param connection where to ask
    * @param stream the wake stream
-   * @return the id to read after; aborts with `StoreUnavailable` when the read fails
+   * @return the id to read after; aborts with `Unavailable` when the read fails
    */
   private def position(connection: Connection, stream: String): IO[RedisFailure, String] =
     connection.provide:

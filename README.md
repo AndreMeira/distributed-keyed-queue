@@ -77,6 +77,27 @@ and the **lease expiry**. Every `Settle` names the receipt and what became of wh
 that works longer than the lease must `Heartbeat` on a tick, and must stop the moment a heartbeat reports a
 claim stale — that is the half of the contract DKQ cannot enforce for you.
 
+### The lock
+
+The same store also serves a **distributed lock** — the queue's distilled core, for callers that want
+per-key exclusivity without messages. Three unary RPCs, defined in
+[`keyed_lock_service.proto`](modules/protocol/src/main/protobuf/homelab/keyedqueue/v1/keyed_lock_service.proto):
+
+```proto
+service KeyedLock {
+  rpc Acquire (AcquireRequest) returns (AcquireResponse);  // take a named lock, waiting up to max_wait
+  rpc Release (ReleaseRequest) returns (ReleaseResponse);  // free a lock this caller holds
+  rpc Refresh (RefreshRequest) returns (RefreshResponse);  // extend a held lock's lease
+}
+```
+
+An `Acquire` answers with a **receipt** (for releasing and refreshing) and a **fence** — a number strictly
+larger on every later grant of the same lock. Stamp the writes the lock protects with it, and have the
+thing being written reject stale fences: a lease alone cannot stop a stalled holder's write from landing,
+and the fence is what makes that harmless. Grants are **fair** — waiters are served in the order the
+service saw them ask, and a newcomer cannot barge past the queue. The full contract is
+[`docs/architecture/lock-guarantees.md`](docs/architecture/lock-guarantees.md).
+
 ## Using it from a service
 
 Two artifacts are published to GitHub Packages: `distributed-keyed-queue-protocol` (the message types) and
@@ -109,6 +130,9 @@ Settings are HOCON with an environment override for every key
 | `DKQ_WAKE_BUCKETS` | `1` | how many wake streams the queues are spread over — and so how many hash tags. Permanent for a deployment |
 | `DKQ_SWEEP_INTERVAL` | `5 seconds` | how often each instance runs repair |
 | `DKQ_SWEEP_LIMIT` | `100` | entries one sweep handles, per kind |
+| `DKQ_LOCK_TRIM_INTERVAL` | `120 seconds` | how often each instance removes abandoned lock holds |
+| `DKQ_LOCK_TRIM_GRACE` | `10 minutes` | how long past lease expiry a lock hold survives before trim removes it |
+| `DKQ_LOCK_MAX_TTL` | `10 minutes` | the longest a single lock grant's lease may run; longer requests are clamped |
 
 Every instance is identical and stateless — the queue's state is entirely in Redis — so scaling out is
 running more of them against the same store. Redis Cluster is supported: every key a queue uses carries its

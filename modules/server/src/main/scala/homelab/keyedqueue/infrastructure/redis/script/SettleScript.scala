@@ -12,7 +12,7 @@ import zio.*
 
 
 /**
- * Settle some of what a claim owns, and release its key when nothing is left owed — `lua/settle.lua`.
+ * Settle some of what a claim owns, and release its key when nothing is left owed — `lua/queue/settle.lua`.
  *
  * '''A claim may be settled piece by piece.''' The token is checked on every call and advanced only when
  * the claim ends, so it stays good across several settles; what stops one applying twice is that settling
@@ -52,7 +52,7 @@ final class SettleScript(ref: LuaScript.Sha):
    * @param claim the claim being settled against, which names the key
    * @return `ready`, `claimed`, `fence`, `msgs`, `payloads`, `owned`, `attempts`, `delayed`, `wake`,
    *         `sequence`, in the
-   *         order `lua/settle.lua` reads them
+   *         order `lua/queue/settle.lua` reads them
    */
   private def keys(ns: Namespace, claim: Claim): Array[String] =
     Array(
@@ -78,7 +78,7 @@ final class SettleScript(ref: LuaScript.Sha):
    * `None` has to become a number somewhere, and the wire to Redis is a flat array of strings.
    *
    * @param settlement the claim being settled against, what became of the messages it names, and any backoff
-   * @return `key`, `token`, `retryAfter`, then `id`, `verdict` repeated, in the order `lua/settle.lua`
+   * @return `key`, `token`, `retryAfter`, then `id`, `verdict` repeated, in the order `lua/queue/settle.lua`
    *         reads them
    */
   private def args(settlement: Settlement): Array[Array[Byte]] = {
@@ -112,9 +112,9 @@ final class SettleScript(ref: LuaScript.Sha):
 object SettleScript:
 
   /**
-   * Register `lua/settle.lua` and hold the digest it was given.
+   * Register `lua/queue/settle.lua` and hold the digest it was given.
    *
    * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
   def make: ZIO[Connection.Commands, RedisFailure, SettleScript] =
-    LuaScript.register("lua/settle.lua").map(SettleScript(_))
+    LuaScript.register("lua/queue/settle.lua").map(SettleScript(_))

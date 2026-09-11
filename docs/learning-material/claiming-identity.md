@@ -137,5 +137,5 @@ Whatever it ends up called, these are the invariants, and they are the reason th
   one process, `random` so two pods or two runs never share a box
 - `Connection.pool` / `Pool.provideBlocking` — where one is handed to a borrower
 - `RedisQueueStore.register` / `take` / `release` — its three uses
-- `lua/claim.lua` first line — the `LREM` guard that makes the box's ownership checkable
-- `lua/sweep.lua` sweep (2) — recovery, and the only reason liveness is written
+- `lua/queue/claim.lua` first line — the `LREM` guard that makes the box's ownership checkable
+- `lua/queue/sweep.lua` sweep (2) — recovery, and the only reason liveness is written

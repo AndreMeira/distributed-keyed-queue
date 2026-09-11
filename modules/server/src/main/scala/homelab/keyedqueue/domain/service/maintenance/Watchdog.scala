@@ -66,8 +66,9 @@ final class Watchdog(store: QueueStore, config: Watchdog.Config, queues: Ref[Set
         error => sweptWarn(queue, error),
         swept =>
           val touched = swept.reclaimed.size + swept.released.size
-          // A full pass means there is more waiting; do not make it wait for the next tick.
-          sweptInfo(queue, swept) *> sweep(queue).when(touched >= config.sweepLimit).unit,
+          // A full pass means there is more waiting; do not make it wait for the next tick. `touched > 0`
+          // keeps a non-positive limit from turning an empty pass into an immediate one, for ever.
+          sweptInfo(queue, swept) *> sweep(queue).when(touched > 0 && touched >= config.sweepLimit).unit,
       )
 
   /**

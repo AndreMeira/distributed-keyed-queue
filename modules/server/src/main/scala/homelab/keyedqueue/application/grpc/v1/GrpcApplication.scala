@@ -3,6 +3,7 @@ package homelab.keyedqueue.application.grpc.v1
 
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.application.grpc.v1.Module as GrpcModule
+import homelab.keyedqueue.domain.service.maintenance.LockCleanup
 import homelab.keyedqueue.domain.service.maintenance.Module as MaintenanceModule
 import homelab.keyedqueue.domain.service.usecase.v1.Module as UseCaseModule
 import homelab.keyedqueue.domain.service.validation.Module as ValidationModule
@@ -35,17 +36,23 @@ object GrpcApplication:
    * @return never completes successfully; aborts when the substrate or the server cannot be set up
    */
   def serve(conf: QueueConfig): ZIO[Any, ApplicationError, Nothing] =
-    (ZIO.service[Server] *> ZIO.never).provide(
+    (ZIO.service[Server] *> ZIO.service[LockCleanup] *> ZIO.never).provide(
       ZLayer.succeed(conf),
       RedisModule.connection,
       RedisModule.scripts,
-      RedisModule.store,
+      RedisModule.stores,
       MaintenanceModule.watchdog,
+      MaintenanceModule.lockCleanup,
+      ConfigurationModule.lockCleanup,
       ConfigurationModule.validation,
       ConfigurationModule.watchdog,
       ValidationModule.input,
       UseCaseModule.useCases,
+      ConfigurationModule.lockValidation,
+      ValidationModule.lockInput,
+      UseCaseModule.lockUseCases,
       GrpcModule.service,
+      GrpcModule.lockService,
       GrpcModule.server,
       TracingModule.monitor,
     )

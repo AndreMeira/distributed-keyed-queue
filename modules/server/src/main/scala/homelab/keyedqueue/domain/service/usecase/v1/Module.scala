@@ -2,8 +2,9 @@ package homelab.keyedqueue.domain.service.usecase.v1
 
 
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
+import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.domain.service.validation.QueueInputValidation
+import homelab.keyedqueue.domain.service.validation.{ LockInputValidation, QueueInputValidation }
 import zio.ZLayer
 
 
@@ -29,4 +30,17 @@ object Module:
         dequeue = DequeueUseCase(store, watchdog, validation),
         settle = SettleUseCase(store, validation),
         heartbeat = HeartbeatUseCase(store),
+      )
+
+  /**
+   * The three lock use cases, as one dependency for the lock's gRPC surface.
+   *
+   * @return the layer
+   */
+  val lockUseCases: ZLayer[LockStore & LockInputValidation, Nothing, SyncLockUseCases] =
+    ZLayer.fromFunction: (store: LockStore, validation: LockInputValidation) =>
+      SyncLockUseCases(
+        acquire = LockAcquireUseCase(store, validation),
+        release = LockReleaseUseCase(store, validation),
+        refresh = LockRefreshUseCase(store, validation),
       )

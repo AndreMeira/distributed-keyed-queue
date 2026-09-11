@@ -1,0 +1,23 @@
+// The lock service: acquire (blocking), release, refresh — the sibling of KeyedQueue, on the same
+// per-key-exclusive-lease core. Design and rationale: docs/research/distributed-lock.md
+syntax = "proto3";
+
+package homelab.keyedqueue.v1;
+
+import "homelab/keyedqueue/v1/keyed_lock.proto";
+import "scalapb/scalapb.proto";
+
+option (scalapb.options) = {
+  flat_package: true
+};
+
+service KeyedLock {
+  // Take the named lock, blocking up to max_wait for a holder to release it.
+  rpc Acquire(AcquireRequest) returns (AcquireResponse);
+
+  // Release a lock this caller holds, so a waiter may take it.
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+
+  // Push a held lock's lease forward.
+  rpc Refresh(RefreshRequest) returns (RefreshResponse);
+}
