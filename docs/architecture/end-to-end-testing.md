@@ -60,12 +60,16 @@ Two properties make that safe, and both were bugs first:
 
 `DKQ_E2E_KEEP=1` leaves the stack up afterwards, for when a failure needs its logs and its Redis.
 
-`DKQ_E2E_COMPOSE=docker-compose.e2e-cluster.yml` runs the same suite over a **real three-node Valkey
+`DKQ_E2E_STACK=cluster` runs the same suite over a **real three-node Valkey
 cluster** instead of one server — the same tests, the same assertions, a different substrate underneath.
 It is the only way the cluster path is exercised at all: standalone Redis has no slots, so a whole class of
 cluster-only faults (a multi-key command spanning slots, most of all) is invisible to every other run. The
 cluster is composed inside the docker network, because a containerized cluster announces container
 addresses and only another container can follow them.
+
+Each stack owns its compose **project name and host ports** (`Compose.Stack`), so the two can never
+collide — not when both are up, and not when one run follows another closely enough to overlap the
+previous teardown. They shared both once, and a back-to-back run failed for that reason and no other.
 
 ## Timing, and why these tests are not flaky by accident
 

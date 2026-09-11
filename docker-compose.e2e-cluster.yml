@@ -1,8 +1,9 @@
 # The same deployment as docker-compose.e2e.yml, over a real three-node Valkey cluster instead of one
-# server — the fixture that makes cluster mode a tested claim rather than an assumed one. Run the whole
-# e2e suite against it with:
+# server — the fixture that makes cluster mode a tested claim rather than an assumed one. Its own compose
+# project name and host ports, so it never collides with the standalone stack. Run the whole e2e suite
+# against it with:
 #
-#   DKQ_E2E_COMPOSE=docker-compose.e2e-cluster.yml sbt e2e
+#   DKQ_E2E_STACK=cluster sbt e2e
 #
 # The instances reach the cluster inside the compose network, so the announced node addresses are
 # reachable — which is why this is a compose file and not a Testcontainers fixture: a containerized
@@ -51,7 +52,7 @@ services:
   dkq-a: &dkq
     image: distributed-keyed-queue:latest # built by `sbt Docker/publishLocal`
     ports:
-      - "9101:9000"
+      - "9111:9000"
     environment:
       DKQ_REDIS_URL: redis://valkey-0:6379
       DKQ_CLUSTER: "true"
@@ -71,4 +72,4 @@ services:
   dkq-b:
     <<: *dkq
     ports:
-      - "9102:9000"
+      - "9112:9000"
