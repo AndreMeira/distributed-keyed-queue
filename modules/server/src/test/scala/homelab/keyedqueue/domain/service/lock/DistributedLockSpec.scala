@@ -35,7 +35,7 @@ object DistributedLockSpec extends ZIOSpecDefault:
                          started
                      )(container => ZIO.attemptBlocking(container.stop()).ignore)
         url        = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-        config     = QueueConfig(url, cluster = false, 0, leaseTtl, 1.second, 100, 120.seconds, 10.minutes, 200.millis, 1, 5.seconds, 32)
+        config     = QueueConfig(url, cluster = false, 0, leaseTtl, 1.second, 100, 120.seconds, 10.minutes, 10.minutes, 200.millis, 1, 5.seconds, 32)
         store     <- newStore(config)
         watchdog  <- Watchdog.make(store, Watchdog.Config(config.sweepInterval, config.sweepLimit))
       yield DistributedLock.make(store, watchdog, leaseTtl)

@@ -25,8 +25,8 @@ final class LockInputValidation(config: LockInputValidation.Config):
   /**
    * Everything `Acquire` needs to be actionable.
    *
-   * The name must be present, the hold and the wait positive; the wait is clamped to the service's ceiling,
-   * as a dequeue's is. All three problems accumulate.
+   * The name must be present, the hold and the wait positive; both are clamped to the service's ceilings,
+   * the wait as a dequeue's is. All three problems accumulate.
    *
    * @param request what the caller sent, untrusted
    * @return the acquisition to hand the store; accumulates `EmptyLockName`, `NonPositiveTtl` and
@@ -36,7 +36,7 @@ final class LockInputValidation(config: LockInputValidation.Config):
     Validation
       .validate(
         nonEmptyString(request.name, InvalidInput.EmptyLockName).map(LockName.apply),
-        positive(request.ttl, InvalidInput.NonPositiveTtl),
+        holding(request.ttl),
         waiting(request.maxWait),
       )
       .map((name, ttl, patience) => Acquisition(name, ttl, patience))
@@ -57,7 +57,7 @@ final class LockInputValidation(config: LockInputValidation.Config):
    * @return the claim and ttl; accumulates `UnreadableReceipt` and `NonPositiveTtl`
    */
   def parse(request: RefreshRequest): Validated[(LockClaim, Duration)] =
-    Validation.validate(receipt(request.receipt), positive(request.ttl, InvalidInput.NonPositiveTtl))
+    Validation.validate(receipt(request.receipt), holding(request.ttl))
 
   /**
    * A receipt this service issued.
@@ -67,16 +67,6 @@ final class LockInputValidation(config: LockInputValidation.Config):
    */
   private def receipt(value: String): Validated[LockClaim] =
     Validation.fromOptionWith(InvalidInput.UnreadableReceipt)(LockClaim.fromReceipt(value))
-
-  /**
-   * A duration that is positive.
-   *
-   * @param value what the caller asked for
-   * @param problem what to report when it is not positive
-   * @return the duration; fails with `problem` when it is absent or not positive
-   */
-  private def positive(value: Duration, problem: InvalidInput): Validated[Duration] =
-    if value.toMillis <= 0 then Validation.fail(problem) else Validation.succeed(value)
 
   /**
    * How long this service will actually wait for a lock: positive, and clamped to the ceiling.
@@ -89,6 +79,19 @@ final class LockInputValidation(config: LockInputValidation.Config):
     if asked.toMillis <= 0 then Validation.fail(InvalidInput.NonPositiveMaxWait)
     else Validation.succeed(if asked > config.maxWait then config.maxWait else asked)
 
+  /**
+   * How long this service will actually grant a hold for: positive, and clamped to the ceiling.
+   *
+   * The ceiling bounds how long a crashed holder blocks its lock — reclaim happens at lease expiry, so an
+   * unbounded ttl would let one caller make that arbitrarily late. A holder that needs longer refreshes.
+   *
+   * @param asked how long the caller wants the hold to survive
+   * @return that, or the ceiling, whichever is shorter; fails with `NonPositiveTtl` when it is not positive
+   */
+  private def holding(asked: Duration): Validated[Duration] =
+    if asked.toMillis <= 0 then Validation.fail(InvalidInput.NonPositiveTtl)
+    else Validation.succeed(if asked > config.maxTtl then config.maxTtl else asked)
+
 
 object LockInputValidation:
 
@@ -96,5 +99,6 @@ object LockInputValidation:
    * The bounds the parse enforces, expressed where they are enforced.
    *
    * @param maxWait the longest a caller may ask to wait for a lock
+   * @param maxTtl the longest a single grant's lease may run — refresh, not a long ttl, is how a hold lasts
    */
-  final case class Config(maxWait: Duration)
+  final case class Config(maxWait: Duration, maxTtl: Duration)

@@ -24,6 +24,7 @@ import zio.*
  * @param sweepLimit the most entries one sweep handles per kind, so a script cannot block the server
  * @param lockTrimInterval how often each instance removes abandoned lock holds
  * @param lockTrimGrace how long past lease expiry a lock hold survives before a trim may remove it
+ * @param lockMaxTtl the longest a single lock grant's lease may run; longer requests are clamped
  * @param wakeBlock how long one read of the wake streams waits before going round again. Not a latency
  *                  bound: a read returns the moment an entry lands, and the streams it names are fixed, so
  *                  nothing waits on this. It bounds how long a half-open connection goes unnoticed
@@ -45,6 +46,7 @@ final case class QueueConfig(
   sweepLimit: Int,
   lockTrimInterval: Duration,
   lockTrimGrace: Duration,
+  lockMaxTtl: Duration,
   wakeBlock: Duration,
   wakeBuckets: Int,
   maxWait: Duration,

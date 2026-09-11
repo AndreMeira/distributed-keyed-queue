@@ -29,7 +29,7 @@ object Module:
    * @return the layer
    */
   val lockValidation: ZLayer[QueueConfig, Nothing, LockInputValidation.Config] =
-    ZLayer.fromFunction((config: QueueConfig) => LockInputValidation.Config(config.maxWait))
+    ZLayer.fromFunction((config: QueueConfig) => LockInputValidation.Config(config.maxWait, config.lockMaxTtl))
 
   /**
    * The slice of it the repair loop is allowed to know.

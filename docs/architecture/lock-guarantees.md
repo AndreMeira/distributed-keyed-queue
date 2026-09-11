@@ -84,7 +84,9 @@ the lease, and needs nothing from the dead holder: no identity re-established, n
 ## Holding
 
 **H1. A hold is valid until its lease ends, and refresh extends it.** The grant says when the lease
-expires; each successful refresh answers with the new expiry.
+expires; each successful refresh answers with the new expiry. A ttl beyond the service's ceiling is
+clamped, not refused — the response's expiry is authoritative, and a hold that must outlast the ceiling
+refreshes.
 
 **H2. Late is not lost — within the grace.** A holder whose lease lapsed but whom nobody displaced may
 still refresh, up to the configured grace past expiry. Beyond the grace the hold may be removed at any
