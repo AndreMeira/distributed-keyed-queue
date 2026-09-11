@@ -81,5 +81,32 @@ object QueueConfig:
       .attempt(ConfigSource.resources("config/queue.conf").load[QueueConfig])
       .mapError(error => Misconfigured(s"config/queue.conf could not be read: ${error.getMessage}"))
       .flatMap:
-        case Right(config)  => ZIO.succeed(config)
+        case Right(config)  => bounded(config)
         case Left(failures) => ZIO.fail(Misconfigured(s"config/queue.conf is invalid: ${failures.prettyPrint()}"))
+
+  /**
+   * Refuse values that parse but cannot run.
+   *
+   * Environment overrides arrive as free text, so a well-formed file can still carry a zero sweep limit
+   * (which would turn a full pass into an immediate one, for ever), a negative trim grace (which would
+   * delete still-live holds), or a zero ttl ceiling (which would clamp every lease to nothing). Every
+   * violation is reported, not just the first, matching the parse above.
+   *
+   * @param config what the file parsed to
+   * @return the same configuration; aborts with `Misconfigured` naming every bound that is broken
+   */
+  private def bounded(config: QueueConfig): IO[ApplicationError, QueueConfig] =
+    val problems = Chunk(
+      Option.when(config.leaseTtl.toMillis <= 0)("lease-ttl must be greater than zero"),
+      Option.when(config.sweepInterval.toMillis <= 0)("sweep-interval must be greater than zero"),
+      Option.when(config.sweepLimit <= 0)("sweep-limit must be greater than zero"),
+      Option.when(config.lockTrimInterval.toMillis <= 0)("lock-trim-interval must be greater than zero"),
+      Option.when(config.lockTrimGrace.toMillis < 0)("lock-trim-grace must not be negative"),
+      Option.when(config.lockMaxTtl.toMillis <= 0)("lock-max-ttl must be greater than zero"),
+      Option.when(config.wakeBlock.toMillis <= 0)("wake-block must be greater than zero"),
+      Option.when(config.wakeBuckets <= 0)("wake-buckets must be greater than zero"),
+      Option.when(config.maxWait.toMillis <= 0)("max-wait must be greater than zero"),
+      Option.when(config.maxBatchLimit <= 0)("max-batch-limit must be greater than zero"),
+    ).flatten
+    if problems.isEmpty then ZIO.succeed(config)
+    else ZIO.fail(Misconfigured(s"config/queue.conf is invalid: ${problems.mkString("; ")}"))

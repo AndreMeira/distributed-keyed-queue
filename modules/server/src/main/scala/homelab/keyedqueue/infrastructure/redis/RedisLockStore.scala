@@ -139,23 +139,25 @@ final class RedisLockStore(
       case Some(left) =>
         untilRecheck(recheckAt, left).flatMap: window =>
           val park = mailbox.take.timeout(window).unless(window.isZero)
-          (park *> turn(acquisition, ticket, recheckAt)).flatMap:
+          (park *> turn(acquisition, asked, ticket, recheckAt)).flatMap:
             case taken @ Some(_) => ZIO.succeed(taken)
             case None            => awaitTurn(acquisition, asked, ticket, recheckAt, mailbox)
 
   /**
    * One grant attempt, keeping the ticket and the next event time current.
    *
-   * A queue that no longer knows the ticket is re-entered: the caller keeps its patience but loses its
-   * place, which is the honest reading of a pruned ticket.
+   * A queue that no longer knows the ticket is re-entered: the caller keeps what is left of its patience
+   * but loses its place, which is the honest reading of a pruned ticket.
    *
    * @param acquisition the lock being entered for
+   * @param asked when the call arrived, which the patience is measured from
    * @param ticket the ticket to ask with
    * @param recheckAt where the next event time is kept
    * @return the hold, or `None` to keep waiting; aborts with `RedisFailure` when the store fails
    */
   private def turn(
     acquisition: Acquisition,
+    asked: Instant,
     ticket: Ref[Long],
     recheckAt: Ref[Instant],
   ): IO[RedisFailure, Option[Hold]] =
@@ -168,28 +170,36 @@ final class RedisLockStore(
           .flatMap:
             case LockGrantScript.Reply.Granted(hold) => ZIO.some(hold)
             case LockGrantScript.Reply.Wait(delay)   => nextEventIn(delay, recheckAt).as(None)
-            case LockGrantScript.Reply.Gone          => reenter(acquisition, ticket, recheckAt)
+            case LockGrantScript.Reply.Gone          => reenter(acquisition, asked, ticket, recheckAt)
 
   /**
-   * Enter again after the queue lost the ticket.
+   * Enter again after the queue lost the ticket — with what is '''left''' of the patience, not all of it.
+   *
+   * The fresh ticket's deadline must state the caller's real bound: a full-patience ticket would hold a
+   * place, and delay everyone reading the head's deadline, long after this caller has given up.
    *
    * @param acquisition the lock being entered for
+   * @param asked when the call arrived, which the patience is measured from
    * @param ticket where the fresh ticket replaces the lost one
    * @param recheckAt where the next event time is kept
-   * @return the hold when the re-enter granted at once, `None` to keep waiting; aborts with `RedisFailure`
-   *         when the store fails
+   * @return the hold when the re-enter granted at once, `None` to keep waiting — or at once, when the
+   *         patience is already spent; aborts with `RedisFailure` when the store fails
    */
   private def reenter(
     acquisition: Acquisition,
+    asked: Instant,
     ticket: Ref[Long],
     recheckAt: Ref[Instant],
   ): IO[RedisFailure, Option[Hold]] =
-    connection
-      .provide(scripts.acquire.run(acquisition.name, acquisition.ttl, acquisition.patience))
-      .flatMap:
-        case LockAcquireScript.Reply.Granted(hold)          => ZIO.some(hold)
-        case LockAcquireScript.Reply.Queued(fresh, recheck) =>
-          ticket.set(fresh) *> nextEventIn(recheck, recheckAt).as(None)
+    remainingTime(acquisition.patience, asked).flatMap:
+      case None       => ZIO.none
+      case Some(left) =>
+        connection
+          .provide(scripts.acquire.run(acquisition.name, acquisition.ttl, left))
+          .flatMap:
+            case LockAcquireScript.Reply.Granted(hold)          => ZIO.some(hold)
+            case LockAcquireScript.Reply.Queued(fresh, recheck) =>
+              ticket.set(fresh) *> nextEventIn(recheck, recheckAt).as(None)
 
   /**
    * Note when the answer can next change.

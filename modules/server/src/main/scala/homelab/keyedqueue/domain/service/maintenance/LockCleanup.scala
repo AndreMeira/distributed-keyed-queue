@@ -41,8 +41,9 @@ final class LockCleanup(store: LockStore, config: LockCleanup.Config):
       .trim(config.grace, config.limit)
       .foldZIO(
         error => trimWarn(error),
-        // A full pass means there is more waiting; do not make it wait for the next tick.
-        freed => trimInfo(freed) *> pass.when(freed.size >= config.limit).unit,
+        // A full pass means there is more waiting; do not make it wait for the next tick. `nonEmpty`
+        // keeps a non-positive limit from turning an empty pass into an immediate one, for ever.
+        freed => trimInfo(freed) *> pass.when(freed.nonEmpty && freed.size >= config.limit).unit,
       )
 
   /**

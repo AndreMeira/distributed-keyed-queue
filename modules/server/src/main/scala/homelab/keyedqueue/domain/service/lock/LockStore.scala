@@ -46,8 +46,8 @@ trait LockStore:
    * them.
    *
    * @param acquisition the lock to take and how long to hold it; its patience is ignored
-   * @return the hold, or `None` when it is held under a live lease; aborts with an `AdapterError` when the
-   *         store fails
+   * @return the hold, or `None` when it is held under a live lease '''or''' someone queued first; aborts
+   *         with an `AdapterError` when the store fails
    */
   def tryAcquire(acquisition: Acquisition): IO[ApplicationError.AdapterError, Option[Hold]]
 
