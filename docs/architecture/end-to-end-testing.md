@@ -60,6 +60,13 @@ Two properties make that safe, and both were bugs first:
 
 `DKQ_E2E_KEEP=1` leaves the stack up afterwards, for when a failure needs its logs and its Redis.
 
+`DKQ_E2E_COMPOSE=docker-compose.e2e-cluster.yml` runs the same suite over a **real three-node Valkey
+cluster** instead of one server — the same tests, the same assertions, a different substrate underneath.
+It is the only way the cluster path is exercised at all: standalone Redis has no slots, so a whole class of
+cluster-only faults (a multi-key command spanning slots, most of all) is invisible to every other run. The
+cluster is composed inside the docker network, because a containerized cluster announces container
+addresses and only another container can follow them.
+
 ## Timing, and why these tests are not flaky by accident
 
 Every wait is real (`TestAspect.withLiveClock`); a virtual clock would prove nothing about a deployment. The

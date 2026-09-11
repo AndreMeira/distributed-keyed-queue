@@ -133,14 +133,19 @@ An expired block comes back as an **empty list**, not an exception — the loop 
 This is the same one `BLMOVE` set in this repo before the wake path replaced it. Lettuce's connection-level command timeout is enforced
 client-side, so a `BLOCK 5000` on a connection whose command timeout is 5 s races its own deadline and
 surfaces as `RedisCommandTimeoutException` instead of an empty result. **The connection's command timeout
-must exceed the longest `BLOCK` it will be asked to make** — which is why `Connection.listeningSlack` exists
-for the claiming connections and why a stream reader wants the same treatment, on its own connection.
+must exceed the longest `BLOCK` it will be asked to make** — which is why `Connection.listeningSlack` pads
+the timeout of every listening connection, and why each stream reader is given one of its own.
 
 ### Cluster
 
 `RedisAdvancedClusterCommands` accepts the same calls, but a multi-stream `XREAD` across different slots
 fails with `CROSSSLOT`. Group streams by slot — and remember that keys sharing a hash tag share a slot, so
-`{w:0}:wake` is in the same slot as `{w:0}:q:orders:ready` and can be written by the same Lua script.
+`{w:0}:v1:wake` is in the same slot as `{w:0}:v1:q:orders:ready` and can be written by the same Lua script.
+
+That grouping is what `WakeListener` does: one reader fiber and one connection per slot group, collapsing
+to a single reader on a standalone server, where there are no slots. The advice was written here before the
+listener followed it, and the gap cost a defect that only a real cluster could expose — see
+[`../architecture/redis-cluster.md`](../architecture/redis-cluster.md).
 
 ### From Lua
 

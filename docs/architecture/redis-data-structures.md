@@ -11,9 +11,9 @@ tags: [redis, keys, data-structures, lua, claims, ordering, streams]
 Every piece of state lives in Redis; dkq pods hold nothing but connections. This is the whole layout, why
 each structure has the type it has, and which script touches it.
 
-`Namespace` is the single place these names are built. Nothing else in the codebase constructs a key name,
-apart from `claim.lua` and `sweep.lua`, which rebuild the per-key ones at runtime — see
-[Cluster](#one-bucket-one-slot).
+`Namespace` builds the queue's names and `LockKeys` the lock's. Nothing else in the codebase constructs a
+key name, apart from `claim.lua`, `sweep.lua` and the lock's `trim.lua`, which rebuild per-key ones at
+runtime — see [Cluster](#one-bucket-one-slot).
 
 ## The layout
 
@@ -148,7 +148,8 @@ one script there is no such list and no such moment: **the lease is the only thi
 ## One bucket, one slot
 
 Every name above carries its bucket's `{w:<bucket>}` hash tag, so a queue's keys — and the wake stream that
-announces them — hash to one cluster slot and a script may touch them all. `claim.lua` and `sweep.lua`
+announces them — hash to one cluster slot and a script may touch them all. Only the braces are hashed, so
+the `v1` that follows the tag names the schema without moving anything between slots. `claim.lua` and `sweep.lua`
 build `msgs:<key>`, `payloads:<key>` and `owned:<key>` at runtime from `prefix` rather than receiving them
 in `KEYS` — legal only because the tag guarantees the same slot, and unavoidable for `claim.lua`, which
 does not know which key it has until it pops one. That is why both take `prefix` as an argument.

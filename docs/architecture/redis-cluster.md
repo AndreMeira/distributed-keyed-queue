@@ -34,20 +34,30 @@ Everything downstream is unchanged.
 
 ## Why the key layout was ready first
 
-Every key belongs to one queue, and carries the hash tag of the **bucket** that queue falls in. `Namespace`
-builds all ten from `prefix = "{w:<bucket>}:q:<queue>"`, with the wake stream tagged but not scoped to
-the queue:
+Every key a queue owns carries the hash tag of the **bucket** that queue falls in. `Namespace` builds all
+ten from `prefix = "{w:<bucket>}:v1:q:<queue>"`, with the wake stream tagged but not scoped to the queue:
 
 ```
-{w:0}:q:orders:ready      {w:0}:q:orders:fence      {w:0}:q:orders:msgs:<key>
-{w:0}:q:orders:seq        {w:0}:q:orders:attempts   {w:0}:q:orders:payloads:<key>
-{w:0}:q:orders:claimed    {w:0}:q:orders:delayed    {w:0}:q:orders:owned:<key>
-                          {w:0}:wake                ← shared by every queue in bucket 0
+{w:0}:v1:q:orders:ready      {w:0}:v1:q:orders:fence       {w:0}:v1:q:orders:msgs:<key>
+{w:0}:v1:q:orders:seq        {w:0}:v1:q:orders:attempts    {w:0}:v1:q:orders:payloads:<key>
+{w:0}:v1:q:orders:claimed    {w:0}:v1:q:orders:delayed     {w:0}:v1:q:orders:owned:<key>
+                             {w:0}:v1:wake                 ← shared by every queue in bucket 0
 ```
 
-`bucket = hash(queue) % 16` — the count is a constant of the code, not a deployment parameter. What each structure is for is
-[`redis-data-structures.md`](redis-data-structures.md); what matters here is only that everything a script
-touches carries the same tag.
+`bucket = hash(queue) % 16` — the count is a constant of the code, not a deployment parameter. What each
+structure is for is [`redis-data-structures.md`](redis-data-structures.md); what matters here is only that
+everything a script touches carries the same tag.
+
+**The `v1` is the schema version, and it sits outside the tag on purpose.** Only what is inside the braces
+is hashed, so the segment moves nothing between slots — and a key's incarnations under two schemas land in
+the *same* slot, which is what would let a migration step read v1 and write v2 in one script
+([`../research/schema-versioned-keys.md`](../research/schema-versioned-keys.md)).
+
+**The lock's keys are one tag, `{dkq:locks}`, and so one slot.** That is what lets each lock script touch
+the leases, the tokens, the fence counter and a waiters list together; bucketing the locks the way queues
+are bucketed is deferred until lock volume on one node is a measured problem rather than an aesthetic one.
+Its wake stream carries a tag of its own, and nothing says which slot that lands in — which is why the
+listener groups its streams by computed slot rather than by kind or by bucket.
 
 A bucket's keys hash to one slot, and **every script touches exactly one queue, whose keys are all in its
 bucket's slot** — which is what makes the Lua legal at all, since a script may only reach keys in a single
