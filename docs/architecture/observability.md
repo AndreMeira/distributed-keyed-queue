@@ -2,7 +2,7 @@
 title: "What dkq reports about itself, and how to read it"
 type: architecture
 status: current
-updated: 2026-09-05
+updated: 2026-09-11
 tags: [observability, opentelemetry, metrics, tracing, latency, dashboards]
 ---
 
@@ -17,7 +17,8 @@ this page is about what the numbers mean.
 
 ## Where the instrumentation is
 
-Every RPC is wrapped in `monitor.measure` in `QueueService`, and nowhere else:
+Every RPC is wrapped in `monitor.measure` at its handler — `QueueService` for the queue's four,
+`LockService` for the lock's three — and nowhere else:
 
 ```scala
 override def dequeue(request: v1.DequeueRequest): IO[StatusException, v1.DequeueResponse] =
@@ -67,6 +68,29 @@ avoid it, in increasing order of effort:
 
 The other three are ordinary: `enqueue` and `settle` are one Redis script each, `heartbeat` is one per
 queue a consumer holds claims in.
+
+## The lock's numbers
+
+The lock's three RPCs are measured the same way (`LockService.acquire`/`release`/`refresh`), and
+**`acquire` is `dequeue`'s sibling, caveat included**: a fair lock's acquire waits by design, up to the
+caller's `max_wait`, so on a contended lock its p99 approaches `max_wait` and that is healthy. Give it its
+own panel; alert on `release` and `refresh` only. The same two-population reading applies — grants that
+were immediate, and waits that were served or timed out.
+
+Beneath the handler, `RedisLockStore` traces what the wait was made of:
+
+- **`RedisLockStore.acquire`** spans the whole wait — its duration is the caller's wait time.
+- **`RedisLockStore.grant`** is one span per deliberate ask for the lock. Their count per acquire is the
+  wake-efficiency signal: a waiter asks when a release wakes it, when a known deadline arrives (the lease's
+  end, the head ticket's deadline), or when its patience runs out — an event or two each, never a poll's
+  worth. A crowd of `grant` spans right after a release is the broadcast working: every local waiter asks
+  once, the head wins.
+- **`tryAcquire`, `release`, `refresh`, `trim`** are one script each, ordinary latencies.
+
+The cleanup loop follows the watchdog's rule: it runs on a timer (`DKQ_LOCK_TRIM_INTERVAL`), so what
+matters is what it removed, which it logs — abandoned locks by name, because a holder that died without
+releasing is an anomaly worth pointing at. `RedisLockStore.trim` spans exist for the call itself; the
+interesting number is in the log line.
 
 ## What the agent adds, and what it misses
 

@@ -2,6 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.error.ApplicationError
+import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.model.{ Acquisition, LockClaim }
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.lock.LockStore.Hold
@@ -29,11 +30,13 @@ import java.time.Instant
  * only the head ticket can win, so the woken crowd is a check, not a race. The mailbox is subscribed
  * before the enter, so no release can slip into the gap between asking and parking.
  *
+ * @param monitor what each call on the substrate is traced against
  * @param connection where its connection comes from
  * @param scripts the loaded lock scripts
  * @param broadcast where a waiter's wakes land
  */
 final class RedisLockStore(
+  monitor: Monitor,
   connection: Connection,
   scripts: LockScripts,
   broadcast: Broadcast,
@@ -43,35 +46,42 @@ final class RedisLockStore(
   private val floor: Duration = 10.millis
 
   override def tryAcquire(acquisition: Acquisition): IO[RedisFailure, Option[Hold]] =
-    connection.provide:
-      scripts.tryAcquire.run(acquisition.name, acquisition.ttl)
+    monitor.trace("RedisLockStore.tryAcquire"):
+      connection.provide:
+        scripts.tryAcquire.run(acquisition.name, acquisition.ttl)
 
   override def acquire(acquisition: Acquisition): IO[RedisFailure, Option[Hold]] =
-    Clock.instant.flatMap: asked =>
-      ZIO.scoped:
-        broadcast
-          .subscribe(QueueName(acquisition.name))
-          .flatMap: mailbox =>
-            connection
-              .provide(scripts.acquire.run(acquisition.name, acquisition.ttl, acquisition.patience))
-              .flatMap:
-                case LockAcquireScript.Reply.Granted(hold)           => ZIO.some(hold)
-                case LockAcquireScript.Reply.Queued(ticket, recheck) =>
-                  queued(acquisition, asked, ticket, recheck, mailbox)
+    // The span covers the whole wait, so its duration is the caller's wait time — read it the way the
+    // observability doc reads dequeue's, not as a processing latency.
+    monitor.trace("RedisLockStore.acquire"):
+      Clock.instant.flatMap: asked =>
+        ZIO.scoped:
+          broadcast
+            .subscribe(QueueName(acquisition.name))
+            .flatMap: mailbox =>
+              connection
+                .provide(scripts.acquire.run(acquisition.name, acquisition.ttl, acquisition.patience))
+                .flatMap:
+                  case LockAcquireScript.Reply.Granted(hold)           => ZIO.some(hold)
+                  case LockAcquireScript.Reply.Queued(ticket, recheck) =>
+                    queued(acquisition, asked, ticket, recheck, mailbox)
 
   override def release(claim: LockClaim): IO[RedisFailure, Boolean] =
     // The wake is the script's job: lock/release.lua appends to the wake stream on a real release, and the
     // shared listener delivers it to every instance's readiness — so a waiter on another instance wakes,
     // which an in-process call could never reach.
-    connection.provide(scripts.release.run(claim.name, claim.token))
+    monitor.trace("RedisLockStore.release"):
+      connection.provide(scripts.release.run(claim.name, claim.token))
 
   override def refresh(claim: LockClaim, ttl: Duration): IO[RedisFailure, (Instant, Boolean)] =
-    connection.provide:
-      scripts.refresh.run(claim.name, claim.token, ttl)
+    monitor.trace("RedisLockStore.refresh"):
+      connection.provide:
+        scripts.refresh.run(claim.name, claim.token, ttl)
 
   override def trim(grace: Duration, limit: Int): IO[RedisFailure, Chunk[LockName]] =
-    connection.provide:
-      scripts.trim.run(grace, limit)
+    monitor.trace("RedisLockStore.trim"):
+      connection.provide:
+        scripts.trim.run(grace, limit)
 
   /**
    * Hold a ticket to the end: wait out the turns, and withdraw it on any exit that is not a grant.
@@ -149,13 +159,16 @@ final class RedisLockStore(
     ticket: Ref[Long],
     recheckAt: Ref[Instant],
   ): IO[RedisFailure, Option[Hold]] =
-    ticket.get.flatMap: id =>
-      connection
-        .provide(scripts.grant.run(acquisition.name, id, acquisition.ttl))
-        .flatMap:
-          case LockGrantScript.Reply.Granted(hold) => ZIO.some(hold)
-          case LockGrantScript.Reply.Wait(delay)   => nextEventIn(delay, recheckAt).as(None)
-          case LockGrantScript.Reply.Gone          => reenter(acquisition, ticket, recheckAt)
+    // One span per deliberate ask: their count per acquire is the wake-efficiency signal — an event or two
+    // each, never a poll's worth.
+    monitor.trace("RedisLockStore.grant"):
+      ticket.get.flatMap: id =>
+        connection
+          .provide(scripts.grant.run(acquisition.name, id, acquisition.ttl))
+          .flatMap:
+            case LockGrantScript.Reply.Granted(hold) => ZIO.some(hold)
+            case LockGrantScript.Reply.Wait(delay)   => nextEventIn(delay, recheckAt).as(None)
+            case LockGrantScript.Reply.Gone          => reenter(acquisition, ticket, recheckAt)
 
   /**
    * Enter again after the queue lost the ticket.
@@ -239,9 +252,14 @@ object RedisLockStore:
   /**
    * Load the lock scripts and hand back the store.
    *
+   * @param monitor what each call on the substrate is traced against
    * @param connection where its connection comes from
    * @param broadcast where waiters' wakes land
    * @return the store; aborts with `RedisFailure` when a script is missing or rejected
    */
-  def make(connection: Connection, broadcast: Broadcast): ZIO[Connection.Commands, RedisFailure, RedisLockStore] =
-    LockScripts.make.map(RedisLockStore(connection, _, broadcast))
+  def make(
+    monitor: Monitor,
+    connection: Connection,
+    broadcast: Broadcast,
+  ): ZIO[Connection.Commands, RedisFailure, RedisLockStore] =
+    LockScripts.make.map(RedisLockStore(monitor, connection, _, broadcast))

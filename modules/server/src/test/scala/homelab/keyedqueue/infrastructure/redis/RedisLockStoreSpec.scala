@@ -2,6 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.error.ApplicationError
+import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.model.Acquisition
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.types.LockName
@@ -54,7 +55,7 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
     for
       connection <- Connection.make(Connection.Config(config.maxWait, config.redisUrl, config.cluster))
       broadcast  <- Broadcast.make
-      store      <- connection.provide(RedisLockStore.make(connection, broadcast))
+      store      <- connection.provide(RedisLockStore.make(Monitor.Noop, connection, broadcast))
       listener   <- WakeListener.make(connection, config.wakeBlock, Map(LockKeys.wake -> broadcast))
       _          <- listener.run.forkScoped
     yield store

@@ -72,6 +72,6 @@ object Module:
         // waiter that finds nothing parks on a readiness token, and an unrun listener offers none.
         _          <- listener.run.forkScoped
         queueStore <- RedisQueueStore.make(monitor, connection, scripts, queueReady, config.leaseTtl, config.wakeBuckets)
-        lockStore  <- connection.provide(RedisLockStore.make(connection, lockReady))
+        lockStore  <- connection.provide(RedisLockStore.make(monitor, connection, lockReady))
       yield ZEnvironment[QueueStore](queueStore) ++ ZEnvironment[LockStore](lockStore)
     }
