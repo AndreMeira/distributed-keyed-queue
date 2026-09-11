@@ -30,8 +30,8 @@ object LockInputValidationSpec extends ZIOSpecDefault:
       val parsed = validation.parse(AcquireRequest("resource", ttl = 5.seconds, maxWait = 10.seconds))
       assertTrue(parsed.toEither.exists { acquisition =>
         acquisition.name == LockName("resource")
-          && acquisition.ttl == 5.seconds
-          && acquisition.patience == 10.seconds
+        && acquisition.ttl == 5.seconds
+        && acquisition.patience == 10.seconds
       })
     },
     test("both ceilings clamp: a ttl and a wait beyond them come back as the ceilings") {

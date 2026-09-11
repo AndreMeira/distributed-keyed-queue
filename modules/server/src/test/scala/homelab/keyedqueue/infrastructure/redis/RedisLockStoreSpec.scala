@@ -125,43 +125,43 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
     },
     test("trim honours the grace: a late holder may still refresh, an abandoned one is removed") {
       for
-        lock    <- ZIO.serviceWithZIO[QueueConfig](instance)
-        held    <- lock.tryAcquire(acq("g", 300.millis)).someOrFailException
-        _       <- ZIO.sleep(600.millis)
+        lock      <- ZIO.serviceWithZIO[QueueConfig](instance)
+        held      <- lock.tryAcquire(acq("g", 300.millis)).someOrFailException
+        _         <- ZIO.sleep(600.millis)
         // Expired, but within a generous grace: not trimmed, and the late holder may still extend.
-        early   <- lock.trim(grace = 1.hour, limit = 10)
-        (_, ok) <- lock.refresh(held.claim, 300.millis)
-        _       <- ZIO.sleep(600.millis)
+        early     <- lock.trim(grace = 1.hour, limit = 10)
+        (_, ok)   <- lock.refresh(held.claim, 300.millis)
+        _         <- ZIO.sleep(600.millis)
         // Expired beyond a tiny grace: abandoned, so the hold is removed and the fence entry with it.
-        freed    <- lock.trim(grace = 100.millis, limit = 10)
+        freed     <- lock.trim(grace = 100.millis, limit = 10)
         (_, lost) <- lock.refresh(held.claim, 1.second)
-        retaken  <- lock.tryAcquire(acq("g", ttl))
+        retaken   <- lock.tryAcquire(acq("g", ttl))
       yield assertTrue(early.isEmpty, ok, freed.contains(LockName("g")), !lost, retaken.isDefined)
     },
     test("a waiter parked on a dead holder reclaims at lease expiry — no release, no trim, no polling") {
       // The deadline-aware wait: the enter is refused with "re-check when the lease ends", so the waiter
       // wakes itself at exactly the moment the lock becomes reclaimable, with no wake ever arriving.
       for
-        config <- ZIO.service[QueueConfig]
-        a      <- instance(config)
-        b      <- instance(config)
-        _      <- a.tryAcquire(acq("h", 500.millis)).someOrFailException
-        waiter <- b.acquire(acq("h", 30.seconds, 10.seconds)).timed.fork
-        _      <- ZIO.sleep(200.millis)
-        parked <- waiter.poll.map(_.isEmpty)
+        config            <- ZIO.service[QueueConfig]
+        a                 <- instance(config)
+        b                 <- instance(config)
+        _                 <- a.tryAcquire(acq("h", 500.millis)).someOrFailException
+        waiter            <- b.acquire(acq("h", 30.seconds, 10.seconds)).timed.fork
+        _                 <- ZIO.sleep(200.millis)
+        parked            <- waiter.poll.map(_.isEmpty)
         (took, recovered) <- waiter.join
       yield assertTrue(parked, recovered.isDefined, took < 2.seconds)
     },
     test("grants follow arrival order — first to enter is first granted") {
       for
-        lock  <- ZIO.serviceWithZIO[QueueConfig](instance)
-        held  <- lock.tryAcquire(acq("fifo", 30.seconds)).someOrFailException
-        order <- Ref.make(Chunk.empty[Int])
-        turn   = (i: Int) =>
-                   lock.acquire(acq("fifo", 5.seconds, 20.seconds)).flatMap {
-                     case Some(hold) => order.update(_ :+ i) *> lock.release(hold.claim)
-                     case None       => ZIO.unit
-                   }
+        lock   <- ZIO.serviceWithZIO[QueueConfig](instance)
+        held   <- lock.tryAcquire(acq("fifo", 30.seconds)).someOrFailException
+        order  <- Ref.make(Chunk.empty[Int])
+        turn    = (i: Int) =>
+                    lock.acquire(acq("fifo", 5.seconds, 20.seconds)).flatMap {
+                      case Some(hold) => order.update(_ :+ i) *> lock.release(hold.claim)
+                      case None       => ZIO.unit
+                    }
         first  <- turn(1).fork
         _      <- ZIO.sleep(200.millis)
         second <- turn(2).fork
