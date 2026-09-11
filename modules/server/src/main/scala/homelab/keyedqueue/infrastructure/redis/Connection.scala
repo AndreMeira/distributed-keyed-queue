@@ -15,13 +15,21 @@ import java.time.Duration as JavaDuration
  * Where an effect gets a connection from.
  *
  * The connection arrives in the environment as [[Connection.Commands]]: an effect asks for one by type, and
- * this decides which one it gets.
+ * this decides which one it gets. [[sync]] is shared by everything that answers immediately; [[listening]]
+ * opens a fresh connection for a reader that blocks — one per caller, because a blocked read occupies its
+ * connection whole — timed generously enough that a blocking `XREAD` doing its job is not a timeout.
+ * [[clustered]] says which backend the client talks to, which a reader needs because Redis Cluster bounds
+ * what one command may touch.
  *
  * Why the client is synchronous, and what that costs — Redis executes a script in about four microseconds,
  * a blocking-pool hop costs a third of one, and a waiting consumer holds no thread at all — is measured in
  * `docs/architecture/redis-connections.md`.
  */
-final case class Connection(sync: Connection.Commands, wake: Connection.Commands):
+final case class Connection(
+  sync: Connection.Commands,
+  clustered: Boolean,
+  listening: ZIO[Scope, RedisFailure, Connection.Commands],
+):
 
   /**
    * Run an effect on the shared connection.
@@ -34,18 +42,6 @@ final case class Connection(sync: Connection.Commands, wake: Connection.Commands
    */
   def provide[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A] =
     effect.provideSomeEnvironment[R](env => env ++ ZEnvironment(sync))
-
-  /**
-   * Run an effect on the connection reserved for listening.
-   *
-   * @param effect what to run, needing a connection
-   * @tparam R what it needs besides a connection
-   * @tparam E how it fails
-   * @tparam A what it produces
-   * @return the same effect, its connection supplied
-   */
-  def listening[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A] =
-    effect.provideSomeEnvironment[R](env => env ++ ZEnvironment(wake))
 
 
 /**
@@ -94,18 +90,19 @@ object Connection:
   final case class Config(maxWait: Duration, redisUrl: String, cluster: Boolean)
 
   /**
-   * Two connections, closed with the scope: one shared by everything that answers immediately, and one
-   * reserved for the listener.
+   * The shared connection, closed with the scope, and the means to open listening ones.
+   *
+   * The listening connections are a factory rather than a fixed second connection, because how many are
+   * needed is the listener's business: one on a single server, one per slot group on a cluster.
    *
    * @param config where Redis is, and the longest wait to honour
-   * @return the connections; aborts with `Unavailable` when one cannot be opened
+   * @return the connection; aborts with `Unavailable` when it cannot be opened
    */
   def make(config: Config): ZIO[Scope, RedisFailure, Connection] =
     for
       client <- client(config)
       sync   <- open(client, config.maxWait)
-      wake   <- open(client, config.maxWait + listeningSlack)
-    yield Connection(sync, wake)
+    yield Connection(sync, config.cluster, open(client, config.maxWait + listeningSlack))
 
   /**
    * The client both connections are opened from — the one place the two backends are chosen between.

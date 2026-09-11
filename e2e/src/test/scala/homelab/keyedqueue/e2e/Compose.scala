@@ -25,7 +25,11 @@ object Compose:
   /** The instance names, which are both compose service names and the suite's names for them. */
   val instances: Chunk[String] = Chunk("dkq-a", "dkq-b")
 
-  private val file = "docker-compose.e2e.yml"
+  /**
+   * Which compose file to bring up — `DKQ_E2E_COMPOSE` selects a variant, and the suite is none the wiser:
+   * `docker-compose.e2e-cluster.yml` runs the same tests over a real three-node cluster.
+   */
+  private val file = sys.env.getOrElse("DKQ_E2E_COMPOSE", "docker-compose.e2e.yml")
 
   /**
    * Bring the stack up and wait for every service to report healthy.

@@ -5,6 +5,7 @@ import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.types.QueueName
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import io.lettuce.core.XReadArgs.StreamOffset
+import io.lettuce.core.cluster.SlotHash
 import io.lettuce.core.{ Limit, Range, XReadArgs }
 import zio.*
 
@@ -12,14 +13,14 @@ import scala.jdk.CollectionConverters.*
 
 
 /**
- * One blocking read across every wake stream in the deployment, routing each entry to the [[Waker]]
- * that waits on it.
+ * A blocking read per slot group of wake streams, routing each entry to the [[Waker]] that waits on it.
  *
- * '''One listener, many streams, `XREAD` being multi-stream.''' A single blocking read covers every wake
- * stream at once and returns the instant any of them has an entry — so the queue's bucket streams and the
- * lock's wake stream are served by one connection and one fiber. Which [[Waker]] an entry wakes is
- * decided by the stream it came from (`routes`), so queue wakes and lock wakes stay logically separate
- * without a second listener or a second reserved connection.
+ * '''One reader per slot group, because the cluster demands it.''' `XREAD` is multi-stream, but Redis
+ * Cluster rejects a multi-key read whose keys span slots — and the bucket tags exist precisely to spread
+ * slots. So the streams are grouped by slot, each group read by its own fiber on its own connection; on a
+ * single server there are no slots and the groups collapse to one, which is one connection and one fiber —
+ * the original design. Which [[Waker]] an entry wakes is decided by the stream it came from (`routes`), so
+ * queue wakes and lock wakes stay logically separate without separate listeners.
  *
  * '''The set of streams is fixed, and that is the point.''' An `XREAD` names the streams it was issued
  * with, so the set is resolved once at startup — a queue or lock nobody has asked for yet is still heard
@@ -29,13 +30,13 @@ import scala.jdk.CollectionConverters.*
  * costs nothing; pub/sub would lose whatever arrived while it was away, and a lost wake is a waiter asleep
  * beside work it asked for.
  *
- * @param connection where the listening connection comes from
+ * @param readers each group's connection and the streams it reads
  * @param routes wake stream -> the readiness its entries wake
  * @param positions wake stream -> the last id delivered from it; the key set never changes
  * @param block how long one read waits before going round again
  */
 final class WakeListener(
-  connection: Connection,
+  readers: Chunk[(Connection.Commands, Chunk[String])],
   routes: Map[String, Waker],
   positions: Ref[Map[String, String]],
   block: Duration,
@@ -55,45 +56,59 @@ final class WakeListener(
    * @return never completes
    */
   def run: UIO[Nothing] =
-    read
-      .flatMap(announce)
-      .catchAll: error =>
-        // Announce-all is the safe recovery for a missed read — but a listener that lands here every
-        // round has degraded into interval polling, which the log line is here to make visible.
-        ZIO.logWarning(s"wake read failed, announcing all as recovery: ${error.message}")
-          *> announceAll *> ZIO.sleep(WakeListener.retryBackoff)
-      .forever *> ZIO.never
+    ZIO.foreachParDiscard(readers)(loop) *> ZIO.never
 
   /**
-   * One `XREAD` across every wake stream, resuming from where each was left, paired with the readiness each
-   * entry belongs to.
+   * One group's read loop, forever.
    *
+   * @param reader the group's connection and streams
+   * @return never completes
+   */
+  private def loop(reader: (Connection.Commands, Chunk[String])): UIO[Unit] =
+    val (commands, streams) = reader
+    read(commands, streams)
+      .flatMap(announce)
+      .catchAll: error =>
+        // Announce-all is the safe recovery for a missed read — but a reader that lands here every round
+        // has degraded into interval polling, which the log line is here to make visible.
+        ZIO.logWarning(s"wake read failed, announcing the group as recovery: ${error.message}")
+          *> announceGroup(streams) *> ZIO.sleep(WakeListener.retryBackoff)
+      .forever
+
+  /**
+   * One `XREAD` across this group's streams, resuming from where each was left, paired with the readiness
+   * each entry belongs to.
+   *
+   * @param commands the group's connection
+   * @param streams the streams it reads
    * @return the (readiness, name) wakes the entries carry, one per entry
    */
-  private def read: IO[RedisFailure, Chunk[(Waker, QueueName)]] =
+  private def read(
+    commands: Connection.Commands,
+    streams: Chunk[String],
+  ): IO[RedisFailure, Chunk[(Waker, QueueName)]] =
     positions.get.flatMap: current =>
-      val offsets = current.map((stream, id) => StreamOffset.from(stream, id)).toArray
-      connection
-        .listening(entries(offsets))
-        .flatMap: delivered =>
-          val woken = Chunk.fromIterable(delivered.flatMap: entry =>
-            routes.get(entry.getStream).zip(WakeListener.nameOf(entry)))
-          val ahead = delivered.map(entry => entry.getStream -> entry.getId).toMap
-          positions.update(_.map((stream, id) => stream -> ahead.getOrElse(stream, id))).as(woken)
+      val offsets = streams.map(stream => StreamOffset.from(stream, current(stream))).toArray
+      entries(commands, offsets).flatMap: delivered =>
+        val woken = Chunk.fromIterable(delivered.flatMap: entry =>
+          routes.get(entry.getStream).zip(WakeListener.nameOf(entry)))
+        val ahead = delivered.map(entry => entry.getStream -> entry.getId).toMap
+        positions.update(_.map((stream, id) => stream -> ahead.getOrElse(stream, id))).as(woken)
 
   /**
    * The raw read.
    *
+   * @param commands the connection to block on
    * @param offsets what to read, and from where
    * @return the entries that arrived, oldest first; aborts with `Unavailable` when the read fails
    */
   private def entries(
-    offsets: Array[StreamOffset[String]]
-  ): ZIO[Connection.Commands, RedisFailure, List[io.lettuce.core.StreamMessage[String, Array[Byte]]]] =
-    Connection.use: redis =>
-      ZIO
-        .attemptBlocking(redis.xread(XReadArgs.Builder.block(block.toMillis).count(WakeListener.count), offsets*))
-        .mapBoth(LuaScript.failure, reply => Option(reply).map(_.asScala.toList).getOrElse(Nil))
+    commands: Connection.Commands,
+    offsets: Array[StreamOffset[String]],
+  ): IO[RedisFailure, List[io.lettuce.core.StreamMessage[String, Array[Byte]]]] =
+    ZIO
+      .attemptBlocking(commands.xread(XReadArgs.Builder.block(block.toMillis).count(WakeListener.count), offsets*))
+      .mapBoth(LuaScript.failure, reply => Option(reply).map(_.asScala.toList).getOrElse(Nil))
 
   /**
    * Deliver each wake to its readiness, once.
@@ -105,13 +120,14 @@ final class WakeListener(
     ZIO.foreachDiscard(woken.distinct)((waker, name) => waker.ready(name))
 
   /**
-   * Tell every readiness this listener serves to re-look — the failure path, where a wake may have been
-   * missed and the safe move is to assume so.
+   * Tell this group's wakers to re-look — the failure path, where a wake may have been missed and the safe
+   * move is to assume so.
    *
+   * @param streams the group's streams
    * @return noop
    */
-  private def announceAll: UIO[Unit] =
-    ZIO.foreachDiscard(routes.values.toSet)(_.readyAll)
+  private def announceGroup(streams: Chunk[String]): UIO[Unit] =
+    ZIO.foreachDiscard(streams.flatMap(routes.get).toSet)(_.readyAll)
 
 
 object WakeListener:
@@ -148,13 +164,32 @@ object WakeListener:
    * @param connection where its connections come from
    * @param block how long one read waits before going round again
    * @param routes wake stream -> the waker its entries wake
-   * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
+   * @return the listener; aborts with `Unavailable` when a stream's position cannot be read or a
+   *         connection cannot be opened
    */
-  def make(connection: Connection, block: Duration, routes: Map[String, Waker]): IO[RedisFailure, WakeListener] =
-    ZIO
-      .foreach(Chunk.fromIterable(routes.keys))(stream => position(connection, stream).map(stream -> _))
-      .flatMap(resolved => Ref.make(resolved.toMap))
-      .map(WakeListener(connection, routes, _, block))
+  def make(connection: Connection, block: Duration, routes: Map[String, Waker]): ZIO[Scope, RedisFailure, WakeListener] =
+    val streams = Chunk.fromIterable(routes.keys)
+    for
+      resolved  <- ZIO.foreach(streams)(stream => position(connection, stream).map(stream -> _))
+      positions <- Ref.make(resolved.toMap)
+      readers   <- ZIO.foreach(grouped(connection.clustered, streams)): group =>
+                     connection.listening.map(_ -> group)
+    yield WakeListener(readers, routes, positions, block)
+
+  /**
+   * The streams, grouped by what one `XREAD` may name.
+   *
+   * On a cluster that is a slot: a multi-key read across slots is refused, and the bucket tags exist
+   * precisely to spread slots. On a single server there are no slots, so every stream shares one read —
+   * one connection, one fiber.
+   *
+   * @param clustered whether the store is a cluster
+   * @param streams every wake stream
+   * @return the groups, each safe for one read
+   */
+  private def grouped(clustered: Boolean, streams: Chunk[String]): Chunk[Chunk[String]] =
+    if clustered then Chunk.fromIterable(streams.groupBy(SlotHash.getSlot(_): Int).values)
+    else Chunk(streams)
 
   /**
    * A listener over the queue's bucket wake streams, all waking one readiness — the queue's usual wiring.
@@ -164,7 +199,7 @@ object WakeListener:
    * @param block how long one read waits before going round again
    * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
    */
-  def make(connection: Connection, readiness: Readiness, block: Duration): IO[RedisFailure, WakeListener] =
+  def make(connection: Connection, readiness: Readiness, block: Duration): ZIO[Scope, RedisFailure, WakeListener] =
     make(connection, block, Namespace.wakeStreams.toChunk.map(s => s -> (readiness: Waker)).toMap)
 
   /**

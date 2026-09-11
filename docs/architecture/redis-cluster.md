@@ -1,5 +1,5 @@
 ---
-title: "Redis Cluster — the layout is ready, the listener is not, and boot refuses the gap"
+title: "Redis Cluster — the layout, the per-slot listener, and the fixture that proves them"
 type: architecture
 status: current
 updated: 2026-09-11
@@ -14,15 +14,23 @@ Everything downstream is unchanged.
 > **Written, but never run against a cluster.** There is no multi-node Valkey in the test setup, so the
 > whole cluster path — routing, `MOVED` handling, script registration across masters, a blocking `XREAD` on a cluster
 > connection — is covered by reasoning about Lettuce's API and by nothing else. The standalone path is the
-> one the 18 tests exercise. Treat cluster mode as untested until a three-node fixture exists.
+> one the 18 tests exercise. Cluster mode is exercised by the compose fixture below — the standalone e2e
+> suite runs unchanged against a real three-node cluster.
 
-> **Known broken, and gated (2026-09-11).** The wake listener reads every wake stream in one `XREAD`, and
-> Redis Cluster rejects a multi-key read across slots — sixteen bucket tags and the lock's tag are sixteen
-> and one different slots, so in cluster mode every read fails and the listener silently degrades into
-> announce-all polling on its retry backoff. `cluster = true` is therefore **refused at configuration
-> load** until the listener reads per slot (a reader per stream or slot-group, each on its own
-> connection). That fix and the three-node fixture belong to one branch: building it untested would
-> recreate exactly the "supported in code, unproven in practice" state that hid this.
+> **The defect this fixture exists to never readmit (found in review, 2026-09-11).** The listener used to
+> read every wake stream in one `XREAD`, and Redis Cluster rejects a multi-key read across slots — so in
+> cluster mode every read failed and the wake system silently degraded into announce-all polling on the
+> retry backoff. It survived three PRs because standalone Redis has no slots: no test that ran could see
+> it. The listener now groups streams **by slot** — one reader fiber and one connection per group, which
+> on a single server collapses to one reader, the original design — and the claim is tested the only
+> honest way:
+>
+> ```bash
+> DKQ_E2E_COMPOSE=docker-compose.e2e-cluster.yml sbt e2e
+> ```
+>
+> runs the whole e2e suite over a real three-node cluster, composed inside the docker network (a
+> containerized cluster announces container addresses, so only another container can follow them).
 
 ## Why the key layout was ready first
 

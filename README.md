@@ -142,11 +142,12 @@ Settings are HOCON with an environment override for every key
 | `DKQ_LOCK_MAX_TTL` | `10 minutes` | the longest a single lock grant's lease may run; longer requests are clamped |
 
 Every instance is identical and stateless — the queue's state is entirely in Redis — so scaling out is
-running more of them against the same store. The key layout is cluster-ready: every key a queue uses
-carries its **bucket's** hash tag, so a queue's keys and the stream announcing them live in one slot, and
-the bucket count is **fixed in code at 16** — nothing to configure and nothing to get permanently wrong.
-**Cluster mode itself is refused at boot for now**: the wake listener reads all wake streams in one
-`XREAD`, which Redis Cluster rejects across slots; per-slot reads are pending, with a real cluster fixture
+running more of them against the same store. Redis Cluster is supported and tested: every key a queue uses
+carries its **bucket's** hash tag, so a queue's keys and the stream announcing them live in one slot; the
+bucket count is **fixed in code at 16** — nothing to configure and nothing to get permanently wrong — and
+the wake listener reads **per slot group**, one connection each, which on a single server collapses to one.
+The e2e suite runs against a real three-node cluster with
+`DKQ_E2E_COMPOSE=docker-compose.e2e-cluster.yml sbt e2e`
 ([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
 
 ## Building from source
