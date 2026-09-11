@@ -19,7 +19,8 @@ import java.nio.charset.StandardCharsets
  * is, and refuses to start an instance that disagrees.
  *
  * The lock's count is recorded even though it is not yet configurable, so the store already carries the
- * right claim when it becomes so.
+ * right claim when it becomes so. The schema version rides the same mechanism: the shape of the stored
+ * structures, gated exactly like the counts — see [[schemaVersion]] for what bumping it means.
  */
 object KeyLayout:
 
@@ -32,6 +33,24 @@ object KeyLayout:
   /** The lock's bucket count: fixed at one — a single `{dkq:locks}` slot — until bucketing lands. */
   private val lockBucketCount: Int = 1
 
+  /** Where the schema version is recorded. */
+  private val schema: String = "dkq:layout:schema"
+
+  /**
+   * The shape of everything this code stores: the queue's and the lock's structures, and the encodings
+   * written into them. '''Bump it on any change an older instance would misread''' — a structure changing
+   * type, a field changing meaning, an encoding changing form. That is a review discipline, not something
+   * the code can detect; an unbumped version makes the check vouch for a compatibility that is not there.
+   *
+   * Gate-only, deliberately: a mismatch is refused, never migrated, and the remedy is always drain or
+   * flush, then `layout accept`. What it does '''not''' cover is client-held state — a receipt format
+   * change breaks holds the store never sees, and no store-side marker can catch it.
+   */
+  private val schemaVersion: Int = 1
+
+  /** Every marker, for the drain check and the accept log. */
+  private val markers: Chunk[String] = Chunk(queueBuckets, lockBuckets, schema)
+
   /**
    * Check this instance's layout against the store's, recording it on a first boot.
    *
@@ -43,8 +62,24 @@ object KeyLayout:
    *         `RedisFailure` when it cannot be reached
    */
   def verify(config: QueueConfig): ZIO[Connection.Commands, ApplicationError, Unit] =
-    check(queueBuckets, "wake-buckets", config.wakeBuckets)
-      *> check(lockBuckets, "the lock's bucket count", lockBucketCount)
+    check(
+      queueBuckets,
+      "wake-buckets",
+      config.wakeBuckets,
+      "Changing it strands every key written under the old layout and breaks mutual exclusion on live state.",
+    )
+      *> check(
+        lockBuckets,
+        "the lock's bucket count",
+        lockBucketCount,
+        "Changing it strands every key written under the old layout and breaks mutual exclusion on live state.",
+      )
+      *> check(
+        schema,
+        "schema version",
+        schemaVersion,
+        "The stored structures have a different shape than this code expects, and running against them fails in ways no error message will explain.",
+      )
 
   /**
    * Overwrite the store's record with this instance's layout — the `layout accept` run mode.
@@ -63,12 +98,14 @@ object KeyLayout:
   def accept(config: QueueConfig): ZIO[Connection.Commands, ApplicationError, Unit] =
     for
       _        <- drained
-      previous <- ZIO.foreach(Chunk(queueBuckets, lockBuckets))(recorded)
+      previous <- ZIO.foreach(markers)(recorded)
       _        <- record(queueBuckets, config.wakeBuckets)
       _        <- record(lockBuckets, lockBucketCount)
+      _        <- record(schema, schemaVersion)
       _        <- ZIO.logInfo(
                     s"layout accepted: wake-buckets ${previous(0).getOrElse("unset")} -> ${config.wakeBuckets}, " +
-                      s"lock buckets ${previous(1).getOrElse("unset")} -> $lockBucketCount. " +
+                      s"lock buckets ${previous(1).getOrElse("unset")} -> $lockBucketCount, " +
+                      s"schema ${previous(2).getOrElse("unset")} -> $schemaVersion. " +
                       "Start instances only now: a running instance checks its layout at boot and never again."
                   )
     yield ()
@@ -85,9 +122,9 @@ object KeyLayout:
     Connection.use: redis =>
       ZIO
         .attemptBlocking {
-          val keys    = redis.dbsize()
-          val markers = Chunk(queueBuckets, lockBuckets).count(key => redis.exists(key) > 0)
-          keys - markers
+          val keys     = redis.dbsize()
+          val recorded = markers.count(key => redis.exists(key) > 0)
+          keys - recorded
         }
         .mapError(error => RedisFailure.Unavailable(error.getMessage))
         .flatMap: others =>
@@ -120,18 +157,23 @@ object KeyLayout:
    * @param key the marker
    * @param setting what to call the number in a refusal
    * @param configured this instance's value
+   * @param consequence what running with the mismatch would break, for the refusal's message
    * @return noop; aborts with `Misconfigured` when the recorded value differs or cannot be read
    */
-  private def check(key: String, setting: String, configured: Int): ZIO[Connection.Commands, ApplicationError, Unit] =
+  private def check(
+    key: String,
+    setting: String,
+    configured: Int,
+    consequence: String,
+  ): ZIO[Connection.Commands, ApplicationError, Unit] =
     claimed(key, configured).flatMap:
       case None                                              => ZIO.unit // first boot: this instance's layout is now the store's
       case Some(recorded) if recorded == configured.toString => ZIO.unit
       case Some(recorded)                                    =>
         ZIO.fail:
           Misconfigured:
-            s"this store was written with $setting = $recorded, but this instance is configured with " +
-              s"$configured. Changing it strands every key written under the old layout and breaks mutual " +
-              s"exclusion on live state. If the store has been drained (or flushed) on purpose, run the " +
+            s"this store was written with $setting = $recorded, but this instance expects $configured. " +
+              s"$consequence If the store has been drained (or flushed) on purpose, run the " +
               s"'layout accept' mode once to record the new layout."
 
   /**

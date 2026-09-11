@@ -56,7 +56,11 @@ ceremony, in this order: **stop every instance**, drain the store (no queued wor
 or holds) or flush it, run the `layout accept` mode once, then start instances. `accept` verifies the
 drain itself — it refuses while any key beyond the markers exists — but it cannot see instances, and a
 running one checks its layout at boot and never again. The lock's count is recorded too (fixed at one until
-lock bucketing exists), so the check is already in place when it becomes configurable.
+lock bucketing exists), so the check is already in place when it becomes configurable. A **schema version**
+rides the same markers: the shape of the stored structures, bumped in code whenever an older instance would
+misread them (a structure changing type, an encoding changing form) and gated exactly like the counts —
+never migrated, always drained. It cannot cover client-held state such as receipts, which no store-side
+marker can see.
 
 Two consequences are easy to undo by accident:
 

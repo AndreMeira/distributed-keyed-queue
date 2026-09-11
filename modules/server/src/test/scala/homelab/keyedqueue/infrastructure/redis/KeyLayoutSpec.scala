@@ -98,4 +98,24 @@ object KeyLayoutSpec extends ZIOSpecDefault:
         emptied.isSuccess,
       )
     },
+    test("a schema the code does not expect refuses the boot, and accept records the code's own") {
+      // The store claims a schema this code never wrote — the shape of an incompatible predecessor. The
+      // boot must refuse before touching structures it would misread, and accept (drained: markers only)
+      // re-stamps the code's version.
+      val predecessor = Connection.use: redis =>
+        ZIO.attemptBlocking(redis.set("dkq:layout:schema", "999".getBytes)).unit
+      for
+        conf     <- ZIO.service[QueueConfig]
+        _        <- boot(conf)(predecessor)
+        refused  <- boot(conf)(KeyLayout.verify(conf)).exit
+        _        <- boot(conf)(KeyLayout.accept(conf))
+        restored <- boot(conf)(KeyLayout.verify(conf)).exit
+      yield assertTrue(
+        refused.causeOption.flatMap(_.failureOption).exists {
+          case Misconfigured(reason) => reason.contains("schema") && reason.contains("999")
+          case _                     => false
+        },
+        restored.isSuccess,
+      )
+    },
   ).provideSomeShared[Scope](substrate) @@ TestAspect.sequential @@ TestAspect.timeout(3.minutes)
