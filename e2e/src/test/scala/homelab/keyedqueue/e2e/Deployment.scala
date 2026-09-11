@@ -2,6 +2,7 @@ package homelab.keyedqueue.e2e
 
 
 import homelab.keyedqueue.v1.HeartbeatRequest
+import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLockClient
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
 import io.grpc.ManagedChannelBuilder
 import scalapb.zio_grpc.ZManagedChannel
@@ -30,6 +31,14 @@ final case class Deployment(a: Instance, b: Instance, run: String):
    * @return that name, made unique to this run
    */
   def queue(name: String): String = s"$name-$run"
+
+  /**
+   * A lock name nothing else will use — [[queue]]'s reasoning, for the lock's namespace.
+   *
+   * @param name what the test calls the lock
+   * @return that name, made unique to this run
+   */
+  def lock(name: String): String = s"$name-$run"
 
   /** Both instances, in the order the compose file declares them. */
   def both: Chunk[Instance] = Chunk(a, b)
@@ -83,7 +92,8 @@ object Deployment:
                      .unless(addresses.size == 2)
       clients   <- ZIO.foreach(addresses)(connect)
       run       <- ZIO.withRandom(Random.RandomLive)(Random.nextInt).map(value => f"${value & 0xffffff}%06x")
-      instances  = Compose.instances.zip(addresses).zip(clients).map(Instance(_, _, _))
+      instances  = Compose.instances.zip(addresses).zip(clients).map:
+                     case (name, address, (queue, lock)) => Instance(name, address, queue, lock)
       deployment = Deployment(instances(0), instances(1), run)
       _         <- ZIO.foreachDiscard(deployment.both)(ready)
     yield deployment
@@ -136,14 +146,15 @@ object Deployment:
    * a different service from the one that ships.
    *
    * @param address `host:port`
-   * @return the client; fails when the address cannot be parsed
+   * @return the queue and lock clients, each over its own channel; fails when the address cannot be parsed
    */
-  private def connect(address: String): ZIO[Scope, Throwable, KeyedQueueClient] =
+  private def connect(address: String): ZIO[Scope, Throwable, (KeyedQueueClient, KeyedLockClient)] =
     val Array(host, port) = address.split(":"): @unchecked
     ZIO
       .attempt(port.toInt)
       .flatMap: number =>
         KeyedQueueClient.scoped(ZManagedChannel(ManagedChannelBuilder.forAddress(host, number).usePlaintext()))
+          <*> KeyedLockClient.scoped(ZManagedChannel(ManagedChannelBuilder.forAddress(host, number).usePlaintext()))
 
   /**
    * Wait until an instance answers a call.
