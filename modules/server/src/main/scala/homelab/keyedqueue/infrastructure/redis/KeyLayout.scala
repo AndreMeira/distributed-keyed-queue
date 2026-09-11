@@ -92,9 +92,12 @@ object KeyLayout:
     Connection.use: redis =>
       ZIO
         .attemptBlocking {
-          val keys   = redis.dbsize()
-          val marker = if redis.exists(schema) > 0 then 1 else 0
-          keys - marker
+          // EXISTS counts named keys that are present (0 or 1 here) — the marker's value is not read.
+          // The marker itself is the one key a drained store may legitimately hold, so it is excluded
+          // from the count of leftover state.
+          val keys          = redis.dbsize()
+          val markerPresent = redis.exists(schema)
+          keys - markerPresent
         }
         .mapError(error => RedisFailure.Unavailable(error.getMessage))
         .flatMap: others =>
