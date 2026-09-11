@@ -43,7 +43,9 @@ object KeyLayoutSpec extends ZIOSpecDefault:
    * @param effect what to run against the store
    * @return what the effect returns
    */
-  private def boot[A](configured: QueueConfig)(
+  private def boot[A](
+    configured: QueueConfig
+  )(
     effect: ZIO[Connection.Commands, Any, A]
   ): ZIO[Scope, Any, A] =
     Connection
