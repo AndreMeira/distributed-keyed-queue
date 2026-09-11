@@ -1,6 +1,8 @@
 package homelab.keyedqueue.infrastructure.redis.script
 
+
 import homelab.keyedqueue.domain.types.LockName
+import homelab.keyedqueue.infrastructure.redis.KeyLayout
 
 
 /**
@@ -20,22 +22,22 @@ object LockKeys:
   private val tag: String = "{dkq:locks}"
 
   /** Held leases, `name -> deadline`. */
-  val held: String = s"$tag:held"
+  val held: String = s"$tag:${KeyLayout.segment}:held"
 
   /** Live holders' fence tokens, `name -> token`; an entry dies with its hold. */
-  val tokens: String = s"$tag:tokens"
+  val tokens: String = s"$tag:${KeyLayout.segment}:tokens"
 
   /** The fence counter, one for every lock; the only key that outlives a hold. */
-  val fence: String = s"$tag:fence"
+  val fence: String = s"$tag:${KeyLayout.segment}:fence"
 
   /** Which locks have waiters, `name -> the latest ticket deadline` — what the trim prunes dead lists by. */
-  val waiting: String = s"$tag:waiting"
+  val waiting: String = s"$tag:${KeyLayout.segment}:waiting"
 
   /** What a lock's waiters-list key starts with; the name completes it. */
-  val waitersPrefix: String = s"$tag:waiters:"
+  val waitersPrefix: String = s"$tag:${KeyLayout.segment}:waiters:"
 
   /** The wake stream a release appends to, read by the shared listener. */
-  val wake: String = s"$tag:wake"
+  val wake: String = s"$tag:${KeyLayout.segment}:wake"
 
   /**
    * One lock's waiters list: its tickets, in arrival order. Exists only while someone queues.

@@ -21,7 +21,7 @@ import java.nio.charset.StandardCharsets
  */
 object KeyLayout:
 
-  /** Where the schema version is recorded. */
+  /** Where the schema version is recorded. Deliberately version-less: it is the fence every version reads. */
   private val schema: String = "dkq:layout:schema"
 
   /**
@@ -34,8 +34,15 @@ object KeyLayout:
    * Gate-only, deliberately: a mismatch is refused, never migrated, and the remedy is always drain or
    * flush, then `layout accept`. What it does '''not''' cover is client-held state — a receipt format
    * change breaks holds the store never sees, and no store-side marker can catch it.
+   *
+   * '''Written into every key''' as [[segment]], so a version's state stays findable by pattern long after
+   * the code that shaped it is gone — the property a future migration worker stands on
+   * (`docs/research/schema-versioned-keys.md`).
    */
-  private val schemaVersion: Int = 1
+  val schemaVersion: Int = 1
+
+  /** The schema version as every key carries it, between the hash tag and the rest of the name. */
+  val segment: String = s"v$schemaVersion"
 
   /**
    * Check this code's schema against the store's, recording it on a first boot.

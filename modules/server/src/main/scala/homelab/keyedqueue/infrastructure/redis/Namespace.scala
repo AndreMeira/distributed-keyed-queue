@@ -14,6 +14,11 @@ import zio.{ Chunk, NonEmptyChunk }
  * stream that announces them in one slot, exactly as tagging by queue did, while letting many queues share
  * one wake stream.
  *
+ * '''Every key carries the schema version''' — `{w:3}:v1:q:jobs:ready` — after the tag, deliberately: a
+ * key's incarnations under different schemas share a slot, so a future migration step can move state
+ * between versions atomically in one script. The version makes any schema's leftovers findable by pattern
+ * without knowing its shapes (`docs/research/schema-versioned-keys.md`).
+ *
  * '''Why share a wake stream at all.''' A listener's `XREAD` names the streams it was issued with, so a
  * per-queue stream means the set of streams grows as queues are served, and a queue added while a read is
  * in flight goes unheard until that read returns. A fixed set of buckets is heard from the first read
@@ -27,7 +32,7 @@ final case class Namespace(queue: QueueName):
   val bucket: Int = Namespace.bucketOf(queue)
 
   /** The tag every key shares, and what the scripts rebuild the per-key names from. */
-  val prefix: String = s"${Namespace.tag(bucket)}:q:$queue"
+  val prefix: String = s"${Namespace.tag(bucket)}:${KeyLayout.segment}:q:$queue"
 
   /**
    * Keys with work and nobody working them, scored by when each became claimable.
@@ -129,7 +134,7 @@ object Namespace:
    * @param bucket the bucket
    * @return the stream name
    */
-  def wake(bucket: Int): String = s"${tag(bucket)}:wake"
+  def wake(bucket: Int): String = s"${tag(bucket)}:${KeyLayout.segment}:wake"
 
   /**
    * Which bucket a queue falls in.
