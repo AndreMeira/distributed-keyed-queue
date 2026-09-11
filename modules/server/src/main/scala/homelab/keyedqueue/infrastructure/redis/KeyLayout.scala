@@ -21,7 +21,7 @@ import java.nio.charset.StandardCharsets
  * The lock's count is recorded even though it is not yet configurable, so the store already carries the
  * right claim when it becomes so.
  */
-object Layout:
+object KeyLayout:
 
   /** Where the queue's bucket count is recorded. */
   private val queueBuckets: String = "dkq:layout:queue-buckets"

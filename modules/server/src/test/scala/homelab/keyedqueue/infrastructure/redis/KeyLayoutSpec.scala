@@ -15,7 +15,7 @@ import zio.test.*
  * wrong layout. `accept` is the deliberate override, so after it the once-mismatched count is the
  * recorded one.
  */
-object LayoutSpec extends ZIOSpecDefault:
+object KeyLayoutSpec extends ZIOSpecDefault:
 
   /** A Valkey container for the suite, and the config to reach it. */
   private val substrate: ZLayer[Any, Any, QueueConfig] =
@@ -50,20 +50,20 @@ object LayoutSpec extends ZIOSpecDefault:
       .make(Connection.Config(configured.maxWait, configured.redisUrl, configured.cluster))
       .flatMap(_.provide(effect))
 
-  def spec: Spec[TestEnvironment & Scope, Any] = suite("Layout")(
+  def spec: Spec[TestEnvironment & Scope, Any] = suite("KeyLayout")(
     test("a first boot records the layout, and a matching boot passes ever after") {
       for
         conf  <- ZIO.service[QueueConfig]
-        _     <- boot(conf)(Layout.verify(conf))
-        again <- boot(conf)(Layout.verify(conf)).exit
+        _     <- boot(conf)(KeyLayout.verify(conf))
+        again <- boot(conf)(KeyLayout.verify(conf)).exit
       yield assertTrue(again.isSuccess)
     },
     test("a mismatched boot refuses, naming both numbers, and serves nothing") {
       for
         conf    <- ZIO.service[QueueConfig]
-        _       <- boot(conf)(Layout.verify(conf))
+        _       <- boot(conf)(KeyLayout.verify(conf))
         other    = config(conf.redisUrl, buckets = 4)
-        refused <- boot(other)(Layout.verify(other)).exit
+        refused <- boot(other)(KeyLayout.verify(other)).exit
       yield assertTrue(refused.causeOption.flatMap(_.failureOption).exists {
         case Misconfigured(reason) => reason.contains("1") && reason.contains("4") && reason.contains("layout accept")
         case _                     => false
@@ -72,11 +72,11 @@ object LayoutSpec extends ZIOSpecDefault:
     test("accept overrides deliberately: the once-refused layout is then the recorded one") {
       for
         conf     <- ZIO.service[QueueConfig]
-        _        <- boot(conf)(Layout.verify(conf))
+        _        <- boot(conf)(KeyLayout.verify(conf))
         other     = config(conf.redisUrl, buckets = 4)
-        _        <- boot(other)(Layout.accept(other))
-        accepted <- boot(other)(Layout.verify(other)).exit
-        original <- boot(conf)(Layout.verify(conf)).exit
+        _        <- boot(other)(KeyLayout.accept(other))
+        accepted <- boot(other)(KeyLayout.verify(other)).exit
+        original <- boot(conf)(KeyLayout.verify(conf)).exit
       yield assertTrue(accepted.isSuccess, original.isFailure)
     },
   ).provideSomeShared[Scope](substrate) @@ TestAspect.sequential @@ TestAspect.timeout(3.minutes)

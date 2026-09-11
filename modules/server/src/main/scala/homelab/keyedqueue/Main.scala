@@ -4,7 +4,7 @@ package homelab.keyedqueue
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.application.grpc.v1.GrpcApplication
 import homelab.keyedqueue.infrastructure.configuration.{ Misconfigured, QueueConfig }
-import homelab.keyedqueue.infrastructure.redis.{ Connection, Layout }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, KeyLayout }
 import homelab.keyedqueue.infrastructure.redis.Module as RedisModule
 import zio.*
 
@@ -13,7 +13,7 @@ import zio.*
  * Entry point: dispatch on CLI args to pick a run mode.
  *
  * No arguments serves; `layout accept` records this configuration's layout in the store and exits — the
- * deliberate half of the ceremony the boot check in [[Layout]] enforces. An operational task is a mode of
+ * deliberate half of the ceremony the boot check in [[KeyLayout]] enforces. An operational task is a mode of
  * the same binary rather than a second one, so it runs with exactly the configuration the service would.
  */
 object Main extends ZIOAppDefault:
@@ -46,5 +46,5 @@ object Main extends ZIOAppDefault:
    */
   private def accept(conf: QueueConfig): ZIO[Any, ApplicationError, Unit] =
     ZIO
-      .serviceWithZIO[Connection](_.provide(Layout.accept(conf)))
+      .serviceWithZIO[Connection](_.provide(KeyLayout.accept(conf)))
       .provide(ZLayer.succeed(conf), RedisModule.connection)
