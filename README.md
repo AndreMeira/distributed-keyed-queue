@@ -142,11 +142,11 @@ Settings are HOCON with an environment override for every key
 | `DKQ_LOCK_MAX_TTL` | `10 minutes` | the longest a single lock grant's lease may run; longer requests are clamped |
 
 Every instance is identical and stateless — the queue's state is entirely in Redis — so scaling out is
-running more of them against the same store. Redis Cluster is supported: every key a queue uses carries its
-**bucket's** hash tag, so a queue's keys and the stream announcing them live in one slot, and sharding
-spreads buckets across nodes. The bucket count is **fixed in code at 16** — a ceiling on spread far above
-any realistic cluster for one service, at an overhead indistinguishable from a single stream — so there is
-nothing to configure and nothing to get permanently wrong
+running more of them against the same store. The key layout is cluster-ready: every key a queue uses
+carries its **bucket's** hash tag, so a queue's keys and the stream announcing them live in one slot, and
+the bucket count is **fixed in code at 16** — nothing to configure and nothing to get permanently wrong.
+**Cluster mode itself is refused at boot for now**: the wake listener reads all wake streams in one
+`XREAD`, which Redis Cluster rejects across slots; per-slot reads are pending, with a real cluster fixture
 ([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
 
 ## Building from source

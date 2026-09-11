@@ -57,7 +57,11 @@ final class WakeListener(
   def run: UIO[Nothing] =
     read
       .flatMap(announce)
-      .catchAll(_ => announceAll *> ZIO.sleep(WakeListener.retryBackoff))
+      .catchAll: error =>
+        // Announce-all is the safe recovery for a missed read — but a listener that lands here every
+        // round has degraded into interval polling, which the log line is here to make visible.
+        ZIO.logWarning(s"wake read failed, announcing all as recovery: ${error.message}")
+          *> announceAll *> ZIO.sleep(WakeListener.retryBackoff)
       .forever *> ZIO.never
 
   /**

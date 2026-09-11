@@ -91,6 +91,13 @@ object QueueConfig:
    */
   private def bounded(config: QueueConfig): IO[ApplicationError, QueueConfig] =
     val problems = Chunk(
+      // Not a bound but the same kind of refusal: the wake listener reads every wake stream in one XREAD,
+      // which Redis Cluster rejects across slots — so cluster mode would silently degrade into polling.
+      // Refused until the listener reads per slot, against a real cluster fixture (redis-cluster.md).
+      Option.when(config.cluster)(
+        "cluster = true is not yet supported: the wake listener reads all wake streams in one XREAD, " +
+          "which Redis Cluster rejects across slots. See docs/architecture/redis-cluster.md"
+      ),
       Option.when(config.leaseTtl.toMillis <= 0)("lease-ttl must be greater than zero"),
       Option.when(config.sweepInterval.toMillis <= 0)("sweep-interval must be greater than zero"),
       Option.when(config.sweepLimit <= 0)("sweep-limit must be greater than zero"),

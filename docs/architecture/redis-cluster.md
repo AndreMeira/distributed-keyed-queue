@@ -1,5 +1,5 @@
 ---
-title: "Redis Cluster — supported in code, unproven in practice"
+title: "Redis Cluster — the layout is ready, the listener is not, and boot refuses the gap"
 type: architecture
 status: current
 updated: 2026-09-11
@@ -15,6 +15,14 @@ Everything downstream is unchanged.
 > whole cluster path — routing, `MOVED` handling, script registration across masters, a blocking `XREAD` on a cluster
 > connection — is covered by reasoning about Lettuce's API and by nothing else. The standalone path is the
 > one the 18 tests exercise. Treat cluster mode as untested until a three-node fixture exists.
+
+> **Known broken, and gated (2026-09-11).** The wake listener reads every wake stream in one `XREAD`, and
+> Redis Cluster rejects a multi-key read across slots — sixteen bucket tags and the lock's tag are sixteen
+> and one different slots, so in cluster mode every read fails and the listener silently degrades into
+> announce-all polling on its retry backoff. `cluster = true` is therefore **refused at configuration
+> load** until the listener reads per slot (a reader per stream or slot-group, each on its own
+> connection). That fix and the three-node fixture belong to one branch: building it untested would
+> recreate exactly the "supported in code, unproven in practice" state that hid this.
 
 ## Why the key layout was ready first
 
