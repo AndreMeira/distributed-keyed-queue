@@ -2,7 +2,7 @@
 title: "What dkq keeps in Redis, and what each structure is for"
 type: architecture
 status: current
-updated: 2026-09-05
+updated: 2026-09-11
 tags: [redis, keys, data-structures, lua, claims, ordering, streams]
 ---
 
@@ -17,10 +17,12 @@ apart from `claim.lua` and `sweep.lua`, which rebuild the per-key ones at runtim
 
 ## The layout
 
-Everything a queue owns is prefixed `{w:<bucket>}:q:<queue>`, where the bucket is
-`hash(queue) % 16` (the bucket count is a constant of the code) and decides which cluster slot the queue lives in. Six structures belong to
+Everything a queue owns is prefixed `{w:<bucket>}:v1:q:<queue>`, where the bucket is
+`hash(queue) % 16` (the bucket count is a constant of the code) and decides which cluster slot the queue
+lives in, and `v1` is the schema version every key carries
+([`../research/schema-versioned-keys.md`](../research/schema-versioned-keys.md)). Six structures belong to
 the queue and three to a key inside it; the seventh, `wake`, belongs to the bucket and is shared by every
-queue in it. `{Q}` below is one queue's prefix, `{W}` its bucket's:
+queue in it. `{Q}` below is one queue's prefix, `{W}` its bucket's (version included in both):
 
 | key | type | maps | written by |
 |---|---|---|---|
@@ -156,5 +158,36 @@ would be a different slot, so the append could not share a script with the push 
 Tagging both by bucket is what keeps them together.
 
 The consequence is that **a bucket lives on one node**: sharding spreads buckets, never one queue and never
-one bucket. At the default of one bucket that is the whole service, which is right for a single node and no
-use in a cluster. See [`redis-cluster.md`](redis-cluster.md).
+one bucket. With sixteen buckets fixed in code, a single node simply holds them all, and a cluster spreads
+them. See [`redis-cluster.md`](redis-cluster.md).
+
+## The lock's structures
+
+The lock API shares the store but none of the queue's structures. Everything it owns is prefixed
+`{dkq:locks}:v1` — one hash tag for every lock, so one slot, which is what lets each script touch all of
+them atomically (bucketing the locks is deferred; see [`redis-cluster.md`](redis-cluster.md)). `{L}` below
+is that prefix:
+
+| key | type | maps | written by |
+|---|---|---|---|
+| `{L}:held` | zset | lock name → lease deadline, unix millis | acquire, grant, try, refresh, release, trim |
+| `{L}:tokens` | hash | lock name → the live holder's fence token | acquire, grant, try, release, trim |
+| `{L}:fence` | string | one counter for every lock | acquire, grant, try |
+| `{L}:waiting` | zset | lock name → the latest ticket deadline in its waiters list | acquire, grant, abandon, try, trim |
+| `{L}:waiters:<name>` | list | tickets `id:deadline`, arrival order; exists only while someone queues | acquire, grant, abandon, try |
+| `{L}:wake` | stream | one entry per lock freed, naming it | release, trim |
+
+**The fence is one counter for every lock, and `tokens` is why it can be.** Fences need only increase per
+lock, which a globally increasing number satisfies a fortiori — while a per-lock counter could never be
+deleted, since the next grant must exceed every fence ever issued for the name. So the counter is the one
+key that outlives holds; `tokens` names the live holder and dies with its hold. The counter also mints
+ticket ids — identity only, never a fence, which is always `INCR`ed at grant.
+
+**The waiters list is the fairness.** Grants follow ticket order among tickets still within their
+patience; a waiter's patience is its ticket's deadline, so dead waiters are pruned from the head inline —
+no heartbeats, no registry. `waiting` is the index the trim uses to find lists whose every ticket expired
+unseen.
+
+**Nothing sweeps the lock.** Acquire is named, so an expired lease is reclaimed inline by the next grant;
+the trim that runs on a timer is hygiene for holds and waiter lists nobody will ask for again, not
+liveness. The full contract is [`lock-guarantees.md`](lock-guarantees.md).
