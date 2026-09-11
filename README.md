@@ -77,6 +77,27 @@ and the **lease expiry**. Every `Settle` names the receipt and what became of wh
 that works longer than the lease must `Heartbeat` on a tick, and must stop the moment a heartbeat reports a
 claim stale — that is the half of the contract DKQ cannot enforce for you.
 
+### The lock
+
+The same store also serves a **distributed lock** — the queue's distilled core, for callers that want
+per-key exclusivity without messages. Three unary RPCs, defined in
+[`keyed_lock_service.proto`](modules/protocol/src/main/protobuf/homelab/keyedqueue/v1/keyed_lock_service.proto):
+
+```proto
+service KeyedLock {
+  rpc Acquire (AcquireRequest) returns (AcquireResponse);  // take a named lock, waiting up to max_wait
+  rpc Release (ReleaseRequest) returns (ReleaseResponse);  // free a lock this caller holds
+  rpc Refresh (RefreshRequest) returns (RefreshResponse);  // extend a held lock's lease
+}
+```
+
+An `Acquire` answers with a **receipt** (for releasing and refreshing) and a **fence** — a number strictly
+larger on every later grant of the same lock. Stamp the writes the lock protects with it, and have the
+thing being written reject stale fences: a lease alone cannot stop a stalled holder's write from landing,
+and the fence is what makes that harmless. Grants are **fair** — waiters are served in the order the
+service saw them ask, and a newcomer cannot barge past the queue. The full contract is
+[`docs/architecture/lock-guarantees.md`](docs/architecture/lock-guarantees.md).
+
 ## Using it from a service
 
 Two artifacts are published to GitHub Packages: `distributed-keyed-queue-protocol` (the message types) and
