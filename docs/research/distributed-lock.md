@@ -2,8 +2,8 @@
 title: "A distributed lock on DKQ — as a client of itself, and when to graduate off that"
 type: research
 status: draft
-updated: 2026-09-10
-tags: [distributed-lock, fencing, lease, self-client, baton, substrate, architecture]
+updated: 2026-09-11
+tags: [distributed-lock, fencing, lease, self-client, baton, substrate, architecture, fairness, tickets]
 ---
 
 # A distributed lock on DKQ — as a client of itself, and when to graduate off that
@@ -131,9 +131,8 @@ substrate-specific rather than a third port.
 
 ## Non-goals (either design)
 
-Reentrancy (same holder re-acquiring — needs holder identity and a count), fairness among waiters (readiness
-wakes one *arbitrary* waiter, not FIFO — fine for mutual exclusion; FIFO is the ZooKeeper
-watch-your-predecessor recipe, a later thing), and lock hierarchies. Say no to all for a first cut.
+Reentrancy (same holder re-acquiring — needs holder identity and a count) and lock hierarchies. Fairness
+was on this list for the first cut; it graduated to a design of its own — see the ticket addendum below.
 
 ## Open questions
 
@@ -144,3 +143,100 @@ watch-your-predecessor recipe, a later thing), and lock hierarchies. Say no to a
    pointless — worth scoping before building anything lock-specific.
 3. Is a lock's baton `attempts` growth ever a problem, or purely cosmetic? Only matters if poison-detection
    is ever wired to act on the count.
+
+## Addendum (2026-09-11): the fence became one global counter
+
+The sibling store was built, and one structure changed on the way: the per-lock `fence` hash
+(`name -> HINCRBY`) became a single global `INCR` counter plus a `tokens` hash (`name -> the live holder's
+token`) that is deleted on release.
+
+Why: fences only need comparing within one lock, and a globally increasing number satisfies that a
+fortiori — but a *per-lock* counter can never be deleted, because monotonicity must outlive the hold (the
+next grant for a name must exceed every fence ever issued for it, or a stale holder's number could win
+downstream). Per-name counters therefore grow with every lock name ever used. With the counter global, the
+only key that outlives a hold is one integer; the per-name entry carries no history and dies with its
+release.
+
+The residue that remained — a holder that dies and whose lock is never acquired again leaves one `held`
+member and one `tokens` field — is closed by a watchdog-style cleanup fiber (same day): every instance runs
+a batch-limited trim every `DKQ_LOCK_TRIM_INTERVAL`, removing holds expired longer than
+`DKQ_LOCK_TRIM_GRACE` and waking any waiter on each. The grace bounds the "late, not lost" refresh window,
+which is now an explicit contract rather than an accident of nothing cleaning up.
+
+## Addendum (2026-09-11): fairness — the ticket design
+
+The dedicated store shipped unfair, and it turns out the self-client would have been too: the queue's FIFO
+orders *messages within a key*, never *competing consumers* — a re-enqueued baton wakes every blocked
+dequeuer and they race `claim.lua`, exactly as the lock's waiters race `tryAcquire`. Fairness was never on
+offer from either design, because it needs something neither has: **an ordered record of waiters in the
+store**. The queue keeps an ordered list of messages with a lease and recovery; nothing keeps an ordered
+list of waiters.
+
+The reason a waiter list looked expensive — waiters would need leases and heartbeats, rebuilding the
+queue's claim machinery — dissolves on one observation: **a waiter's patience is already its deadline.**
+Acquire knows, at registration, the exact instant this waiter stops mattering. A ticket carries it, and
+dead waiters cost nothing beyond an inline prune.
+
+### The design
+
+- **Ticket on acquire.** The blocking acquire's first act is one script call that either grants immediately
+  (lock free, no live tickets ahead) or appends a ticket `(id, deadline)` to a per-name waiters list —
+  `{dkq:locks}:waiters:<name>`, built from the shared prefix the way `claim.lua` builds per-key structures,
+  so it stays in the slot. `id` from the global counter (identity only — order is list position; it cannot
+  double as the fence, see below), `deadline` = this waiter's patience end on the store's clock. The list is
+  transient: created by the first waiter, deleted when the last ticket leaves.
+- **Grant condition.** Lock free (or lease expired — inline reclaim as today) *and* my ticket is head among
+  live tickets. The granting script prunes expired tickets from the head first, so an abandoned waiter
+  delays nobody past its own patience.
+- **Wake stays broadcast.** Release and trim append to the wake stream as today; every parked waiter
+  re-runs the granting script; only the head can win, so the race becomes a check. Losers repark.
+- **Barging dies structurally.** A newcomer's ticket goes to the tail, and `tryAcquire` refuses whenever
+  live tickets exist — "free now" means free *and unclaimed by anyone who queued first*.
+- **Abandon.** A waiter whose patience elapses removes its ticket on the way out (best effort; the prune is
+  the backstop).
+
+### Why the ticket id is not the fence
+
+Tempting — both come from the same counter — but the fence must be minted **at grant**, not at
+registration. A waiter registers ticket 10 while the lock is held under fence 12 (registration during a
+hold is what waiting *is*); granting it fence 10 after release would hand out a fence below one already
+seen downstream. Ticket order decides *who*; a fresh `INCR` at grant decides *what number*, and stays
+per-lock monotonic.
+
+### The edge that forces deadline-aware waiting
+
+Head ticket expires while the lock sits free: no release is coming, so nothing wakes ticket two — it would
+sleep out its whole patience beside an available lock. The granting script therefore returns, with every
+refusal, the earliest instant the answer can change (lease expiry when held, head-ticket deadline when
+queued behind the head), and the waiter parks until `min(that, own patience)` instead of parking blind.
+Reactive, not polling: each re-check is at a *known event time*, the same discipline that kept the backstop
+out of the wake path. This is the deadline-aware wait already wanted for the dead-holder case; the two
+needs share one mechanism.
+
+### Hygiene
+
+A waiters list whose every ticket expired unseen (no later acquire ever visits the name) is the same
+abandoned-residue shape the trim already handles for holds, and joins the same pass: an index of waiting
+names with their latest ticket deadline lets the cleanup delete dead lists past the grace, batch-limited.
+
+### What it costs, what it changes
+
+Roughly: the acquire script grows a ticket branch, one granting script, one abandon script, one transient
+structure plus its index, and the store's wait loop learns deadlines. The contract sharpens rather than
+changes: grants follow registration order among waiters still within patience; `tryAcquire` refuses when a
+queue exists; patience still bounds everything; mutual exclusion and the fence are untouched. This is the
+ZooKeeper watch-your-predecessor recipe (`zookeeper-ideas.md`) with broadcast wake standing in for the
+predecessor watch — the store keeps the order, the instances keep no state.
+
+### Built (same day), and one thing implementation taught the design
+
+The ticket design above is implemented — `try`/`acquire`/`grant`/`abandon` scripts, the waiters list and
+`waiting` index, deadline-aware parking, trim deleting dead lists — with one discovery the sketch missed:
+**`Readiness` cannot carry a fair lock's wake.** Its one-token-one-consumer hand-off is the queue's whole
+point (any woken consumer can claim whatever is ready), but under tickets only the head may proceed — so a
+non-head waiter eats the token, is refused, and the head is never woken. The contention spec caught it as a
+stall. The lock now wakes through a `Broadcast` (every parked waiter's mailbox, subscribed *before* the
+enter so no release slips into the gap), and the listener routes each stream to either shape through one
+small `Waker` face. The cost is as priced: one grant attempt per local waiter per event, each a check the
+store answers by ticket order.
+

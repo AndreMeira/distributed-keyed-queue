@@ -2,75 +2,224 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.error.ApplicationError
+import homelab.keyedqueue.domain.model.{ Acquisition, LockClaim }
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.lock.LockStore.Hold
-import homelab.keyedqueue.domain.types.QueueName
+import homelab.keyedqueue.domain.types.{ LockName, QueueName }
+import homelab.keyedqueue.infrastructure.redis.script.{ LockAcquireScript, LockGrantScript }
 import zio.*
 
 import java.time.Instant
 
 
 /**
- * The lock over Redis: three scripts, two structures, no sweep.
+ * The lock over Redis: fair by ticket, no sweep.
  *
- * '''Two structures, and no sweep.''' `held` (a zset of `name -> lease deadline`) and `fence` (a hash of
- * `name -> generation`) are all a lock needs — no `ready`, no `msgs`, nothing to order or carry. And
- * because [[LockScripts.acquire]] is named, it reclaims an expired lease inline, so a dead holder is
- * released by the next contender rather than a background pass. A lock holds no work, so a lock nobody
- * waits for needs no reclaiming — which is why there is no watchdog here.
+ * '''Order lives in the store.''' A blocking acquire that cannot be granted at once takes a tail ticket in
+ * the lock's waiters list, and grants follow ticket order among tickets still within their patience — so
+ * the instances keep no waiter state, and a newcomer cannot barge past the queue ([[tryAcquire]] refuses
+ * when live tickets exist). A dead holder is reclaimed inline by the next grant, a dead waiter is pruned at
+ * its own deadline; neither needs a background pass.
  *
- * '''Blocking acquire reuses the queue's readiness path.''' [[acquire]] loops the named try behind
- * [[Readiness]] exactly as `RedisQueueStore.claim` loops `attempt`. The wake is cross-instance: a real
- * release appends to a wake stream (in `lock_release.lua`, so it cannot precede the freeing and fires only
- * on a real release), and the shared [[WakeListener]] delivers it to every instance's readiness. A waiter
- * blocked on another instance wakes promptly — no polling, no backstop.
+ * '''Waiters park until a known event, not on a poll.''' Every refusal names the delay after which the
+ * answer can change — the lease's end when the lock is held, the head ticket's deadline when queued behind
+ * it — and the waiter parks on its [[Broadcast]] mailbox for at most that long. The wake is
+ * cross-instance: release and trim append to a wake stream in the same script that frees the lock, and the
+ * shared [[WakeListener]] delivers it to every instance's broadcast; every local waiter wakes and asks,
+ * only the head ticket can win, so the woken crowd is a check, not a race. The mailbox is subscribed
+ * before the enter, so no release can slip into the gap between asking and parking.
  *
  * @param connection where its connection comes from
  * @param scripts the loaded lock scripts
- * @param readiness where a waiter parks for a lock to be released
+ * @param broadcast where a waiter's wakes land
  */
 final class RedisLockStore(
   connection: Connection,
   scripts: LockScripts,
-  readiness: Readiness,
+  broadcast: Broadcast,
 ) extends LockStore:
 
-  override def tryAcquire(name: String, ttl: Duration): IO[RedisFailure, Option[Hold]] =
+  /** The least a waiter parks between grant attempts, so clock-boundary refusals cannot spin. */
+  private val floor: Duration = 10.millis
+
+  override def tryAcquire(acquisition: Acquisition): IO[RedisFailure, Option[Hold]] =
     connection.provide:
-      scripts.acquire.run(name, ttl)
+      scripts.tryAcquire.run(acquisition.name, acquisition.ttl)
 
-  override def acquire(name: String, ttl: Duration, patience: Duration): IO[RedisFailure, Option[Hold]] =
-    Clock.instant.flatMap(asked => acquireWithin(name, ttl, patience, asked))
+  override def acquire(acquisition: Acquisition): IO[RedisFailure, Option[Hold]] =
+    Clock.instant.flatMap: asked =>
+      ZIO.scoped:
+        broadcast
+          .subscribe(QueueName(acquisition.name))
+          .flatMap: mailbox =>
+            connection
+              .provide(scripts.acquire.run(acquisition.name, acquisition.ttl, acquisition.patience))
+              .flatMap:
+                case LockAcquireScript.Reply.Granted(hold)           => ZIO.some(hold)
+                case LockAcquireScript.Reply.Queued(ticket, recheck) =>
+                  queued(acquisition, asked, ticket, recheck, mailbox)
 
-  override def release(name: String, token: Long): IO[RedisFailure, Boolean] =
-    // The wake is the script's job now: lock_release.lua appends to the wake stream on a real release, and
-    // the shared listener delivers it to every instance's readiness — so a waiter on another instance wakes,
+  override def release(claim: LockClaim): IO[RedisFailure, Boolean] =
+    // The wake is the script's job: lock/release.lua appends to the wake stream on a real release, and the
+    // shared listener delivers it to every instance's readiness — so a waiter on another instance wakes,
     // which an in-process call could never reach.
-    connection.provide(scripts.release.run(name, token))
+    connection.provide(scripts.release.run(claim.name, claim.token))
 
-  override def refresh(name: String, token: Long, ttl: Duration): IO[RedisFailure, (Instant, Boolean)] =
+  override def refresh(claim: LockClaim, ttl: Duration): IO[RedisFailure, (Instant, Boolean)] =
     connection.provide:
-      scripts.refresh.run(name, token, ttl)
+      scripts.refresh.run(claim.name, claim.token, ttl)
+
+  override def trim(grace: Duration, limit: Int): IO[RedisFailure, Chunk[LockName]] =
+    connection.provide:
+      scripts.trim.run(grace, limit)
 
   /**
-   * Wait for a release, retry the acquire, until it succeeds or the patience is spent — the lock's twin of
-   * `RedisQueueStore.claimWithin`.
+   * Hold a ticket to the end: wait out the turns, and withdraw it on any exit that is not a grant.
    *
-   * @param name the lock to take
-   * @param ttl the hold length to request
-   * @param patience the total wait allowed
+   * The withdrawal is a finaliser, so a caller that is interrupted mid-wait leaves the queue rather than
+   * a ticket that delays the tail until its deadline.
+   *
+   * @param acquisition the lock being entered for
    * @param asked when the call arrived, which the patience is measured from
+   * @param ticket the ticket the enter minted
+   * @param recheck the first delay the enter named
    * @return the hold, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
    */
-  private def acquireWithin(name: String, ttl: Duration, patience: Duration, asked: Instant): IO[RedisFailure, Option[Hold]] =
-    remainingTime(patience, asked).flatMap:
+  private def queued(
+    acquisition: Acquisition,
+    asked: Instant,
+    ticket: Long,
+    recheck: Duration,
+    mailbox: Queue[Unit],
+  ): IO[RedisFailure, Option[Hold]] =
+    for
+      now       <- Clock.instant
+      ticketRef <- Ref.make(ticket)
+      recheckAt <- Ref.make(now.plus(atLeastFloor(recheck)))
+      result    <- awaitTurn(acquisition, asked, ticketRef, recheckAt, mailbox).onExit {
+                     case Exit.Success(Some(_)) => ZIO.unit
+                     case _                     => withdraw(acquisition.name, ticketRef)
+                   }
+    yield result
+
+  /**
+   * Wait for this ticket's turn, until granted or the patience is spent — the ticketed twin of
+   * `RedisQueueStore.claimWithin`.
+   *
+   * Parks until the earlier of the next known event and the remaining patience — a wake in the mailbox
+   * cuts the park short — then asks. Every ask is deliberate: it follows a wake, the arrival of the next
+   * known event, or the patience running out.
+   *
+   * @param acquisition the lock being entered for
+   * @param asked when the call arrived, which the patience is measured from
+   * @param ticket the ticket to ask with; re-minted when the queue no longer knows it
+   * @param recheckAt when the answer can next change, kept by the grant attempts
+   * @param mailbox where this waiter's wakes land
+   * @return the hold, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
+   */
+  private def awaitTurn(
+    acquisition: Acquisition,
+    asked: Instant,
+    ticket: Ref[Long],
+    recheckAt: Ref[Instant],
+    mailbox: Queue[Unit],
+  ): IO[RedisFailure, Option[Hold]] =
+    remainingTime(acquisition.patience, asked).flatMap:
       case None       => ZIO.none
       case Some(left) =>
-        readiness
-          .awaitReady(QueueName(name), left)(tryAcquire(name, ttl))
-          .flatMap:
+        untilRecheck(recheckAt, left).flatMap: window =>
+          val park = mailbox.take.timeout(window).unless(window.isZero)
+          (park *> turn(acquisition, ticket, recheckAt)).flatMap:
             case taken @ Some(_) => ZIO.succeed(taken)
-            case None            => acquireWithin(name, ttl, patience, asked)
+            case None            => awaitTurn(acquisition, asked, ticket, recheckAt, mailbox)
+
+  /**
+   * One grant attempt, keeping the ticket and the next event time current.
+   *
+   * A queue that no longer knows the ticket is re-entered: the caller keeps its patience but loses its
+   * place, which is the honest reading of a pruned ticket.
+   *
+   * @param acquisition the lock being entered for
+   * @param ticket the ticket to ask with
+   * @param recheckAt where the next event time is kept
+   * @return the hold, or `None` to keep waiting; aborts with `RedisFailure` when the store fails
+   */
+  private def turn(
+    acquisition: Acquisition,
+    ticket: Ref[Long],
+    recheckAt: Ref[Instant],
+  ): IO[RedisFailure, Option[Hold]] =
+    ticket.get.flatMap: id =>
+      connection
+        .provide(scripts.grant.run(acquisition.name, id, acquisition.ttl))
+        .flatMap:
+          case LockGrantScript.Reply.Granted(hold) => ZIO.some(hold)
+          case LockGrantScript.Reply.Wait(delay)   => nextEventIn(delay, recheckAt).as(None)
+          case LockGrantScript.Reply.Gone          => reenter(acquisition, ticket, recheckAt)
+
+  /**
+   * Enter again after the queue lost the ticket.
+   *
+   * @param acquisition the lock being entered for
+   * @param ticket where the fresh ticket replaces the lost one
+   * @param recheckAt where the next event time is kept
+   * @return the hold when the re-enter granted at once, `None` to keep waiting; aborts with `RedisFailure`
+   *         when the store fails
+   */
+  private def reenter(
+    acquisition: Acquisition,
+    ticket: Ref[Long],
+    recheckAt: Ref[Instant],
+  ): IO[RedisFailure, Option[Hold]] =
+    connection
+      .provide(scripts.acquire.run(acquisition.name, acquisition.ttl, acquisition.patience))
+      .flatMap:
+        case LockAcquireScript.Reply.Granted(hold)          => ZIO.some(hold)
+        case LockAcquireScript.Reply.Queued(fresh, recheck) =>
+          ticket.set(fresh) *> nextEventIn(recheck, recheckAt).as(None)
+
+  /**
+   * Note when the answer can next change.
+   *
+   * @param delay what the script named
+   * @param recheckAt where it is kept
+   * @return noop
+   */
+  private def nextEventIn(delay: Duration, recheckAt: Ref[Instant]): UIO[Unit] =
+    Clock.instant.flatMap(now => recheckAt.set(now.plus(atLeastFloor(delay))))
+
+  /**
+   * How long to park before the next known event, bounded by the patience left.
+   *
+   * @param recheckAt when the answer can next change
+   * @param left the patience remaining
+   * @return the park; zero when the event time has already passed
+   */
+  private def untilRecheck(recheckAt: Ref[Instant], left: Duration): UIO[Duration] =
+    recheckAt.get.zipWith(Clock.instant): (at, now) =>
+      val until = Duration.fromInterval(now, at)
+      if until.toMillis <= 0 then Duration.Zero
+      else if until.toMillis < left.toMillis then until
+      else left
+
+  /**
+   * A delay no shorter than the spin floor.
+   *
+   * @param delay what the script named
+   * @return that, or the floor, whichever is longer
+   */
+  private def atLeastFloor(delay: Duration): Duration =
+    if delay.toMillis < floor.toMillis then floor else delay
+
+  /**
+   * Withdraw the ticket, best effort.
+   *
+   * @param name the lock queued for
+   * @param ticket the ticket to withdraw
+   * @return noop; a withdrawal that fails is left to the deadline prune
+   */
+  private def withdraw(name: LockName, ticket: Ref[Long]): UIO[Unit] =
+    ticket.get.flatMap(id => connection.provide(scripts.abandon.run(name, id)).ignore)
 
   /**
    * What is left of the caller's patience.
@@ -91,8 +240,8 @@ object RedisLockStore:
    * Load the lock scripts and hand back the store.
    *
    * @param connection where its connection comes from
-   * @param readiness where a waiter parks for a release
+   * @param broadcast where waiters' wakes land
    * @return the store; aborts with `RedisFailure` when a script is missing or rejected
    */
-  def make(connection: Connection, readiness: Readiness): ZIO[Connection.Commands, RedisFailure, RedisLockStore] =
-    LockScripts.make.map(RedisLockStore(connection, _, readiness))
+  def make(connection: Connection, broadcast: Broadcast): ZIO[Connection.Commands, RedisFailure, RedisLockStore] =
+    LockScripts.make.map(RedisLockStore(connection, _, broadcast))

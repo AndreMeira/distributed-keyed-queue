@@ -17,3 +17,11 @@ object Module:
    */
   val input: ZLayer[QueueInputValidation.Config, Nothing, QueueInputValidation] =
     ZLayer.fromFunction(QueueInputValidation.apply)
+
+  /**
+   * The lock's parse, and the bound it holds callers to.
+   *
+   * @return the layer
+   */
+  val lockInput: ZLayer[LockInputValidation.Config, Nothing, LockInputValidation] =
+    ZLayer.fromFunction(LockInputValidation.apply)

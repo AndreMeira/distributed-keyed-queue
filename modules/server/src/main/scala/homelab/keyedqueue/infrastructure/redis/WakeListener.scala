@@ -12,12 +12,12 @@ import scala.jdk.CollectionConverters.*
 
 
 /**
- * One blocking read across every wake stream in the deployment, routing each entry to the [[Readiness]]
+ * One blocking read across every wake stream in the deployment, routing each entry to the [[Waker]]
  * that waits on it.
  *
  * '''One listener, many streams, `XREAD` being multi-stream.''' A single blocking read covers every wake
  * stream at once and returns the instant any of them has an entry — so the queue's bucket streams and the
- * lock's wake stream are served by one connection and one fiber. Which [[Readiness]] an entry wakes is
+ * lock's wake stream are served by one connection and one fiber. Which [[Waker]] an entry wakes is
  * decided by the stream it came from (`routes`), so queue wakes and lock wakes stay logically separate
  * without a second listener or a second reserved connection.
  *
@@ -36,7 +36,7 @@ import scala.jdk.CollectionConverters.*
  */
 final class WakeListener(
   connection: Connection,
-  routes: Map[String, Readiness],
+  routes: Map[String, Waker],
   positions: Ref[Map[String, String]],
   block: Duration,
 ):
@@ -66,7 +66,7 @@ final class WakeListener(
    *
    * @return the (readiness, name) wakes the entries carry, one per entry
    */
-  private def read: IO[RedisFailure, Chunk[(Readiness, QueueName)]] =
+  private def read: IO[RedisFailure, Chunk[(Waker, QueueName)]] =
     positions.get.flatMap: current =>
       val offsets = current.map((stream, id) => StreamOffset.from(stream, id)).toArray
       connection
@@ -97,8 +97,8 @@ final class WakeListener(
    * @param woken the (readiness, name) pairs this batch carried
    * @return noop
    */
-  private def announce(woken: Chunk[(Readiness, QueueName)]): UIO[Unit] =
-    ZIO.foreachDiscard(woken.distinct)((readiness, name) => readiness.ready(name))
+  private def announce(woken: Chunk[(Waker, QueueName)]): UIO[Unit] =
+    ZIO.foreachDiscard(woken.distinct)((waker, name) => waker.ready(name))
 
   /**
    * Tell every readiness this listener serves to re-look — the failure path, where a wake may have been
@@ -143,10 +143,10 @@ object WakeListener:
    *
    * @param connection where its connections come from
    * @param block how long one read waits before going round again
-   * @param routes wake stream -> the readiness its entries wake
+   * @param routes wake stream -> the waker its entries wake
    * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
    */
-  def make(connection: Connection, block: Duration, routes: Map[String, Readiness]): IO[RedisFailure, WakeListener] =
+  def make(connection: Connection, block: Duration, routes: Map[String, Waker]): IO[RedisFailure, WakeListener] =
     ZIO
       .foreach(Chunk.fromIterable(routes.keys))(stream => position(connection, stream).map(stream -> _))
       .flatMap(resolved => Ref.make(resolved.toMap))
@@ -162,7 +162,7 @@ object WakeListener:
    * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
    */
   def make(connection: Connection, readiness: Readiness, buckets: Int, block: Duration): IO[RedisFailure, WakeListener] =
-    make(connection, block, Namespace.wakeStreams(buckets).toChunk.map(_ -> readiness).toMap)
+    make(connection, block, Namespace.wakeStreams(buckets).toChunk.map(s => s -> (readiness: Waker)).toMap)
 
   /**
    * Where a wake stream is right now: the id of its last entry, or `0-0` when nothing has been appended.

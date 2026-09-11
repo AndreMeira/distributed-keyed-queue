@@ -2,6 +2,7 @@ package homelab.keyedqueue.infrastructure.redis.script
 
 
 import homelab.common.error.ApplicationError
+import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection
 import io.lettuce.core.ScriptOutputType
@@ -11,7 +12,7 @@ import java.time.Instant
 
 
 /**
- * Push a held lock's lease forward, if the caller still holds it — `lua/lock_refresh.lua`.
+ * Push a held lock's lease forward, if the caller still holds it — `lua/lock/refresh.lua`.
  *
  * Token-only: a holder whose lease lapsed but whom nobody displaced is late, not lost, and may extend.
  *
@@ -31,10 +32,10 @@ final class LockRefreshScript(ref: LuaScript.Sha):
    * @return the new deadline and whether the hold survived; aborts with `RedisFailure` when the store fails
    *         or the reply cannot be read
    */
-  def run(name: String, token: Long, ttl: Duration): ZIO[Connection.Commands, RedisFailure, (Instant, Boolean)] =
+  def run(name: LockName, token: Token, ttl: Duration): ZIO[Connection.Commands, RedisFailure, (Instant, Boolean)] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking(redis.evalsha[Any](ref, output, LockKeys.core, args(name, token, ttl)*))
+        .attemptBlocking(redis.evalsha[Any](ref, output, LockKeys.refresh, args(name, token, ttl)*))
         .mapError(LuaScript.failure)
         .flatMap(reply => ZIO.fromEither(read(reply)))
 
@@ -44,9 +45,9 @@ final class LockRefreshScript(ref: LuaScript.Sha):
    * @param name the lock to keep alive
    * @param token the fence token
    * @param ttl how much longer to grant
-   * @return `name`, `token`, `ttl`, in the order `lua/lock_refresh.lua` reads them
+   * @return `name`, `token`, `ttl`, in the order `lua/lock/refresh.lua` reads them
    */
-  private def args(name: String, token: Long, ttl: Duration): Array[Array[Byte]] =
+  private def args(name: LockName, token: Token, ttl: Duration): Array[Array[Byte]] =
     Array(LuaScript.utf8(name), LuaScript.utf8(token.toString), LuaScript.utf8(ttl.toMillis.toString))
 
   /**
@@ -69,9 +70,9 @@ final class LockRefreshScript(ref: LuaScript.Sha):
 object LockRefreshScript:
 
   /**
-   * Register `lua/lock_refresh.lua` and hold its digest.
+   * Register `lua/lock/refresh.lua` and hold its digest.
    *
    * @return the script; aborts with `RedisFailure` when it is missing or rejected
    */
   def make: ZIO[Connection.Commands, RedisFailure, LockRefreshScript] =
-    LuaScript.register("lua/lock_refresh.lua").map(LockRefreshScript(_))
+    LuaScript.register("lua/lock/refresh.lua").map(LockRefreshScript(_))

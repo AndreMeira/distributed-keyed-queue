@@ -109,6 +109,8 @@ Settings are HOCON with an environment override for every key
 | `DKQ_WAKE_BUCKETS` | `1` | how many wake streams the queues are spread over — and so how many hash tags. Permanent for a deployment |
 | `DKQ_SWEEP_INTERVAL` | `5 seconds` | how often each instance runs repair |
 | `DKQ_SWEEP_LIMIT` | `100` | entries one sweep handles, per kind |
+| `DKQ_LOCK_TRIM_INTERVAL` | `120 seconds` | how often each instance removes abandoned lock holds |
+| `DKQ_LOCK_TRIM_GRACE` | `10 minutes` | how long past lease expiry a lock hold survives before trim removes it |
 
 Every instance is identical and stateless — the queue's state is entirely in Redis — so scaling out is
 running more of them against the same store. Redis Cluster is supported: every key a queue uses carries its

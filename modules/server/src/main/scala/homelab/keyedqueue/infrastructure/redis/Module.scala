@@ -61,9 +61,10 @@ object Module:
         scripts    <- ZIO.service[Scripts]
         config     <- ZIO.service[QueueConfig]
         queueReady <- Readiness.make
-        lockReady  <- Readiness.make
+        lockReady  <- Broadcast.make
         // One listener over both stores' wake streams, routing each to its own readiness — see WakeListener.
-        // The queue's bucket streams wake `queueReady`; the lock's one stream wakes `lockReady`.
+        // The queue's bucket streams wake `queueReady` (one token, one consumer); the lock's one
+        // stream wakes `lockReady` (a broadcast — grants go by ticket, so every waiter must look).
         routes      = Namespace.wakeStreams(config.wakeBuckets).toChunk.map(_ -> queueReady).toMap
                         + (LockKeys.wake -> lockReady)
         listener   <- WakeListener.make(connection, config.wakeBlock, routes)

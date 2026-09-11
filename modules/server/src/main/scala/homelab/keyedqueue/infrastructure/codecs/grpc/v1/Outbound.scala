@@ -104,3 +104,26 @@ object Outbound:
   extension (response: HeartbeatResponse)
     /** @return the wire response */
     def toProto: v1.HeartbeatResponse = response.transformInto[v1.HeartbeatResponse]
+
+  extension (response: AcquireResponse)
+    /**
+     * The lock's "granted or nothing" stated as fields: an unavailable acquire is `acquired = false` with
+     * the rest empty. The fence is exposed as its own number, unlike the queue's — a holder stamps its
+     * downstream writes with it.
+     *
+     * @return the wire response
+     */
+    def toProto: v1.AcquireResponse = response match
+      case AcquireResponse.Unavailable           => v1.AcquireResponse(acquired = false)
+      case AcquireResponse.Granted(claim, until) =>
+        v1.AcquireResponse(acquired = true, claim.receipt, claim.token, Some(until.transformInto[Timestamp]))
+
+  extension (response: ReleaseResponse)
+    /** @return the wire response */
+    def toProto: v1.ReleaseResponse = response.transformInto[v1.ReleaseResponse]
+
+  extension (response: RefreshResponse)
+    /** @return the wire response; a lost hold is `renewed = false` with no deadline */
+    def toProto: v1.RefreshResponse = response match
+      case RefreshResponse.Lost           => v1.RefreshResponse(renewed = false)
+      case RefreshResponse.Renewed(until) => v1.RefreshResponse(renewed = true, Some(until.transformInto[Timestamp]))

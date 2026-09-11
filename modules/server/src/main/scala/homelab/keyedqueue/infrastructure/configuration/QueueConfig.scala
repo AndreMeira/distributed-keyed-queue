@@ -22,6 +22,8 @@ import zio.*
  * @param leaseTtl how long a claim survives without a heartbeat
  * @param sweepInterval how often each instance runs the repair sweeps
  * @param sweepLimit the most entries one sweep handles per kind, so a script cannot block the server
+ * @param lockTrimInterval how often each instance removes abandoned lock holds
+ * @param lockTrimGrace how long past lease expiry a lock hold survives before a trim may remove it
  * @param wakeBlock how long one read of the wake streams waits before going round again. Not a latency
  *                  bound: a read returns the moment an entry lands, and the streams it names are fixed, so
  *                  nothing waits on this. It bounds how long a half-open connection goes unnoticed
@@ -41,6 +43,8 @@ final case class QueueConfig(
   leaseTtl: Duration,
   sweepInterval: Duration,
   sweepLimit: Int,
+  lockTrimInterval: Duration,
+  lockTrimGrace: Duration,
   wakeBlock: Duration,
   wakeBuckets: Int,
   maxWait: Duration,

@@ -47,7 +47,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
                                started
                            )(container => ZIO.attemptBlocking(container.stop()).ignore)
         url              = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-        config           = QueueConfig(url, cluster = false, 0, leaseTtl, 1.second, 100, 200.millis, buckets, 5.seconds, maxBatchLimit = 32)
+        config           = QueueConfig(url, cluster = false, 0, leaseTtl, 1.second, 100, 120.seconds, 10.minutes, 200.millis, buckets, 5.seconds, maxBatchLimit = 32)
         (first, pooled) <- store(config)
         (second, _)     <- store(config)
         // To assert on what the adapter wrote. Borrowed from a store's own pool rather than opened here:

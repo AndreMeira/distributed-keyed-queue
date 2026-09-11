@@ -47,7 +47,7 @@ object LuaScript:
    * Any connection will do: `SCRIPT LOAD` registers with the server, not with the caller, so the digest is
    * good on every connection to it.
    *
-   * @param path the script's path on the classpath, e.g. `lua/enqueue.lua`
+   * @param path the script's path on the classpath, e.g. `lua/queue/enqueue.lua`
    * @return the digest to call it by; aborts with `RedisFailure` if it is missing or rejected
    */
   def register(path: String): ZIO[Connection.Commands, RedisFailure, Sha] =
@@ -84,7 +84,7 @@ object LuaScript:
   /**
    * Read one script off the classpath.
    *
-   * @param path the script's path on the classpath, e.g. `lua/enqueue.lua`
+   * @param path the script's path on the classpath, e.g. `lua/queue/enqueue.lua`
    * @return the script text; aborts if it is missing from the jar
    */
   private def load(path: String): IO[RedisFailure, String] =

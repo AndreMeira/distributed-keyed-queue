@@ -45,6 +45,12 @@ enum InvalidInput extends ValidationError.InvalidInput:
   /** A dequeue asked for a negative batch size. */
   case NegativeMaxBatch
 
+  /** No lock was named. There is no default lock. */
+  case EmptyLockName
+
+  /** A lock acquire or refresh asked for a hold of no time, or a negative one. */
+  case NonPositiveTtl
+
   /**
    * A dequeue asked to wait for no time at all, or for a negative time.
    *
@@ -67,3 +73,5 @@ enum InvalidInput extends ValidationError.InvalidInput:
     case EmptySettle        => "a settle must name at least one message"
     case NegativeMaxBatch   => "max_batch cannot be negative; zero or one means one message"
     case NonPositiveMaxWait => "max_wait is required and must be greater than zero"
+    case EmptyLockName      => "a lock name is required"
+    case NonPositiveTtl     => "ttl is required and must be greater than zero"
