@@ -2,7 +2,7 @@
 title: "Redis Cluster — supported in code, unproven in practice"
 type: architecture
 status: current
-updated: 2026-09-04
+updated: 2026-09-11
 tags: [redis, cluster, sharding, hash-tag, lettuce, lua]
 ---
 
@@ -45,6 +45,16 @@ means drain and restart. At one bucket the whole service is one slot — right f
 in a cluster. Above one, buckets spread across nodes and queues spread across buckets, which is where the
 sharding actually happens: [`../research/bucketed-wake-streams.md`](../research/bucketed-wake-streams.md)
 has the reasoning and what it cost.
+
+**The store enforces the permanence itself.** At first boot each instance records its bucket counts in the
+store (`dkq:layout:*`, claimed with `SET NX` so racing first boots cannot both write); every later boot
+compares and **refuses to start on a mismatch**, before anything is served. The two failure modes this
+catches are both deployment-shaped: a rolling deploy of a changed count would otherwise run both layouts
+against the same data at once, and even a clean stop-change-start strands live state — clients still hold
+receipts against old-tag keys while the new layout grants fresh ones. Changing the count on purpose is a
+ceremony: drain the store (no queued work, no outstanding receipts or holds) or flush it, then run the
+`layout accept` mode once to record the new counts. The lock's count is recorded too (fixed at one until
+lock bucketing exists), so the check is already in place when it becomes configurable.
 
 Two consequences are easy to undo by accident:
 

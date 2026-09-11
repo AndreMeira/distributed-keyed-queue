@@ -115,6 +115,11 @@ docker compose up -d          # a Valkey to back it
 sbt run                       # the service, on :9000
 ```
 
+The binary has one operational mode besides serving: `sbt "run layout accept"` records the configured
+bucket layout in the store — needed only when deliberately changing `DKQ_WAKE_BUCKETS` against a drained
+store, since an instance whose layout disagrees with the store's refuses to start
+([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
+
 Settings are HOCON with an environment override for every key
 (`modules/server/src/main/resources/config/queue.conf`):
 

@@ -60,6 +60,9 @@ object Module:
         connection <- ZIO.service[Connection]
         scripts    <- ZIO.service[Scripts]
         config     <- ZIO.service[QueueConfig]
+        // Before anything is built or served: an instance whose layout disagrees with the store's must not
+        // come up at all — see Layout.
+        _          <- connection.provide(Layout.verify(config))
         queueReady <- Readiness.make
         lockReady  <- Broadcast.make
         // One listener over both stores' wake streams, routing each to its own readiness — see WakeListener.
