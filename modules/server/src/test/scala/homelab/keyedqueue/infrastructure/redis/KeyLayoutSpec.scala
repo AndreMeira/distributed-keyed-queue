@@ -8,12 +8,12 @@ import zio.test.*
 
 
 /**
- * The boot-time layout check, against real Valkey.
+ * The boot-time schema check, against real Valkey.
  *
  * The three paths that matter: a first boot records and proceeds, a matching boot proceeds, and a
- * mismatched boot refuses with both numbers in the message — before anything could be served against the
- * wrong layout. `accept` is the deliberate override, so after it the once-mismatched count is the
- * recorded one.
+ * mismatched boot refuses with both versions in the message — before anything could be served against
+ * structures the code would misread. `accept` is the deliberate override, gated on the store being
+ * drained.
  */
 object KeyLayoutSpec extends ZIOSpecDefault:
 
@@ -30,11 +30,11 @@ object KeyLayoutSpec extends ZIOSpecDefault:
                          started
                      )(container => ZIO.attemptBlocking(container.stop()).ignore)
         url        = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-      yield config(url, buckets = 1)
+      yield config(url)
 
-  /** The config as an instance with this bucket count would read it. */
-  private def config(url: String, buckets: Int): QueueConfig =
-    QueueConfig(url, cluster = false, 0, 30.seconds, 1.second, 100, 120.seconds, 10.minutes, 10.minutes, 200.millis, buckets, 5.seconds, 32)
+  /** The config to reach the suite's store. */
+  private def config(url: String): QueueConfig =
+    QueueConfig(url, cluster = false, 0, 30.seconds, 1.second, 100, 120.seconds, 10.minutes, 10.minutes, 200.millis, 5.seconds, 32)
 
   /**
    * Run a layout effect the way boot does: on a fresh connection to the suite's store.
@@ -54,32 +54,11 @@ object KeyLayoutSpec extends ZIOSpecDefault:
     test("a first boot records the layout, and a matching boot passes ever after") {
       for
         conf  <- ZIO.service[QueueConfig]
-        _     <- boot(conf)(KeyLayout.verify(conf))
-        again <- boot(conf)(KeyLayout.verify(conf)).exit
+        _     <- boot(conf)(KeyLayout.verify)
+        again <- boot(conf)(KeyLayout.verify).exit
       yield assertTrue(again.isSuccess)
     },
-    test("a mismatched boot refuses, naming both numbers, and serves nothing") {
-      for
-        conf    <- ZIO.service[QueueConfig]
-        _       <- boot(conf)(KeyLayout.verify(conf))
-        other    = config(conf.redisUrl, buckets = 4)
-        refused <- boot(other)(KeyLayout.verify(other)).exit
-      yield assertTrue(refused.causeOption.flatMap(_.failureOption).exists {
-        case Misconfigured(reason) => reason.contains("1") && reason.contains("4") && reason.contains("layout accept")
-        case _                     => false
-      })
-    },
-    test("accept overrides deliberately: the once-refused layout is then the recorded one") {
-      for
-        conf     <- ZIO.service[QueueConfig]
-        _        <- boot(conf)(KeyLayout.verify(conf))
-        other     = config(conf.redisUrl, buckets = 4)
-        _        <- boot(other)(KeyLayout.accept(other))
-        accepted <- boot(other)(KeyLayout.verify(other)).exit
-        original <- boot(conf)(KeyLayout.verify(conf)).exit
-      yield assertTrue(accepted.isSuccess, original.isFailure)
-    },
-    test("accept verifies the drain: any key beyond the markers refuses it, an emptied store permits it") {
+    test("accept verifies the drain: any key beyond the marker refuses it, an emptied store permits it") {
       val plant  = Connection.use: redis =>
         ZIO.attemptBlocking(redis.set("{q:0}:ready", "left-behind".getBytes)).unit
       val uproot = Connection.use: redis =>
@@ -87,9 +66,9 @@ object KeyLayoutSpec extends ZIOSpecDefault:
       for
         conf    <- ZIO.service[QueueConfig]
         _       <- boot(conf)(plant)
-        refused <- boot(conf)(KeyLayout.accept(conf)).exit
+        refused <- boot(conf)(KeyLayout.accept).exit
         _       <- boot(conf)(uproot)
-        emptied <- boot(conf)(KeyLayout.accept(conf)).exit
+        emptied <- boot(conf)(KeyLayout.accept).exit
       yield assertTrue(
         refused.causeOption.flatMap(_.failureOption).exists {
           case Misconfigured(reason) => reason.contains("drained")
@@ -100,16 +79,16 @@ object KeyLayoutSpec extends ZIOSpecDefault:
     },
     test("a schema the code does not expect refuses the boot, and accept records the code's own") {
       // The store claims a schema this code never wrote — the shape of an incompatible predecessor. The
-      // boot must refuse before touching structures it would misread, and accept (drained: markers only)
+      // boot must refuse before touching structures it would misread, and accept (drained: marker only)
       // re-stamps the code's version.
       val predecessor = Connection.use: redis =>
         ZIO.attemptBlocking(redis.set("dkq:layout:schema", "999".getBytes)).unit
       for
         conf     <- ZIO.service[QueueConfig]
         _        <- boot(conf)(predecessor)
-        refused  <- boot(conf)(KeyLayout.verify(conf)).exit
-        _        <- boot(conf)(KeyLayout.accept(conf))
-        restored <- boot(conf)(KeyLayout.verify(conf)).exit
+        refused  <- boot(conf)(KeyLayout.verify).exit
+        _        <- boot(conf)(KeyLayout.accept)
+        restored <- boot(conf)(KeyLayout.verify).exit
       yield assertTrue(
         refused.causeOption.flatMap(_.failureOption).exists {
           case Misconfigured(reason) => reason.contains("schema") && reason.contains("999")

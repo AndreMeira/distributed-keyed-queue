@@ -48,7 +48,6 @@ object GrpcSpec extends ZIOSpecDefault:
                        10.minutes,
                        10.minutes,
                        200.millis,
-                       1,
                        5.seconds,
                        maxBatchLimit = 32,
                      )

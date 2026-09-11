@@ -29,7 +29,7 @@ the queue:
                           {w:0}:wake                ← shared by every queue in bucket 0
 ```
 
-`bucket = hash(queue) % DKQ_WAKE_BUCKETS`, fixed for the deployment's life. What each structure is for is
+`bucket = hash(queue) % 16` — the count is a constant of the code, not a deployment parameter. What each structure is for is
 [`redis-data-structures.md`](redis-data-structures.md); what matters here is only that everything a script
 touches carries the same tag.
 
@@ -39,28 +39,27 @@ slot. The wake stream is in that slot too, which is the whole reason the tag is 
 queue: a stream tagged differently from the keys it announces could not be appended by the script that made
 them claimable, and a separate append is a crash window where work exists and nobody is told.
 
-**The bucket count is a permanent deployment parameter**, like a partition count. Changing it moves queues
-between tags and strands whatever was written under the old one, so it is fixed at first use; changing it
-means drain and restart. At one bucket the whole service is one slot — right for a single node, and no use
-in a cluster. Above one, buckets spread across nodes and queues spread across buckets, which is where the
-sharding actually happens: [`../research/bucketed-wake-streams.md`](../research/bucketed-wake-streams.md)
-has the reasoning and what it cost.
+**The bucket count is a constant, chosen once for everyone.** Sixteen, because the count is a ceiling on
+spread but a floor on overhead: at most sixteen cluster nodes ever hold this service's data — far above any
+realistic cluster for one service — while the listener's every read names sixteen streams, which is
+indistinguishable from one. It is deliberately not a deployment parameter: a knob nobody would set
+differently is a liability, and a *changeable* count was a standing trap — changing it moves queues between
+tags and strands whatever was written under the old one. Changing the constant is therefore a change to the
+shape of stored data, which is what the schema version below exists to gate.
+[`../research/bucketed-wake-streams.md`](../research/bucketed-wake-streams.md) has the original reasoning
+and what bucketing cost.
 
-**The store enforces the permanence itself.** At first boot each instance records its bucket counts in the
-store (`dkq:layout:*`, claimed with `SET NX` so racing first boots cannot both write); every later boot
-compares and **refuses to start on a mismatch**, before anything is served. The two failure modes this
-catches are both deployment-shaped: a rolling deploy of a changed count would otherwise run both layouts
-against the same data at once, and even a clean stop-change-start strands live state — clients still hold
-receipts against old-tag keys while the new layout grants fresh ones. Changing the count on purpose is a
-ceremony, in this order: **stop every instance**, drain the store (no queued work, no outstanding receipts
-or holds) or flush it, run the `layout accept` mode once, then start instances. `accept` verifies the
-drain itself — it refuses while any key beyond the markers exists — but it cannot see instances, and a
-running one checks its layout at boot and never again. The lock's count is recorded too (fixed at one until
-lock bucketing exists), so the check is already in place when it becomes configurable. A **schema version**
-rides the same markers: the shape of the stored structures, bumped in code whenever an older instance would
-misread them (a structure changing type, an encoding changing form) and gated exactly like the counts —
-never migrated, always drained. It cannot cover client-held state such as receipts, which no store-side
-marker can see.
+**The store records the schema it was written under, and instances refuse to disagree.** At first boot each
+instance records the code's schema version (`dkq:layout:schema`, claimed with `SET NX` so racing first
+boots cannot both write); every later boot compares and **refuses to start on a mismatch**, before anything
+is served — a rolling deploy of incompatible code crash-loops loudly instead of misreading live structures.
+The version is bumped in code whenever an older instance would misread the store: a structure changing
+type, an encoding changing form, the bucket constant changing. Gate-only, never migrated: the remedy is a
+ceremony, in this order — **stop every instance**, drain the store (no queued work, no outstanding receipts
+or holds) or flush it, run the `layout accept` mode once, then start instances. `accept` verifies the drain
+itself — it refuses while any key beyond the marker exists — but it cannot see instances, and a running one
+checks its schema at boot and never again. What no store-side marker can cover is client-held state such as
+receipts: a receipt-format change breaks holds the store never sees.
 
 Two consequences are easy to undo by accident:
 

@@ -62,19 +62,19 @@ object Module:
         config     <- ZIO.service[QueueConfig]
         // Before anything is built or served: an instance whose layout disagrees with the store's must not
         // come up at all — see KeyLayout.
-        _          <- connection.provide(KeyLayout.verify(config))
+        _          <- connection.provide(KeyLayout.verify)
         queueReady <- Readiness.make
         lockReady  <- Broadcast.make
         // One listener over both stores' wake streams, routing each to its own readiness — see WakeListener.
         // The queue's bucket streams wake `queueReady` (one token, one consumer); the lock's one
         // stream wakes `lockReady` (a broadcast — grants go by ticket, so every waiter must look).
-        routes      = Namespace.wakeStreams(config.wakeBuckets).toChunk.map(_ -> queueReady).toMap
+        routes      = Namespace.wakeStreams.toChunk.map(_ -> queueReady).toMap
                         + (LockKeys.wake -> lockReady)
         listener   <- WakeListener.make(connection, config.wakeBlock, routes)
         // Forked here rather than in the composition root because both stores are unusable without it: a
         // waiter that finds nothing parks on a readiness token, and an unrun listener offers none.
         _          <- listener.run.forkScoped
-        queueStore <- RedisQueueStore.make(monitor, connection, scripts, queueReady, config.leaseTtl, config.wakeBuckets)
+        queueStore <- RedisQueueStore.make(monitor, connection, scripts, queueReady, config.leaseTtl)
         lockStore  <- connection.provide(RedisLockStore.make(monitor, connection, lockReady))
       yield ZEnvironment[QueueStore](queueStore) ++ ZEnvironment[LockStore](lockStore)
     }

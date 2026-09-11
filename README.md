@@ -115,10 +115,10 @@ docker compose up -d          # a Valkey to back it
 sbt run                       # the service, on :9000
 ```
 
-The binary has one operational mode besides serving: `sbt "run layout accept"` records the configured
-bucket layout in the store — needed only when deliberately changing `DKQ_WAKE_BUCKETS` against a drained
-store with no instances running, since an instance whose layout disagrees with the store's refuses to start
-([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
+The binary has one operational mode besides serving: `sbt "run layout accept"` records the code's schema
+version in the store — needed only when deploying a version whose stored structures changed shape, against
+a drained store with no instances running, since an instance whose schema disagrees with the store's
+refuses to start ([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
 
 Settings are HOCON with an environment override for every key
 (`modules/server/src/main/resources/config/queue.conf`):
@@ -132,7 +132,6 @@ Settings are HOCON with an environment override for every key
 | `DKQ_MAX_WAIT` | `30 seconds` | the longest `Dequeue` wait honoured |
 | `DKQ_MAX_BATCH_LIMIT` | `32` | the most messages one claim may take |
 | `DKQ_WAKE_BLOCK` | `1 second` | how long one read of the wake streams waits before going round again |
-| `DKQ_WAKE_BUCKETS` | `1` | how many wake streams the queues are spread over — and so how many hash tags. Permanent for a deployment |
 | `DKQ_SWEEP_INTERVAL` | `5 seconds` | how often each instance runs repair |
 | `DKQ_SWEEP_LIMIT` | `100` | entries one sweep handles, per kind |
 | `DKQ_LOCK_TRIM_INTERVAL` | `120 seconds` | how often each instance removes abandoned lock holds |
@@ -142,9 +141,10 @@ Settings are HOCON with an environment override for every key
 Every instance is identical and stateless — the queue's state is entirely in Redis — so scaling out is
 running more of them against the same store. Redis Cluster is supported: every key a queue uses carries its
 **bucket's** hash tag, so a queue's keys and the stream announcing them live in one slot, and sharding
-spreads buckets across nodes. `DKQ_WAKE_BUCKETS` decides how many there are, and it is permanent for a
-deployment — **at the default of 1 the whole service is one slot**, which is right for a single node and no
-use in a cluster ([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
+spreads buckets across nodes. The bucket count is **fixed in code at 16** — a ceiling on spread far above
+any realistic cluster for one service, at an overhead indistinguishable from a single stream — so there is
+nothing to configure and nothing to get permanently wrong
+([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
 
 ## Building from source
 

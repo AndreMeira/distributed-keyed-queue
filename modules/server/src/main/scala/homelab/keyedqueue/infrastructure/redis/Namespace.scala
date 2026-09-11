@@ -19,17 +19,12 @@ import zio.{ Chunk, NonEmptyChunk }
  * in flight goes unheard until that read returns. A fixed set of buckets is heard from the first read
  * onwards, which takes the block off the latency path entirely.
  *
- * At `buckets == 1` there is one tag, one wake stream and one slot — the simplest deployment, and the
- * whole service on one node. Above 1, queues spread across slots and each bucket carries its own stream.
- *
  * @param queue the queue these keys belong to
- * @param buckets how many buckets the deployment is divided into; fixed for its life, since changing it
- *                moves queues between tags and strands whatever was written under the old one
  */
-final case class Namespace(queue: QueueName, buckets: Int):
+final case class Namespace(queue: QueueName):
 
   /** Which bucket this queue falls in, and therefore which slot and which wake stream it uses. */
-  val bucket: Int = Namespace.bucketOf(queue, buckets)
+  val bucket: Int = Namespace.bucketOf(queue)
 
   /** The tag every key shares, and what the scripts rebuild the per-key names from. */
   val prefix: String = s"${Namespace.tag(bucket)}:q:$queue"
@@ -107,6 +102,20 @@ final case class Namespace(queue: QueueName, buckets: Int):
 object Namespace:
 
   /**
+   * How many buckets the deployment is divided into — fixed in code, not configured.
+   *
+   * The count is a ceiling on spread (at most this many cluster nodes ever hold this service's data) but a
+   * floor on overhead (the listener names every bucket's stream in every read, maintenance iterates every
+   * bucket), so it is one number chosen once: high enough that no realistic cluster hits the ceiling, low
+   * enough that the floor stays invisible. Sixteen node ceiling; sixteen-stream reads.
+   *
+   * '''Part of the schema.''' Changing it moves queues between tags and strands whatever was written under
+   * the old count, so a change here is a change to the shape of stored data — bump
+   * `KeyLayout.schemaVersion` with it, and the boot check turns the stranding into a refusal.
+   */
+  val buckets: Int = 16
+
+  /**
    * The hash tag a bucket's keys share.
    *
    * @param bucket the bucket
@@ -129,10 +138,9 @@ object Namespace:
    * told. `floorMod`, because a negative hash would otherwise produce a negative bucket.
    *
    * @param queue the queue
-   * @param buckets how many buckets the deployment is divided into
    * @return the bucket
    */
-  def bucketOf(queue: QueueName, buckets: Int): Int = Math.floorMod(queue.toString.hashCode, buckets)
+  def bucketOf(queue: QueueName): Int = Math.floorMod(queue.toString.hashCode, buckets)
 
   /**
    * Every wake stream in the deployment — the fixed set a listener reads.
@@ -140,8 +148,7 @@ object Namespace:
    * Fixed is the point: the set is known before any queue is served, so no read is ever re-issued because
    * a consumer arrived for a queue nobody had asked for yet.
    *
-   * @param buckets how many buckets the deployment is divided into; at least one
    * @return the stream names, in bucket order
    */
-  def wakeStreams(buckets: Int): NonEmptyChunk[String] =
+  val wakeStreams: NonEmptyChunk[String] =
     NonEmptyChunk.fromChunk(Chunk.fromIterable(0 until buckets).map(wake)).getOrElse(NonEmptyChunk(wake(0)))

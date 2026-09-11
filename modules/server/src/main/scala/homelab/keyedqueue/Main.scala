@@ -39,12 +39,12 @@ object Main extends ZIOAppDefault:
     yield ()
 
   /**
-   * Record this configuration's layout in the store, and exit.
+   * Record this code's schema in the store, and exit.
    *
-   * @param conf where the store and the bucket count come from
+   * @param conf where the store is
    * @return noop; aborts when the store cannot be reached
    */
   private def accept(conf: QueueConfig): ZIO[Any, ApplicationError, Unit] =
     ZIO
-      .serviceWithZIO[Connection](_.provide(KeyLayout.accept(conf)))
+      .serviceWithZIO[Connection](_.provide(KeyLayout.accept))
       .provide(ZLayer.succeed(conf), RedisModule.connection)

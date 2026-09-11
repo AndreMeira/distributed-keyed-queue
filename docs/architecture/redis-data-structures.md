@@ -18,7 +18,7 @@ apart from `claim.lua` and `sweep.lua`, which rebuild the per-key ones at runtim
 ## The layout
 
 Everything a queue owns is prefixed `{w:<bucket>}:q:<queue>`, where the bucket is
-`hash(queue) % DKQ_WAKE_BUCKETS` and decides which cluster slot the queue lives in. Six structures belong to
+`hash(queue) % 16` (the bucket count is a constant of the code) and decides which cluster slot the queue lives in. Six structures belong to
 the queue and three to a key inside it; the seventh, `wake`, belongs to the bucket and is shared by every
 queue in it. `{Q}` below is one queue's prefix, `{W}` its bucket's:
 

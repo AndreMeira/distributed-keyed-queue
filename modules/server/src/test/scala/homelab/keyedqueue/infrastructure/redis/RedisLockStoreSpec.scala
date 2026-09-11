@@ -42,7 +42,7 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
                          started
                      )(container => ZIO.attemptBlocking(container.stop()).ignore)
         url        = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-      yield QueueConfig(url, cluster = false, 0, 30.seconds, 1.second, 100, 120.seconds, 10.minutes, 10.minutes, 200.millis, 1, 5.seconds, 32)
+      yield QueueConfig(url, cluster = false, 0, 30.seconds, 1.second, 100, 120.seconds, 10.minutes, 10.minutes, 200.millis, 5.seconds, 32)
 
   /**
    * One lock instance: its own connection, readiness, store, and a listener over the shared lock wake

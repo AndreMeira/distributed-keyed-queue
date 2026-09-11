@@ -157,12 +157,11 @@ object WakeListener:
    *
    * @param connection where its connections come from
    * @param readiness whose queues to announce
-   * @param buckets how many wake streams the deployment has
    * @param block how long one read waits before going round again
    * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
    */
-  def make(connection: Connection, readiness: Readiness, buckets: Int, block: Duration): IO[RedisFailure, WakeListener] =
-    make(connection, block, Namespace.wakeStreams(buckets).toChunk.map(s => s -> (readiness: Waker)).toMap)
+  def make(connection: Connection, readiness: Readiness, block: Duration): IO[RedisFailure, WakeListener] =
+    make(connection, block, Namespace.wakeStreams.toChunk.map(s => s -> (readiness: Waker)).toMap)
 
   /**
    * Where a wake stream is right now: the id of its last entry, or `0-0` when nothing has been appended.
