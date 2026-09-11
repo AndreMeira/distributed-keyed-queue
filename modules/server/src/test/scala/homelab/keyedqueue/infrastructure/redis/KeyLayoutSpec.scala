@@ -58,34 +58,9 @@ object KeyLayoutSpec extends ZIOSpecDefault:
         again <- boot(conf)(KeyLayout.verify).exit
       yield assertTrue(again.isSuccess)
     },
-    test("accept verifies the drain of dkq's own keys, and ignores the store's other tenants") {
-      // The store may be a Redis that already existed: a leftover dkq key refuses the accept naming it,
-      // while a foreign key is none of dkq's business — the accept succeeds right past it.
-      val plant  = Connection.use: redis =>
-        ZIO.attemptBlocking {
-          redis.set("{w:3}:q:jobs:ready", "left-behind".getBytes)
-          redis.set("other-app:cache", "not-ours".getBytes)
-        }.unit
-      val uproot = Connection.use: redis =>
-        ZIO.attemptBlocking(redis.del("{w:3}:q:jobs:ready")).unit
-      for
-        conf    <- ZIO.service[QueueConfig]
-        _       <- boot(conf)(plant)
-        refused <- boot(conf)(KeyLayout.accept).exit
-        _       <- boot(conf)(uproot)
-        shared  <- boot(conf)(KeyLayout.accept).exit
-      yield assertTrue(
-        refused.causeOption.flatMap(_.failureOption).exists {
-          case Misconfigured(reason) => reason.contains("drained") && reason.contains("{w:3}:q:jobs:ready")
-          case _                     => false
-        },
-        shared.isSuccess, // the foreign key is still in the store
-      )
-    },
     test("a schema the code does not expect refuses the boot, and accept records the code's own") {
       // The store claims a schema this code never wrote — the shape of an incompatible predecessor. The
-      // boot must refuse before touching structures it would misread, and accept (drained: marker only)
-      // re-stamps the code's version.
+      // boot must refuse before touching structures it would misread, and accept re-stamps the code's version.
       val predecessor = Connection.use: redis =>
         ZIO.attemptBlocking(redis.set("dkq:layout:schema", "999".getBytes)).unit
       for

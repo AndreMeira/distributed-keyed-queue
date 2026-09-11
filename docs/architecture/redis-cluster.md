@@ -58,9 +58,9 @@ type, an encoding changing form, the bucket constant changing. Gate-only, never 
 ceremony, in this order — **stop every instance**, drain dkq (no queued work, no outstanding receipts or
 holds; delete dkq's keys, or flush the store **only if it is dkq's alone** — an existing shared Redis is a
 supported home, and its other tenants are not dkq's to flush), run the `layout accept` mode once, then
-start instances. `accept` verifies the drain itself — it refuses while any key under dkq's own prefixes
-exists, and ignores everything else in the store — but it cannot see instances, and a running one checks
-its schema at boot and never again. What no store-side marker can cover is client-held state such as
+start instances. Both halves are on the operator: `accept` records over whatever is there — it cannot
+verify the drain, because what a leftover key looks like depends on the schema being replaced, which the
+new code no longer knows — and it cannot see instances, which check their schema at boot and never again. What no store-side marker can cover is client-held state such as
 receipts: a receipt-format change breaks holds the store never sees.
 
 Two consequences are easy to undo by accident:
