@@ -170,11 +170,34 @@ object WakeListener:
   def make(connection: Connection, block: Duration, routes: Map[String, Waker]): ZIO[Scope, RedisFailure, WakeListener] =
     val streams = Chunk.fromIterable(routes.keys)
     for
-      resolved  <- ZIO.foreach(streams)(stream => position(connection, stream).map(stream -> _))
-      positions <- Ref.make(resolved.toMap)
-      readers   <- ZIO.foreach(grouped(connection.clustered, streams)): group =>
-                     connection.listening.map(_ -> group)
+      resolved  <- positioned(connection, streams)
+      positions <- Ref.make(resolved)
+      readers   <- ZIO.foreach(grouped(connection.clustered, streams))(reader(connection))
     yield WakeListener(readers, routes, positions, block)
+
+  /**
+   * Where each stream stands right now.
+   *
+   * @param connection where to ask
+   * @param streams every wake stream
+   * @return stream -> the id to read after; aborts with `Unavailable` when a position cannot be read
+   */
+  private def positioned(connection: Connection, streams: Chunk[String]): IO[RedisFailure, Map[String, String]] =
+    ZIO.foreach(streams)(stream => position(connection, stream).map(stream -> _)).map(_.toMap)
+
+  /**
+   * One group's reader: a connection of its own, and the streams it reads.
+   *
+   * @param connection where the connection comes from
+   * @param group the streams this reader is responsible for
+   * @return the pair; aborts with `Unavailable` when the connection cannot be opened
+   */
+  private def reader(
+    connection: Connection
+  )(
+    group: Chunk[String]
+  ): ZIO[Scope, RedisFailure, (Connection.Commands, Chunk[String])] =
+    connection.listening.map(commands => commands -> group)
 
   /**
    * The streams, grouped by what one `XREAD` may name.
@@ -188,8 +211,16 @@ object WakeListener:
    * @return the groups, each safe for one read
    */
   private def grouped(clustered: Boolean, streams: Chunk[String]): Chunk[Chunk[String]] =
-    if clustered then Chunk.fromIterable(streams.groupBy(SlotHash.getSlot(_): Int).values)
+    if clustered then Chunk.fromIterable(streams.groupBy(slotOf).values)
     else Chunk(streams)
+
+  /**
+   * Which slot a stream's name hashes to.
+   *
+   * @param stream the stream's key
+   * @return its slot
+   */
+  private def slotOf(stream: String): Int = SlotHash.getSlot(stream)
 
   /**
    * A listener over the queue's bucket wake streams, all waking one readiness — the queue's usual wiring.
@@ -200,7 +231,7 @@ object WakeListener:
    * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
    */
   def make(connection: Connection, readiness: Readiness, block: Duration): ZIO[Scope, RedisFailure, WakeListener] =
-    make(connection, block, Namespace.wakeStreams.toChunk.map(s => s -> (readiness: Waker)).toMap)
+    make(connection, block, Namespace.wakeStreams.toChunk.map(stream => stream -> (readiness: Waker)).toMap)
 
   /**
    * Where a wake stream is right now: the id of its last entry, or `0-0` when nothing has been appended.

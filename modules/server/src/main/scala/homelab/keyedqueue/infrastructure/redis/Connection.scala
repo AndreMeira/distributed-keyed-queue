@@ -16,20 +16,32 @@ import java.time.Duration as JavaDuration
  *
  * The connection arrives in the environment as [[Connection.Commands]]: an effect asks for one by type, and
  * this decides which one it gets. [[sync]] is shared by everything that answers immediately; [[listening]]
- * opens a fresh connection for a reader that blocks — one per caller, because a blocked read occupies its
+ * opens a fresh one for a reader that blocks — one per caller, because a blocked read occupies its
  * connection whole — timed generously enough that a blocking `XREAD` doing its job is not a timeout.
- * [[clustered]] says which backend the client talks to, which a reader needs because Redis Cluster bounds
- * what one command may touch.
  *
  * Why the client is synchronous, and what that costs — Redis executes a script in about four microseconds,
  * a blocking-pool hop costs a third of one, and a waiting consumer holds no thread at all — is measured in
  * `docs/architecture/redis-connections.md`.
  */
-final case class Connection(
-  sync: Connection.Commands,
-  clustered: Boolean,
-  listening: ZIO[Scope, RedisFailure, Connection.Commands],
-):
+final case class Connection(sync: Connection.Commands, client: Connection.Client, listeningTimeout: Duration):
+
+  /**
+   * Whether this talks to a cluster — which bounds what one command may touch, and so how a reader across
+   * several keys has to be split.
+   *
+   * @return true when the client is a cluster client
+   */
+  def clustered: Boolean = client match
+    case _: RedisClusterClient => true
+    case _: RedisClient        => false
+
+  /**
+   * A connection of this caller's own, closed with the scope — for a reader that blocks, since a blocked
+   * read occupies its connection whole.
+   *
+   * @return the commands; aborts with `Unavailable` when the connection cannot be opened
+   */
+  def listening: ZIO[Scope, RedisFailure, Connection.Commands] = Connection.open(client, listeningTimeout)
 
   /**
    * Run an effect on the shared connection.
@@ -64,6 +76,9 @@ object Connection:
    * exact UTF-8 they wrote and values passing through untouched, which is true of [[open]]'s codec and not
    * guaranteed of anything else. The `<:` keeps it usable as the Lettuce API at the use site.
    */
+  /** The two clients this object knows how to open, named so a [[Connection]] can hold one. */
+  type Client = RedisClient | RedisClusterClient
+
   opaque type Commands <: RedisClusterCommands[String, Array[Byte]] =
     RedisClusterCommands[String, Array[Byte]]
 
@@ -90,10 +105,10 @@ object Connection:
   final case class Config(maxWait: Duration, redisUrl: String, cluster: Boolean)
 
   /**
-   * The shared connection, closed with the scope, and the means to open listening ones.
+   * The shared connection, closed with the scope, over a client kept for opening listening ones.
    *
-   * The listening connections are a factory rather than a fixed second connection, because how many are
-   * needed is the listener's business: one on a single server, one per slot group on a cluster.
+   * Listening connections are opened on demand rather than fixed at one, because how many are needed is
+   * the listener's business: one on a single server, one per slot group on a cluster.
    *
    * @param config where Redis is, and the longest wait to honour
    * @return the connection; aborts with `Unavailable` when it cannot be opened
@@ -102,7 +117,7 @@ object Connection:
     for
       client <- client(config)
       sync   <- open(client, config.maxWait)
-    yield Connection(sync, config.cluster, open(client, config.maxWait + listeningSlack))
+    yield Connection(sync, client, config.maxWait + listeningSlack)
 
   /**
    * The client both connections are opened from — the one place the two backends are chosen between.
@@ -110,7 +125,7 @@ object Connection:
    * @param config where the substrate lives, and whether it is a cluster
    * @return the client, shut down with the scope; aborts with `Unavailable` when the URL is unusable
    */
-  private def client(config: Config): ZIO[Scope, RedisFailure, RedisClient | RedisClusterClient] =
+  private def client(config: Config): ZIO[Scope, RedisFailure, Client] =
     if config.cluster then redisClusterClient(config.redisUrl)
     else redisClient(config.redisUrl)
 
@@ -159,7 +174,7 @@ object Connection:
    * @param commandTimeout the ceiling for any single command
    * @return the synchronous command API; aborts with `Unavailable` when connecting fails
    */
-  private def open(client: RedisClient | RedisClusterClient, commandTimeout: Duration): ZIO[Scope, RedisFailure, Commands] =
+  private def open(client: Client, commandTimeout: Duration): ZIO[Scope, RedisFailure, Commands] =
     client match
       case c: RedisClient        => open(c, commandTimeout)
       case c: RedisClusterClient => open(c, commandTimeout)
