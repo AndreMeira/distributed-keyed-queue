@@ -8,6 +8,9 @@ import zio.*
 /**
  * A wake for every parked waiter on a name — the lock's counterpart to [[Readiness]].
  *
+ * '''As a [[Waker]]: a wake is dropped.''' It reaches the mailboxes subscribed at that moment and no
+ * others. Safe here only because a waiter subscribes before it enters, so no release falls into a gap.
+ *
  * '''Everyone wakes, because only the store knows whose turn it is.''' A fair lock grants by ticket order,
  * so waking one arbitrary waiter would as likely wake the wrong one — and the token it consumed would never
  * reach the head. Waking all costs one grant attempt per local waiter per event, and buys the property the
