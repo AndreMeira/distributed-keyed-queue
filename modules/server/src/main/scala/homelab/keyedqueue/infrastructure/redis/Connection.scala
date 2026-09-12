@@ -81,7 +81,7 @@ object Connection:
    * @param commands the connection reserved for these keys
    * @param keys what one command on it may name
    */
-  final case class Group(commands: Commands, keys: Chunk[String])
+  final case class Group(commands: Commands, keys: Chunk[RedisKey])
 
   /**
    * Ask for the connection in the environment, and run something with it.
@@ -117,7 +117,7 @@ object Connection:
    * @param keys what blocking commands will name; the caller says which, and gets them back grouped
    * @return the connections; aborts with `Unavailable` when one cannot be opened
    */
-  def make(config: Config, keys: Chunk[String]): ZIO[Scope, RedisFailure, Connection] =
+  def make(config: Config, keys: Chunk[RedisKey]): ZIO[Scope, RedisFailure, Connection] =
     for
       client <- client(config)
       sync   <- open(client, config.maxWait)
@@ -136,7 +136,7 @@ object Connection:
     client: Client,
     commandTimeout: Duration,
   )(
-    keys: Chunk[String]
+    keys: Chunk[RedisKey]
   ): ZIO[Scope, RedisFailure, Group] =
     open(client, commandTimeout).map(commands => Group(commands, keys))
 
@@ -151,7 +151,7 @@ object Connection:
    * @param keys every key a blocking command will name
    * @return the groups, each safe for one command
    */
-  private def grouped(client: Client, keys: Chunk[String]): Chunk[Chunk[String]] =
+  private def grouped(client: Client, keys: Chunk[RedisKey]): Chunk[Chunk[RedisKey]] =
     client match
       case _: RedisClusterClient => Chunk.fromIterable(keys.groupBy(slotOf).values)
       case _: RedisClient        => Chunk(keys)
@@ -162,7 +162,7 @@ object Connection:
    * @param key the key
    * @return its slot
    */
-  private def slotOf(key: String): Int = SlotHash.getSlot(key)
+  private def slotOf(key: RedisKey): Int = SlotHash.getSlot(key)
 
   /**
    * The client every connection is opened from — the one place the two backends are chosen between.

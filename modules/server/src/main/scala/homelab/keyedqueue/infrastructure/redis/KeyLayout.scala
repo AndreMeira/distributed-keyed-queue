@@ -22,7 +22,7 @@ import java.nio.charset.StandardCharsets
 object KeyLayout:
 
   /** Where the schema version is recorded. Deliberately version-less: it is the fence every version reads. */
-  private val schema: String = "dkq:layout:schema"
+  private val schema: RedisKey = RedisKey("dkq:layout:schema")
 
   /**
    * The shape of everything this code stores: the queue's and the lock's structures, the encodings written

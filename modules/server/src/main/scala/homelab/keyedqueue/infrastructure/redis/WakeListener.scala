@@ -12,13 +12,13 @@ import scala.jdk.CollectionConverters.*
 
 
 /**
- * A blocking read per slot group of wake streams, routing each entry to the [[Waker]] that waits on it.
+ * A blocking read per group of wake streams, routing each entry to the [[Waker]] that waits on it.
  *
- * '''One fiber per reader, because the cluster bounds what one read may name.''' `XREAD` is multi-stream,
- * but Redis Cluster rejects a multi-key read whose keys span slots — and the partition tags exist precisely to
- * spread slots. [[Connection]] therefore opens a connection per group of streams that one command may
- * name, and this runs a fiber on each; on a single server there is one group, so one connection and one fiber — the
- * original design. Which [[Waker]] an entry wakes is decided by the stream it came from (`routes`), so
+ * '''One fiber per group, because the cluster bounds what one read may name.''' `XREAD` is multi-stream,
+ * but Redis Cluster rejects a multi-key read whose keys span slots — and the partition tags exist precisely
+ * to spread slots. [[Connection]] therefore opens a connection per group of streams that one command may
+ * name, and this runs a fiber on each; on a single server there is one group, so one connection and one
+ * fiber — the original design. Which [[Waker]] an entry wakes is decided by the stream it came from (`routes`), so
  * queue wakes and lock wakes stay logically separate without separate listeners.
  *
  * '''The set of streams is fixed, and that is the point.''' An `XREAD` names the streams it was issued
@@ -31,13 +31,13 @@ import scala.jdk.CollectionConverters.*
  *
  * @param groups the connections to block on, each with the streams one read may name
  * @param routes wake stream -> the readiness its entries wake
- * @param positions wake stream -> the last id delivered from it; the key set never changes
+ * @param positions wake stream -> the last entry id delivered from it; the key set never changes
  * @param block how long one read waits before going round again
  */
 final class WakeListener(
   groups: Chunk[Connection.Group],
-  routes: Map[String, Waker],
-  positions: Ref[Map[String, String]],
+  routes: Map[RedisKey, Waker],
+  positions: Ref[Map[RedisKey, WakeListener.EntryId]],
   block: Duration,
 ):
 
@@ -84,14 +84,16 @@ final class WakeListener(
    */
   private def read(
     commands: Connection.Commands,
-    streams: Chunk[String],
+    streams: Chunk[RedisKey],
   ): IO[RedisFailure, Chunk[(Waker, QueueName)]] =
     positions.get.flatMap: current =>
-      val offsets = streams.map(stream => StreamOffset.from(stream, current(stream))).toArray
+      // `from[String]` pins what Lettuce is handed: an Array[StreamOffset[RedisKey]] would not be an
+      // Array[StreamOffset[String]], arrays being invariant.
+      val offsets = streams.map(stream => StreamOffset.from[String](stream, current(stream))).toArray
       entries(commands, offsets).flatMap: delivered =>
         val woken = Chunk.fromIterable(delivered.flatMap: entry =>
-          routes.get(entry.getStream).zip(WakeListener.nameOf(entry)))
-        val ahead = delivered.map(entry => entry.getStream -> entry.getId).toMap
+          routes.get(RedisKey(entry.getStream)).zip(WakeListener.nameOf(entry)))
+        val ahead = delivered.map(entry => RedisKey(entry.getStream) -> WakeListener.EntryId(entry.getId)).toMap
         positions.update(_.map((stream, id) => stream -> ahead.getOrElse(stream, id))).as(woken)
 
   /**
@@ -125,7 +127,7 @@ final class WakeListener(
    * @param streams the group's streams
    * @return noop
    */
-  private def announceGroup(streams: Chunk[String]): UIO[Unit] =
+  private def announceGroup(streams: Chunk[RedisKey]): UIO[Unit] =
     ZIO.foreachDiscard(streams.flatMap(routes.get).toSet)(_.readyAll)
 
 
@@ -140,6 +142,27 @@ object WakeListener:
 
   /** How long to wait after a failed read; short, because a retrying listener is a listener hearing nothing. */
   private val retryBackoff: Duration = 200.millis
+
+  /**
+   * Where a reader has got to in a stream: the id of the last entry it was handed.
+   *
+   * A stream's name and a position in it are both strings, and they travel together — in the positions
+   * map, and in the `XREAD` offset that pairs them. Naming this one is what stops the pair being passed
+   * the wrong way round, which would compile and resume from a position that means nothing.
+   */
+  type EntryId = EntryId.Type
+
+  object EntryId:
+
+    opaque type Type <: String = String
+
+    /**
+     * An id, trusted.
+     *
+     * @param value the id as Redis reported it, or `0-0` for a stream nothing has been appended to
+     * @return the id
+     */
+    def apply(value: String): Type = value
 
   /**
    * The name an entry names — read from the `queue` field, which both queue and lock entries carry (a lock
@@ -165,7 +188,7 @@ object WakeListener:
    * @param routes wake stream -> the waker its entries wake
    * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
    */
-  def make(connection: Connection, block: Duration, routes: Map[String, Waker]): IO[RedisFailure, WakeListener] =
+  def make(connection: Connection, block: Duration, routes: Map[RedisKey, Waker]): IO[RedisFailure, WakeListener] =
     positioned(connection).map(WakeListener(connection.groups, routes, _, block))
 
   /**
@@ -177,9 +200,9 @@ object WakeListener:
    * @param connection whose groups name the streams, and whose shared connection answers
    * @return the positions, ready to read from; aborts with `Unavailable` when one cannot be read
    */
-  private def positioned(connection: Connection): IO[RedisFailure, Ref[Map[String, String]]] =
+  private def positioned(connection: Connection): IO[RedisFailure, Ref[Map[RedisKey, EntryId]]] =
     ZIO
-      .foreach(connection.groups.flatMap(_.keys))(stream => position(connection, stream).map(stream -> _))
+      .foreach(connection.groups.flatMap(_.keys))(stream => position(connection.sync, stream).map(stream -> _))
       .flatMap(resolved => Ref.make(resolved.toMap))
 
   /**
@@ -196,16 +219,17 @@ object WakeListener:
   /**
    * Where a wake stream is right now: the id of its last entry, or `0-0` when nothing has been appended.
    *
-   * @param connection where to ask
+   * Asked on the shared connection, not a group's: this answers at once, and the groups are for commands
+   * that block.
+   *
+   * @param commands the connection to ask on
    * @param stream the wake stream
    * @return the id to read after; aborts with `Unavailable` when the read fails
    */
-  private def position(connection: Connection, stream: String): IO[RedisFailure, String] =
-    connection.provide:
-      Connection.use: redis =>
-        ZIO
-          .attemptBlocking(redis.xrevrange(stream, Range.unbounded[String](), Limit.create(0, 1)))
-          .mapBoth(
-            LuaScript.failure,
-            reply => Option(reply).map(_.asScala.toList).getOrElse(Nil).headOption.map(_.getId).getOrElse("0-0"),
-          )
+  private def position(commands: Connection.Commands, stream: RedisKey): IO[RedisFailure, EntryId] =
+    ZIO
+      .attemptBlocking(commands.xrevrange(stream, Range.unbounded[String](), Limit.create(0, 1)))
+      .mapBoth(
+        LuaScript.failure,
+        reply => EntryId(Option(reply).map(_.asScala.toList).getOrElse(Nil).headOption.map(_.getId).getOrElse("0-0")),
+      )

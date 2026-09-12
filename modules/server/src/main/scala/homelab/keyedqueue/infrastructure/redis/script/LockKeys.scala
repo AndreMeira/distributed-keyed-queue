@@ -2,7 +2,7 @@ package homelab.keyedqueue.infrastructure.redis.script
 
 
 import homelab.keyedqueue.domain.types.LockName
-import homelab.keyedqueue.infrastructure.redis.KeyLayout
+import homelab.keyedqueue.infrastructure.redis.{ KeyLayout, RedisKey }
 
 
 /**
@@ -22,22 +22,22 @@ object LockKeys:
   private val tag: String = "{dkq:locks}"
 
   /** Held leases, `name -> deadline`. */
-  val held: String = s"$tag:${KeyLayout.segment}:held"
+  val held: RedisKey = RedisKey(s"$tag:${KeyLayout.segment}:held")
 
   /** Live holders' fence tokens, `name -> token`; an entry dies with its hold. */
-  val tokens: String = s"$tag:${KeyLayout.segment}:tokens"
+  val tokens: RedisKey = RedisKey(s"$tag:${KeyLayout.segment}:tokens")
 
   /** The fence counter, one for every lock; the only key that outlives a hold. */
-  val fence: String = s"$tag:${KeyLayout.segment}:fence"
+  val fence: RedisKey = RedisKey(s"$tag:${KeyLayout.segment}:fence")
 
   /** Which locks have waiters, `name -> the latest ticket deadline` — what the trim prunes dead lists by. */
-  val waiting: String = s"$tag:${KeyLayout.segment}:waiting"
+  val waiting: RedisKey = RedisKey(s"$tag:${KeyLayout.segment}:waiting")
 
   /** What a lock's waiters-list key starts with; the name completes it. */
   val waitersPrefix: String = s"$tag:${KeyLayout.segment}:waiters:"
 
   /** The wake stream a release appends to, read by the shared listener. */
-  val wake: String = s"$tag:${KeyLayout.segment}:wake"
+  val wake: RedisKey = RedisKey(s"$tag:${KeyLayout.segment}:wake")
 
   /**
    * One lock's waiters list: its tickets, in arrival order. Exists only while someone queues.
@@ -45,7 +45,7 @@ object LockKeys:
    * @param name the lock
    * @return the list's key
    */
-  def waiters(name: LockName): String = waitersPrefix + name
+  def waiters(name: LockName): RedisKey = RedisKey(waitersPrefix + name)
 
   /**
    * `held`, `tokens`, `fence`, `waiting`, `waiters` — what granting reads and a queued entry writes; the

@@ -37,7 +37,7 @@ final case class Namespace(queue: QueueName):
   /**
    * Keys with work and nobody working them, scored by when each became claimable.
    */
-  val ready: String = s"$prefix:ready"
+  val ready: RedisKey = RedisKey(s"$prefix:ready")
 
   /**
    * The counter that scores [[ready]]: one number per key that becomes claimable, ever increasing.
@@ -48,25 +48,25 @@ final case class Namespace(queue: QueueName):
    * keys enqueued back to back produced 133 distinct millisecond scores. A counter has no ties by
    * construction, and it makes every writer agree on what "older" means without agreeing on a clock.
    */
-  val sequence: String = s"$prefix:seq"
+  val sequence: RedisKey = RedisKey(s"$prefix:seq")
 
   /** key -> lease deadline, in unix millis. */
-  val claimed: String = s"$prefix:claimed"
+  val claimed: RedisKey = RedisKey(s"$prefix:claimed")
 
   /** key -> claim generation. A token authorises exactly one transition. */
-  val fence: String = s"$prefix:fence"
+  val fence: RedisKey = RedisKey(s"$prefix:fence")
 
   /** message id -> how many times it has been delivered. Per message, since a claim may own several. */
-  val attempts: String = s"$prefix:attempts"
+  val attempts: RedisKey = RedisKey(s"$prefix:attempts")
 
   /**
    * The stream this queue announces on: one entry per key made claimable, appended by the same script
    * that made it so, and shared with every other queue in the partition.
    */
-  val wake: String = Namespace.wake(partition)
+  val wake: RedisKey = Namespace.wake(partition)
 
   /** key -> when a failed message may be retried. */
-  val delayed: String = s"$prefix:delayed"
+  val delayed: RedisKey = RedisKey(s"$prefix:delayed")
 
   /**
    * That key's message ids, in producer order, until they are acknowledged.
@@ -77,7 +77,7 @@ final case class Namespace(queue: QueueName):
    * @param key the key
    * @return the list name
    */
-  def msgs(key: MessageKey): String = s"$prefix:msgs:$key"
+  def msgs(key: MessageKey): RedisKey = RedisKey(s"$prefix:msgs:$key")
 
   /**
    * That key's messages themselves, by id.
@@ -89,7 +89,7 @@ final case class Namespace(queue: QueueName):
    * @param key the key
    * @return the hash name
    */
-  def payloads(key: MessageKey): String = s"$prefix:payloads:$key"
+  def payloads(key: MessageKey): RedisKey = RedisKey(s"$prefix:payloads:$key")
 
   /**
    * The ids this key's live claim owns and has not yet settled.
@@ -101,7 +101,7 @@ final case class Namespace(queue: QueueName):
    * @param key the key
    * @return the set name
    */
-  def owned(key: MessageKey): String = s"$prefix:owned:$key"
+  def owned(key: MessageKey): RedisKey = RedisKey(s"$prefix:owned:$key")
 
 
 object Namespace:
@@ -134,7 +134,7 @@ object Namespace:
    * @param partition the partition
    * @return the stream name
    */
-  def wake(partition: Int): String = s"${tag(partition)}:${KeyLayout.segment}:wake"
+  def wake(partition: Int): RedisKey = RedisKey(s"${tag(partition)}:${KeyLayout.segment}:wake")
 
   /**
    * Which partition a queue falls in.
@@ -155,5 +155,5 @@ object Namespace:
    *
    * @return the stream names, in partition order
    */
-  val wakeStreams: NonEmptyChunk[String] =
+  val wakeStreams: NonEmptyChunk[RedisKey] =
     NonEmptyChunk.fromChunk(Chunk.fromIterable(0 until partitions).map(wake)).getOrElse(NonEmptyChunk(wake(0)))

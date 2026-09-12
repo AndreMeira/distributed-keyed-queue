@@ -42,7 +42,7 @@ object Module:
    * Named once because two things must agree on it — the connections opened for blocking reads, and the
    * routes those reads are announced through. A stream in one and not the other is a wake nobody hears.
    */
-  private val wakeStreams: Chunk[String] = Namespace.wakeStreams.toChunk :+ LockKeys.wake
+  private val wakeStreams: Chunk[RedisKey] = Namespace.wakeStreams.toChunk :+ LockKeys.wake
 
   /**
    * The scripts, registered at startup so a missing or unparseable one fails here rather than on the first
