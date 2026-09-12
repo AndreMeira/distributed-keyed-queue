@@ -16,8 +16,8 @@ import scala.jdk.CollectionConverters.*
  *
  * '''One fiber per reader, because the cluster bounds what one read may name.''' `XREAD` is multi-stream,
  * but Redis Cluster rejects a multi-key read whose keys span slots — and the partition tags exist precisely to
- * spread slots. [[Connection]] therefore opens a reader per group of streams that one command may name, and
- * this runs a fiber on each; on a single server there is one group, so one connection and one fiber — the
+ * spread slots. [[Connection]] therefore opens a connection per group of streams that one command may
+ * name, and this runs a fiber on each; on a single server there is one group, so one connection and one fiber — the
  * original design. Which [[Waker]] an entry wakes is decided by the stream it came from (`routes`), so
  * queue wakes and lock wakes stay logically separate without separate listeners.
  *
@@ -29,13 +29,13 @@ import scala.jdk.CollectionConverters.*
  * costs nothing; pub/sub would lose whatever arrived while it was away, and a lost wake is a waiter asleep
  * beside work it asked for.
  *
- * @param readers the connections to block on, each with the streams one read may name
+ * @param groups the connections to block on, each with the streams one read may name
  * @param routes wake stream -> the readiness its entries wake
  * @param positions wake stream -> the last id delivered from it; the key set never changes
  * @param block how long one read waits before going round again
  */
 final class WakeListener(
-  readers: Chunk[Connection.Reader],
+  groups: Chunk[Connection.Group],
   routes: Map[String, Waker],
   positions: Ref[Map[String, String]],
   block: Duration,
@@ -55,16 +55,16 @@ final class WakeListener(
    * @return never completes
    */
   def run: UIO[Nothing] =
-    ZIO.foreachParDiscard(readers)(loop) *> ZIO.never
+    ZIO.foreachParDiscard(groups)(loop) *> ZIO.never
 
   /**
    * One group's read loop, forever.
    *
-   * @param reader the connection to block on, and the streams one read may name
+   * @param group the connection to block on, and the streams one read may name
    * @return never completes
    */
-  private def loop(reader: Connection.Reader): UIO[Unit] =
-    val Connection.Reader(commands, streams) = reader
+  private def loop(group: Connection.Group): UIO[Unit] =
+    val Connection.Group(commands, streams) = group
     read(commands, streams)
       .flatMap(announce)
       .catchAll: error =>
@@ -160,26 +160,26 @@ object WakeListener:
    * would be a bug: it is re-evaluated by each read, so anything appended between two reads would be stepped
    * over. Resolving once means every read asks for "after the last entry I actually saw".
    *
-   * @param connection whose readers this listens on, and whose shared connection resolves the positions
+   * @param connection whose groups this listens on, and whose shared connection resolves the positions
    * @param block how long one read waits before going round again
    * @param routes wake stream -> the waker its entries wake
    * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
    */
   def make(connection: Connection, block: Duration, routes: Map[String, Waker]): IO[RedisFailure, WakeListener] =
-    positioned(connection).map(WakeListener(connection.readers, routes, _, block))
+    positioned(connection).map(WakeListener(connection.groups, routes, _, block))
 
   /**
    * Where each stream this listener will read stands right now.
    *
-   * Taken from the readers rather than from `routes`, so what is positioned is exactly what will be read —
+   * Taken from the groups rather than from `routes`, so what is positioned is exactly what will be read —
    * there is no third opinion about which streams exist.
    *
-   * @param connection whose readers name the streams, and whose shared connection answers
+   * @param connection whose groups name the streams, and whose shared connection answers
    * @return the positions, ready to read from; aborts with `Unavailable` when one cannot be read
    */
   private def positioned(connection: Connection): IO[RedisFailure, Ref[Map[String, String]]] =
     ZIO
-      .foreach(connection.readers.flatMap(_.streams))(stream => position(connection, stream).map(stream -> _))
+      .foreach(connection.groups.flatMap(_.keys))(stream => position(connection, stream).map(stream -> _))
       .flatMap(resolved => Ref.make(resolved.toMap))
 
   /**

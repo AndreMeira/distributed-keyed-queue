@@ -58,8 +58,8 @@ the leases, the tokens, the fence counter and a waiters list together; partition
 are partitioned is deferred until lock volume on one node is a measured problem rather than an aesthetic one.
 Its wake stream carries a tag of its own, and nothing says which slot that lands in — which is why the
 streams are grouped by *computed* slot rather than by kind or by partition. That grouping lives in
-`Connection`, which is what knows whether the store is a cluster: it opens one reader connection per group
-at startup, and the listener runs a fiber on each.
+`Connection`, which is what knows whether the store is a cluster: it opens one connection per group of streams
+that a single command may name, at startup, and the listener runs a fiber on each.
 
 A partition's keys hash to one slot, and **every script touches exactly one queue, whose keys are all in its
 partition's slot** — which is what makes the Lua legal at all, since a script may only reach keys in a single
