@@ -53,8 +53,10 @@ What is specific to this repo:
   - [`reading-a-latency-tail.md`](learning-material/reading-a-latency-tail.md) — how to tell a GC pause
     from queueing in trace data, why generational ZGC lost to G1 here, and which lever actually moves it.
   And the most recent checkpoint is
+  [`sessions/2026-09-13-redis-package-cleanup.md`](sessions/2026-09-13-redis-package-cleanup.md) — the
+  `redis` package back in shape, and why the readinesses belong in the domain next. Before it,
   [`sessions/2026-09-06-observability-checkpoint.md`](sessions/2026-09-06-observability-checkpoint.md) —
-  what telemetry proved, what it cost, and where to pick dkq up.
+  what telemetry proved, and what it cost.
 
 - **The problem statement lives outside this repo**, in `research/infrastructure/homelab-message-broker.md`
   and its transport companion: they precede this code and are not only about it. Rationale that *is* only
