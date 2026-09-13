@@ -23,7 +23,7 @@ import zio.test.*
  */
 object DistributedLockSpec extends ZIOSpecDefault:
 
-  /** The layout these tests read and write under — their Redis is a single server, so nothing groups by slot. */
+  /** The layout these tests read and write under. */
   private val layout: KeyLayout = KeyLayout.of(cluster = false)
 
   private val leaseTtl = 2.seconds

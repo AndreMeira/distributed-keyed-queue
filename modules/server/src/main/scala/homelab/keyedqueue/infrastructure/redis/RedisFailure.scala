@@ -31,7 +31,7 @@ enum RedisFailure extends ApplicationError.AdapterError:
 
   case DecodingError(reason: String) extends RedisFailure, ApplicationError.DecodingError
 
-  case GroupConnectionMissing(group: KeyLayout.GroupId) extends RedisFailure, ApplicationError.ImplementationError
+  case PartitionConnectionMissing(partition: KeyLayout.Partition) extends RedisFailure, ApplicationError.ImplementationError
 
   /**
    * What to tell a human. Phrased in terms of the queue rather than of Redis, because a reason can reach a
@@ -40,7 +40,7 @@ enum RedisFailure extends ApplicationError.AdapterError:
    * @return the message
    */
   override def message: String = this match
-    case Unavailable(reason)             => s"The queue store is unavailable: $reason"
-    case MalformedReply(reason)          => s"The queue store replied with something unreadable: $reason"
-    case DecodingError(reason)           => s"Failed to decode Lua script output: $reason"
-    case GroupConnectionMissing(groupId) => s"No connection found for ${groupId}"
+    case Unavailable(reason)              => s"The queue store is unavailable: $reason"
+    case MalformedReply(reason)           => s"The queue store replied with something unreadable: $reason"
+    case DecodingError(reason)            => s"Failed to decode Lua script output: $reason"
+    case PartitionConnectionMissing(part) => s"No blocking connection was opened for partition $part"

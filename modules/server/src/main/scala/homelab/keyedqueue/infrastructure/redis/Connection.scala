@@ -16,28 +16,21 @@ import java.time.Duration as JavaDuration
  *
  * The connection arrives in the environment as [[Connection.Commands]]: an effect asks for one by type, and
  * this decides which one it gets. [[sync]] is shared by everything that answers immediately; [[blocking]]
- * holds one connection per group of keys that a single command may name — separate because a blocking
- * command occupies its connection whole, and one per group because Redis Cluster refuses a command
- * spanning slots. All of them are opened at startup, so how many connections a deployment holds is a fact
- * fixed before it serves.
+ * holds one connection per partition — separate because a blocking command occupies its connection whole,
+ * and one each because a partition's keys are a slot of their own, which a command may not leave. All of
+ * them are opened at startup, so how many connections a deployment holds is a fact fixed before it serves.
  *
- * '''What each connection is for is not recorded here.''' Which streams a blocking read names is the
- * reader's to decide; this says only which connection serves a group, and the group is the layout's
- * verdict on what may be read together.
+ * '''What each connection is for is not recorded here.''' Which keys a blocking read names is the reader's
+ * to decide; this says only which connection serves a partition.
  *
  * Why the client is synchronous, and what that costs — Redis executes a script in about four microseconds,
  * a blocking-pool hop costs a third of one, and a waiting consumer holds no thread at all — is measured in
  * `docs/architecture/redis-connections.md`.
+ *
+ * @param sync the connection every command that answers at once runs on
+ * @param blocking partition -> the connection reserved for commands that park, one per partition
  */
-final case class Connection(sync: Connection.Commands, blocking: Map[KeyLayout.GroupId, Connection.Commands]):
-
-  def use[R, E, A](effect: Connection.Commands => ZIO[R, E, A]): ZIO[R, E, A] =
-    effect(sync)
-
-  def useBlocking[R, E, A](id: KeyLayout.GroupId)(effect: Connection.Commands => ZIO[R, E, A]): ZIO[R, E | RedisFailure, A] =
-    blocking.get(id) match
-      case Some(connection) => effect(connection)
-      case None             => ZIO.fail(RedisFailure.Unavailable(s"no connection for group $id"))
+final case class Connection(sync: Connection.Commands, blocking: Map[KeyLayout.Partition, Connection.Commands]):
 
   /**
    * Run an effect on the shared connection.
@@ -51,10 +44,26 @@ final case class Connection(sync: Connection.Commands, blocking: Map[KeyLayout.G
   def provide[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A] =
     effect.provideSomeEnvironment[R](env => env ++ ZEnvironment(sync))
 
-  def provideBlocking[R, E, A](id: KeyLayout.GroupId)(effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E | RedisFailure, A] =
-    blocking.get(id) match
+  /**
+   * Run an effect on the connection reserved for a partition — the one a command may occupy by blocking.
+   *
+   * @param partition whose connection to run on
+   * @param effect what to run, needing a connection
+   * @tparam R what it needs besides a connection
+   * @tparam E how it fails
+   * @tparam A what it produces
+   * @return the same effect, its connection supplied; aborts with `PartitionConnectionMissing` when no
+   *         connection was opened for that partition, which is this code wired wrong rather than Redis
+   *         being unreachable
+   */
+  def provideBlocking[R, E, A](
+    partition: KeyLayout.Partition
+  )(
+    effect: ZIO[R & Connection.Commands, E, A]
+  ): ZIO[R, E | RedisFailure, A] =
+    blocking.get(partition) match
       case Some(connection) => effect.provideSomeEnvironment[R](env => env ++ ZEnvironment(connection))
-      case None             => ZIO.fail(RedisFailure.Unavailable(s"no connection for group $id"))
+      case None             => ZIO.fail(RedisFailure.PartitionConnectionMissing(partition))
 
 
 /**
@@ -114,11 +123,10 @@ object Connection:
    * one per group that a single command may name.
    *
    * The count is settled at startup rather than left to the caller, so `CLIENT LIST` on a running store
-   * shows what this says it will: one plus the layout's group count — one on a single server, one per slot
-   * on a cluster.
+   * shows what this says it will: one plus one per partition.
    *
    * @param config where Redis is, and the longest wait to honour
-   * @param layout what may be read together, and so how many blocking connections to open
+   * @param layout how many partitions there are, and so how many blocking connections to open
    * @return the connections; aborts with `Unavailable` when one cannot be opened
    */
   def make(config: Config, layout: KeyLayout): ZIO[Scope, RedisFailure, Connection] =
@@ -126,7 +134,7 @@ object Connection:
       client   <- client(config)
       sync     <- open(client, config.maxWait)
       timeout   = config.maxWait + listeningSlack
-      blocking <- ZIO.foreach(layout.groupIds)(group => open(client, timeout).map(group -> _))
+      blocking <- ZIO.foreach(layout.partitionIds)(group => open(client, timeout).map(group -> _))
     yield Connection(sync, blocking.toMap)
 
   /**

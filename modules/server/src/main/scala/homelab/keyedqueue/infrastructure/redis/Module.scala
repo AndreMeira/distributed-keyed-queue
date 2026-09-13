@@ -41,9 +41,9 @@ object Module:
   /**
    * How this deployment divides its keys.
    *
-   * A layer rather than a constant, because only half of it is the code's: the partition count is fixed
-   * here, while whether keys group by slot is what the configuration says the store is. Everything that
-   * names a key or opens a connection for one takes it from here, so there is one answer per deployment.
+   * A layer rather than a value passed around, so that everything which names a key or opens a connection
+   * for one takes it from the same place — and a layer rather than a constant because the count is the
+   * deployment's: a cluster spreads across all of them, a single server uses one.
    *
    * @return the layer
    */
@@ -78,7 +78,7 @@ object Module:
         layout     <- ZIO.service[KeyLayout]
         // Before anything is built or served: an instance whose layout disagrees with the store's must not
         // come up at all — see KeyLayout.
-        _          <- connection.provide(KeyLayout.verify)
+        _          <- connection.provide(layout.verify)
         queueReady <- QueueReadiness.make
         lockReady  <- LockReadiness.make
         // One listener over the partition wake streams, routing each entry by the kind it carries — see

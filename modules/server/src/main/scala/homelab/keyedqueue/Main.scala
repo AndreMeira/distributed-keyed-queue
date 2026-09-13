@@ -47,5 +47,5 @@ object Main extends ZIOAppDefault:
    */
   private def accept(conf: QueueConfig): ZIO[Any, ApplicationError, Unit] =
     ZIO
-      .serviceWithZIO[Connection](_.provide(KeyLayout.accept))
+      .serviceWithZIO[KeyLayout](layout => ZIO.serviceWithZIO[Connection](_.provide(layout.accept)))
       .provide(ZLayer.succeed(conf), RedisModule.layout, RedisModule.connection)

@@ -52,7 +52,7 @@ object KeyLayoutSpec extends ZIOSpecDefault:
     Connection
       .make(
         Connection.Config(configured.maxWait, configured.redisUrl, configured.cluster),
-        KeyLayout.of(configured.cluster),
+        KeyLayout.of(cluster = false),
       )
       .flatMap(_.provide(effect))
 
@@ -60,8 +60,8 @@ object KeyLayoutSpec extends ZIOSpecDefault:
     test("a first boot records the layout, and a matching boot passes ever after") {
       for
         conf  <- ZIO.service[QueueConfig]
-        _     <- boot(conf)(KeyLayout.verify)
-        again <- boot(conf)(KeyLayout.verify).exit
+        _     <- boot(conf)(KeyLayout.of(conf.cluster).verify)
+        again <- boot(conf)(KeyLayout.of(conf.cluster).verify).exit
       yield assertTrue(again.isSuccess)
     },
     test("a schema the code does not expect refuses the boot, and accept records the code's own") {
@@ -72,9 +72,9 @@ object KeyLayoutSpec extends ZIOSpecDefault:
       for
         conf     <- ZIO.service[QueueConfig]
         _        <- boot(conf)(predecessor)
-        refused  <- boot(conf)(KeyLayout.verify).exit
-        _        <- boot(conf)(KeyLayout.accept)
-        restored <- boot(conf)(KeyLayout.verify).exit
+        refused  <- boot(conf)(KeyLayout.of(conf.cluster).verify).exit
+        _        <- boot(conf)(KeyLayout.of(conf.cluster).accept)
+        restored <- boot(conf)(KeyLayout.of(conf.cluster).verify).exit
       yield assertTrue(
         refused.causeOption.flatMap(_.failureOption).exists {
           case Misconfigured(reason) => reason.contains("schema") && reason.contains("999")

@@ -6,7 +6,6 @@ import homelab.keyedqueue.domain.types.{ LockName, QueueName }
 import homelab.keyedqueue.infrastructure.configuration.Misconfigured
 import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisFailure }
 import io.lettuce.core.SetArgs
-import io.lettuce.core.cluster.SlotHash
 import zio.*
 
 import java.nio.charset.StandardCharsets
@@ -18,19 +17,24 @@ import java.nio.charset.StandardCharsets
  *
  * '''The partition of a name must not depend on the deployment.''' It is written into every key as a hash
  * tag, so an instance computing it differently would look for keys in a partition they were never written
- * to — and nothing would report it, the schema marker being about shape rather than placement. [[groupOf]]
- * is the one member allowed to know whether this is a cluster.
+ * to — and nothing would report it, the schema marker being about shape rather than placement.
+ *
+ * '''A partition is the unit of everything here.''' It decides a name's hash tag, and so its slot; it owns
+ * exactly one wake stream; and it is what a blocking read is opened for. Nothing in it depends on whether
+ * the store is a cluster — a single-key read is legal on either.
  *
  * @param partitions how many partitions this deployment is divided into
- * @param cluster whether the store is a Redis Cluster
  */
-final case class KeyLayout(partitions: Int, cluster: Boolean):
+final case class KeyLayout(partitions: Int):
 
-  /** Each partition's tag, in partition order. */
-  private val tags: Chunk[KeyLayout.Tag] =
+  /** Every partition, in order. */
+  val partitionIds: Chunk[KeyLayout.Partition] =
     Chunk
       .fromIterable(0 until partitions)
-      .map(KeyLayout.Tag(_))
+      .map(KeyLayout.Partition(_))
+
+  /** Each partition's tag, in partition order. */
+  private val tags: Chunk[KeyLayout.Tag] = partitionIds.map(KeyLayout.Tag(_))
 
   /**
    * Which partition a name falls in, whatever kind of thing it names.
@@ -41,8 +45,8 @@ final case class KeyLayout(partitions: Int, cluster: Boolean):
    * @param name the queue or lock name
    * @return the partition
    */
-  def partitionOf(name: String): Int = 
-    Math.floorMod(name.hashCode, partitions)
+  def partitionOf(name: String): KeyLayout.Partition =
+    KeyLayout.Partition(Math.floorMod(name.hashCode, partitions))
 
   /**
    * The keys a queue owns.
@@ -50,7 +54,7 @@ final case class KeyLayout(partitions: Int, cluster: Boolean):
    * @param name the queue
    * @return its keys
    */
-  def queue(name: QueueName): QueueKeys = 
+  def queue(name: QueueName): QueueKeys =
     QueueKeys(KeyLayout.Tag(partitionOf(name)), name)
 
   /**
@@ -59,7 +63,7 @@ final case class KeyLayout(partitions: Int, cluster: Boolean):
    * @param name the lock
    * @return its partition's keys
    */
-  def lock(name: LockName): LockKeys = 
+  def lock(name: LockName): LockKeys =
     LockKeys(KeyLayout.Tag(partitionOf(name)))
 
   /**
@@ -81,32 +85,42 @@ final case class KeyLayout(partitions: Int, cluster: Boolean):
   val wakeStreamKeys: NonEmptyChunk[RedisKey] =
     NonEmptyChunk
       .fromChunk(tags.map(KeyLayout.wakeStreamKey))
-      .getOrElse(NonEmptyChunk(KeyLayout.wakeStreamKey(KeyLayout.Tag(0))))
+      .getOrElse(NonEmptyChunk(KeyLayout.wakeStreamKey(KeyLayout.Tag(KeyLayout.Partition(0)))))
 
   /**
-   * The distinct groups this deployment's wake streams fall into — one blocking connection each.
+   * Check this layout against the one the store was written under, recording it on a first boot.
    *
-   * Sixteen on a cluster, where every partition's tag hashes to its own slot; one on a single server,
-   * which has no slots and so reads every stream with one command.
-   *
-   * @return the ids, each naming a set that may be read together
+   * @return noop; aborts with `Misconfigured` when the store was written under a different layout, and
+   *         with `RedisFailure` when it cannot be reached
    */
-  val groupIds: Chunk[KeyLayout.GroupId] = 
-    wakeStreamKeys.toChunk.map(groupOf).distinct
+  def verify: ZIO[Connection.Commands, ApplicationError, Unit] = KeyLayout.verifying(stamp)
 
   /**
-   * Which keys may be named together in one command — equal ids may, different ids may not.
+   * Overwrite the store's record with this layout — the `layout accept` run mode.
    *
-   * On a cluster that is the slot, since Redis refuses a multi-key command spanning slots even when those
-   * slots share a server. A single server has no slots and so has one id for everything, which is what
-   * collapses sixteen blocking reads into one.
-   *
-   * @param key the key
-   * @return the id of the set it may be named with
+   * @return noop; aborts with `RedisFailure` when the store cannot be reached
    */
-  def groupOf(key: RedisKey): KeyLayout.GroupId =
-    if cluster then KeyLayout.GroupId(SlotHash.getSlot(key))
-    else KeyLayout.GroupId(0)
+  def accept: ZIO[Connection.Commands, ApplicationError, Unit] = KeyLayout.accepting(stamp)
+
+  /**
+   * This layout as the marker stores it: the schema version, and the partition count.
+   *
+   * '''The count is in it because it is no longer the same everywhere.''' A cluster spreads across
+   * [[KeyLayout.partitions]] of them and a single server uses one, so two instances disagreeing about which
+   * they are would write the same names into different tags — and a version alone could not tell.
+   *
+   * @return the stamp
+   */
+  private def stamp: String = s"v${KeyLayout.schemaVersion}.p$partitions"
+
+  /**
+   * A partition's wake stream.
+   *
+   * @param partition the partition
+   * @return its stream
+   */
+  def wakeStream(partition: KeyLayout.Partition): RedisKey =
+    KeyLayout.wakeStreamKey(KeyLayout.Tag(partition))
 
 
 /**
@@ -181,25 +195,23 @@ object KeyLayout:
      * @param partition the partition
      * @return the tag, braces included
      */
-    def apply(partition: Int): Type = s"{p:$partition}"
+    def apply(partition: Partition): Type = s"{p:$partition}"
 
   /**
-   * Which keys one command may name together: equal ids may, different ids may not.
-   *
-   * Named, because it is a slot on a cluster and a single constant on a server that has none — a caller
-   * reading either number as meaningful would be reading something that is only ever compared.
+   * One of the slices the keyspace is divided into: a hash tag, one wake stream, and the blocking
+   * connection opened to read it.
    */
-  type GroupId = GroupId.Type
+  type Partition = Partition.Type
 
-  object GroupId:
+  object Partition:
 
     opaque type Type <: Int = Int
 
     /**
-     * An id, trusted.
+     * A partition, trusted.
      *
-     * @param value what distinguishes this group from the others
-     * @return the id
+     * @param value which of the partitions this is
+     * @return the partition
      */
     def apply(value: Int): Type = value
 
@@ -212,12 +224,16 @@ object KeyLayout:
   def wakeStreamKey(tag: Tag): RedisKey = RedisKey(s"$tag:$segment:wake")
 
   /**
-   * The layout of a deployment that takes the partition count as it comes.
+   * The layout of a deployment, which decides how many partitions it wants.
+   *
+   * '''A single server uses one.''' Partitions exist to spread keys across cluster slots, and a server with
+   * no slots has nothing to spread across — so the sixteen would buy nothing and cost a blocking connection
+   * each. A cluster takes [[partitions]].
    *
    * @param cluster whether the store is a Redis Cluster
    * @return the layout
    */
-  def of(cluster: Boolean): KeyLayout = KeyLayout(partitions, cluster)
+  def of(cluster: Boolean): KeyLayout = KeyLayout(if cluster then partitions else 1)
 
   /**
    * Check this code's schema against the store's, recording it on a first boot.
@@ -228,14 +244,14 @@ object KeyLayout:
    * @return noop; aborts with `Misconfigured` when the store was written under a different schema, and
    *         with `RedisFailure` when it cannot be reached
    */
-  def verify: ZIO[Connection.Commands, ApplicationError, Unit] =
-    claimed.flatMap:
-      case None                                                 => ZIO.unit // first boot: this code's schema is now the store's
-      case Some(recorded) if recorded == schemaVersion.toString => ZIO.unit
-      case Some(recorded)                                       =>
+  private def verifying(stamp: String): ZIO[Connection.Commands, ApplicationError, Unit] =
+    claimed(stamp).flatMap:
+      case None                                => ZIO.unit // first boot: this code's schema is now the store's
+      case Some(recorded) if recorded == stamp => ZIO.unit
+      case Some(recorded)                      =>
         ZIO.fail:
           Misconfigured:
-            s"this store was written with schema version $recorded, but this code expects $schemaVersion. " +
+            s"this store was written under layout $recorded, but this instance is $stamp. " +
               "The stored structures have a different shape than this code expects, and running against " +
               "them fails in ways no error message will explain. If the store has been drained (or " +
               "flushed) on purpose, run the 'layout accept' mode once to record the new schema."
@@ -251,10 +267,10 @@ object KeyLayout:
    *
    * @return noop; aborts with `RedisFailure` when the store cannot be reached
    */
-  def accept: ZIO[Connection.Commands, ApplicationError, Unit] =
+  private def accepting(stamp: String): ZIO[Connection.Commands, ApplicationError, Unit] =
     for
       previous <- recorded
-      _        <- record
+      _        <- record(stamp)
       _        <- ZIO.logInfo:
                     s"layout accepted: schema ${previous.getOrElse("unset")} -> $schemaVersion. " +
                       "Start instances only now: a running instance checks its layout at boot and never again."
@@ -265,23 +281,23 @@ object KeyLayout:
    *
    * @return `None` when this call recorded it; the recorded text when someone already had
    */
-  private def claimed: ZIO[Connection.Commands, RedisFailure, Option[String]] =
-    attempt.flatMap:
+  private def claimed(stamp: String): ZIO[Connection.Commands, RedisFailure, Option[String]] =
+    attempt(stamp).flatMap:
       case Claim.Recorded    => ZIO.none
       case Claim.Found(text) => ZIO.some(text)
       // Lost the claim, then found nothing: the marker vanished between the two reads. Ask again.
-      case Claim.Vanished    => claimed
+      case Claim.Vanished    => claimed(stamp)
 
   /**
    * One round of the claim: try to record, and read on losing.
    *
    * @return what happened
    */
-  private def attempt: ZIO[Connection.Commands, RedisFailure, Claim] =
+  private def attempt(stamp: String): ZIO[Connection.Commands, RedisFailure, Claim] =
     Connection.use: redis =>
       ZIO
         .attemptBlocking {
-          if redis.set(schema, utf8(schemaVersion), SetArgs.Builder.nx()) == "OK" then Claim.Recorded
+          if redis.set(schema, utf8(stamp), SetArgs.Builder.nx()) == "OK" then Claim.Recorded
           else
             Option(redis.get(schema)) match
               case Some(bytes) => Claim.Found(String(bytes, StandardCharsets.UTF_8))
@@ -317,17 +333,17 @@ object KeyLayout:
    *
    * @return noop
    */
-  private def record: ZIO[Connection.Commands, RedisFailure, Unit] =
+  private def record(stamp: String): ZIO[Connection.Commands, RedisFailure, Unit] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking(redis.set(schema, utf8(schemaVersion)))
+        .attemptBlocking(redis.set(schema, utf8(stamp)))
         .mapError(error => RedisFailure.Unavailable(error.getMessage))
         .unit
 
   /**
-   * A number as the marker stores it.
+   * Text as the marker stores it.
    *
-   * @param value the number
+   * @param value the text
    * @return its UTF-8 bytes
    */
-  private def utf8(value: Int): Array[Byte] = value.toString.getBytes(StandardCharsets.UTF_8)
+  private def utf8(value: String): Array[Byte] = value.getBytes(StandardCharsets.UTF_8)
