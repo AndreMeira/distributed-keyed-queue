@@ -59,9 +59,10 @@ final class RedisLockStore(
   override def tryAcquire(acquisition: Acquisition): IO[RedisFailure, Option[Hold]] =
     monitor.trace("RedisLockStore.tryAcquire"):
       connection.provide:
-        scripts.tryAcquire
-          .execute(acquisition.name, acquisition.ttl)
-          .map(_.map(hold(acquisition.name)))
+        scripts.tryAcquire.execute(acquisition.name, acquisition.ttl).map {
+          case None          => None
+          case Some(granted) => Some(hold(acquisition.name)(granted))
+        }
 
   /**
    * Enter for the lock, and wait out the turns until it is this caller's or the patience is spent.
@@ -82,7 +83,7 @@ final class RedisLockStore(
             .provide:
               scripts.acquire.execute(acquisition.name, acquisition.ttl, acquisition.patience)
             .flatMap:
-              case AcquireScript.Entered.Granted(token, until)   => ZIO.some(hold(acquisition.name)((token, until)))
+              case AcquireScript.Entered.Granted(token, until)   => ZIO.some(hold(acquisition.name)(token, until))
               case AcquireScript.Entered.Queued(ticket, recheck) => queued(acquisition, asked, ticket, recheck, mailbox)
         }
 
@@ -97,7 +98,8 @@ final class RedisLockStore(
     // shared listener delivers it to every instance's readiness — so a waiter on another instance wakes,
     // which an in-process call could never reach.
     monitor.trace("RedisLockStore.release"):
-      connection.provide(scripts.release.execute(claim.name, claim.token))
+      connection.provide:
+        scripts.release.execute(claim.name, claim.token)
 
   /**
    * One `refresh` call, which moves the lease if the caller still holds the lock.
@@ -165,10 +167,9 @@ final class RedisLockStore(
       now       <- Clock.instant
       ticketRef <- Ref.make(ticket)
       recheckAt <- Ref.make(now.plus(atLeastFloor(recheck)))
-      result    <- awaitTurn(acquisition, asked, ticketRef, recheckAt, mailbox).onExit {
+      result    <- awaitTurn(acquisition, asked, ticketRef, recheckAt, mailbox).onExit:
                      case Exit.Success(Some(_)) => ZIO.unit
                      case _                     => withdraw(acquisition.name, ticketRef)
-                   }
     yield result
 
   /**
