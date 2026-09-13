@@ -9,7 +9,9 @@ import homelab.keyedqueue.domain.model.Settlement.Verdict
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace, Readiness, RedisQueueStore, Scripts, WakeListener }
+import homelab.keyedqueue.infrastructure.redis.keys.QueueKeys
+import homelab.keyedqueue.infrastructure.redis.script.QueueScripts
+import homelab.keyedqueue.infrastructure.redis.{ Connection, Readiness, RedisQueueStore, WakeListener }
 import io.lettuce.core.cluster.api.sync.RedisClusterCommands
 import org.testcontainers.containers.GenericContainer
 import zio.*
@@ -79,9 +81,9 @@ object QueueStoreSpec extends ZIOSpecDefault:
     for
       connection <- Connection.make(
                       Connection.Config(config.maxWait, config.redisUrl, config.cluster),
-                      Namespace.wakeStreams.toChunk,
+                      QueueKeys.wakeStreams.toChunk,
                     )
-      scripts    <- connection.provide(Scripts.make)
+      scripts    <- connection.provide(QueueScripts.make)
       readiness  <- Readiness.make
       listener   <- WakeListener.make(connection, readiness, config.wakeBlock)
       _          <- listener.run.forkScoped
@@ -324,11 +326,11 @@ object QueueStoreSpec extends ZIOSpecDefault:
         _                  <- ZIO.foreachDiscard(List("a", "b"))(m => worker.enqueue(Submission(queue, message(key, m))))
         held               <- worker.claim(Demand(queue, 2.seconds, 2))
         _                  <- ZIO.foreachDiscard(held)(batch => worker.settle(settlement(batch.claim, acks(batch))))
-        payloads           <- ZIO.attemptBlocking(redis.hlen(Namespace(QueueName("cleanup")).payloads(MessageKey("k1")))).orDie
-        owned              <- ZIO.attemptBlocking(redis.scard(Namespace(QueueName("cleanup")).owned(MessageKey("k1")))).orDie
+        payloads           <- ZIO.attemptBlocking(redis.hlen(QueueKeys(QueueName("cleanup")).payloads(MessageKey("k1")))).orDie
+        owned              <- ZIO.attemptBlocking(redis.scard(QueueKeys(QueueName("cleanup")).owned(MessageKey("k1")))).orDie
         // Idle is the absence of the key from every structure — there is no state entry to check any more.
-        claimed            <- ZIO.attemptBlocking(redis.zcard(Namespace(QueueName("cleanup")).claimed)).orDie
-        ready              <- ZIO.attemptBlocking(redis.zcard(Namespace(QueueName("cleanup")).ready)).orDie
+        claimed            <- ZIO.attemptBlocking(redis.zcard(QueueKeys(QueueName("cleanup")).claimed)).orDie
+        ready              <- ZIO.attemptBlocking(redis.zcard(QueueKeys(QueueName("cleanup")).ready)).orDie
       yield assertTrue(payloads == 0L, owned == 0L, claimed == 0L, ready == 0L)
     },
     test("a claim reclaimed while a nack's backoff is pending queues its key once, not twice") {
@@ -347,7 +349,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
         // Let the lease lapse and the backoff fall due, then sweep both in one pass.
         _                        <- ZIO.sleep(leaseTtl + 1.second)
         _                        <- sweeper.sweep(queue, 100)
-        ready                    <- ZIO.attemptBlocking(redis.zcard(Namespace(queue).ready)).orDie
+        ready                    <- ZIO.attemptBlocking(redis.zcard(QueueKeys(queue).ready)).orDie
       yield assertTrue(ready == 1L)
     },
     test("a heartbeat renews what is held and names what is lost") {

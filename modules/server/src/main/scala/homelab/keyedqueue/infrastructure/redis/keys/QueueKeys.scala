@@ -1,4 +1,4 @@
-package homelab.keyedqueue.infrastructure.redis
+package homelab.keyedqueue.infrastructure.redis.keys
 
 
 import homelab.keyedqueue.domain.types.*
@@ -26,13 +26,13 @@ import zio.{ Chunk, NonEmptyChunk }
  *
  * @param queue the queue these keys belong to
  */
-final case class Namespace(queue: QueueName):
+final case class QueueKeys(queue: QueueName):
 
   /** Which partition this queue falls in, and therefore which slot and which wake stream it uses. */
-  val partition: Int = Namespace.partitionOf(queue)
+  val partition: Int = QueueKeys.partitionOf(queue)
 
   /** The tag every key shares, and what the scripts rebuild the per-key names from. */
-  val prefix: String = s"${Namespace.tag(partition)}:${KeyLayout.segment}:q:$queue"
+  val prefix: String = s"${QueueKeys.tag(partition)}:${KeyLayout.segment}:q:$queue"
 
   /**
    * Keys with work and nobody working them, scored by when each became claimable.
@@ -63,7 +63,7 @@ final case class Namespace(queue: QueueName):
    * The stream this queue announces on: one entry per key made claimable, appended by the same script
    * that made it so, and shared with every other queue in the partition.
    */
-  val wake: RedisKey = Namespace.wake(partition)
+  val wake: RedisKey = QueueKeys.wake(partition)
 
   /** key -> when a failed message may be retried. */
   val delayed: RedisKey = RedisKey(s"$prefix:delayed")
@@ -104,7 +104,7 @@ final case class Namespace(queue: QueueName):
   def owned(key: MessageKey): RedisKey = RedisKey(s"$prefix:owned:$key")
 
 
-object Namespace:
+object QueueKeys:
 
   /**
    * How many partitions the deployment is divided into — fixed in code, not configured.

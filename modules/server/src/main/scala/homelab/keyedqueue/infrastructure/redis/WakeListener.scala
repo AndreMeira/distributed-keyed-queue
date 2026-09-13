@@ -2,7 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.types.QueueName
+import homelab.keyedqueue.infrastructure.redis.keys.{ QueueKeys, RedisKey }
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import io.lettuce.core.XReadArgs.StreamOffset
 import io.lettuce.core.{ Limit, Range, XReadArgs }
@@ -30,7 +30,7 @@ import scala.jdk.CollectionConverters.*
  * beside work it asked for.
  *
  * @param groups the connections to block on, each with the streams one read may name
- * @param routes wake stream -> the readiness its entries wake
+ * @param routes wake stream -> the waker its entries wake
  * @param positions wake stream -> the last entry id delivered from it; the key set never changes
  * @param block how long one read waits before going round again
  */
@@ -42,14 +42,14 @@ final class WakeListener(
 ):
 
   /**
-   * Read the wake streams forever, routing each entry to its readiness.
+   * Read the wake streams forever, routing each entry to its waker.
    *
    * '''Supervised, because a dead listener is silent.''' A failed read is retried rather than killing the
    * fiber: a stopped listener leaves every waiter here parked beside work that is ready.
    *
    * '''A failure re-announces everything before retrying.''' Entries can be trimmed while a reader is away
    * and `XREAD` does not report stepping over any, so after a failure the safe assumption is that something
-   * was missed — every readiness served is told to re-look. The backoff is short: it is the one interval a
+   * was missed — every waker served is told to re-look. The backoff is short: it is the one interval a
    * waiter actually waits on.
    *
    * @return never completes
@@ -75,17 +75,17 @@ final class WakeListener(
       .forever
 
   /**
-   * One `XREAD` across this group's streams, resuming from where each was left, paired with the readiness
+   * One `XREAD` across this group's streams, resuming from where each was left, paired with the waker
    * each entry belongs to.
    *
    * @param commands the group's connection
    * @param streams the streams it reads
-   * @return the (readiness, name) wakes the entries carry, one per entry
+   * @return the waker each entry belongs to, with the name it carried, unread
    */
   private def read(
     commands: Connection.Commands,
     streams: Chunk[RedisKey],
-  ): IO[RedisFailure, Chunk[(Waker, QueueName)]] =
+  ): IO[RedisFailure, Chunk[(Waker, String)]] =
     positions.get.flatMap: current =>
       // `from[String]` pins what Lettuce is handed: an Array[StreamOffset[RedisKey]] would not be an
       // Array[StreamOffset[String]], arrays being invariant.
@@ -113,13 +113,13 @@ final class WakeListener(
       .mapBoth(LuaScript.failure, reply => Option(reply).map(_.asScala.toList).getOrElse(Nil))
 
   /**
-   * Deliver each wake to its readiness, once.
+   * Deliver each wake to its waker, once — each reading the name as its own kind.
    *
-   * @param woken the (readiness, name) pairs this batch carried
+   * @param woken the waker and raw name this batch carried, one pair per entry
    * @return noop
    */
-  private def announce(woken: Chunk[(Waker, QueueName)]): UIO[Unit] =
-    ZIO.foreachDiscard(woken.distinct)((waker, name) => waker.ready(name))
+  private def announce(woken: Chunk[(Waker, String)]): UIO[Unit] =
+    ZIO.foreachDiscard(woken.distinct)((waker, raw) => waker.ready(waker.name(raw)))
 
   /**
    * Tell this group's wakers to re-look — the failure path, where a wake may have been missed and the safe
@@ -172,10 +172,10 @@ object WakeListener:
    * @param entry one stream entry
    * @return the name it carries, or `None` when the entry has no `queue` field
    */
-  private def nameOf(entry: io.lettuce.core.StreamMessage[String, Array[Byte]]): Option[QueueName] =
+  private def nameOf(entry: io.lettuce.core.StreamMessage[String, Array[Byte]]): Option[String] =
     Option(entry.getBody)
       .flatMap(body => Option(body.get("queue")))
-      .map(bytes => QueueName(String(bytes, "UTF-8")))
+      .map(bytes => String(bytes, "UTF-8"))
 
   /**
    * A listener over the given wake streams, each positioned at its end, routing entries to their readiness.
@@ -215,7 +215,7 @@ object WakeListener:
    * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
    */
   def make(connection: Connection, readiness: Readiness, block: Duration): ZIO[Scope, RedisFailure, WakeListener] =
-    make(connection, block, Namespace.wakeStreams.toChunk.map(stream => stream -> (readiness: Waker)).toMap)
+    make(connection, block, QueueKeys.wakeStreams.toChunk.map(stream => stream -> (readiness: Waker)).toMap)
 
   /**
    * Where a wake stream is right now: the id of its last entry, or `0-0` when nothing has been appended.

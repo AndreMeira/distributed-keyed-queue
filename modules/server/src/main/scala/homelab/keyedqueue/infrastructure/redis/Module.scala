@@ -5,8 +5,9 @@ import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.infrastructure.redis.script.LockKeys
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
+import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, LockKeys, QueueKeys, RedisKey }
+import homelab.keyedqueue.infrastructure.redis.script.QueueScripts
 import io.lettuce.core.api.sync.RedisCommands
 import zio.*
 
@@ -42,7 +43,7 @@ object Module:
    * Named once because two things must agree on it — the connections opened for blocking reads, and the
    * routes those reads are announced through. A stream in one and not the other is a wake nobody hears.
    */
-  private val wakeStreams: Chunk[RedisKey] = Namespace.wakeStreams.toChunk :+ LockKeys.wake
+  private val wakeStreams: Chunk[RedisKey] = QueueKeys.wakeStreams.toChunk :+ LockKeys.wake
 
   /**
    * The scripts, registered at startup so a missing or unparseable one fails here rather than on the first
@@ -50,8 +51,8 @@ object Module:
    *
    * @return the layer
    */
-  val scripts: ZLayer[Connection, ApplicationError, Scripts] =
-    ZLayer(ZIO.serviceWithZIO[Connection](_.provide(Scripts.make)))
+  val scripts: ZLayer[Connection, ApplicationError, QueueScripts] =
+    ZLayer(ZIO.serviceWithZIO[Connection](_.provide(QueueScripts.make)))
 
   /**
    * The queue itself, as the port.
@@ -61,12 +62,12 @@ object Module:
    *
    * @return the layer
    */
-  val stores: ZLayer[Connection & Scripts & QueueConfig & Monitor, ApplicationError, QueueStore & LockStore] =
+  val stores: ZLayer[Connection & QueueScripts & QueueConfig & Monitor, ApplicationError, QueueStore & LockStore] =
     ZLayer.scopedEnvironment {
       for
         monitor    <- ZIO.service[Monitor]
         connection <- ZIO.service[Connection]
-        scripts    <- ZIO.service[Scripts]
+        scripts    <- ZIO.service[QueueScripts]
         config     <- ZIO.service[QueueConfig]
         // Before anything is built or served: an instance whose layout disagrees with the store's must not
         // come up at all — see KeyLayout.
@@ -76,7 +77,7 @@ object Module:
         // One listener over both stores' wake streams, routing each to its own readiness — see WakeListener.
         // The queue's partition streams wake `queueReady` (one token, one consumer); the lock's one
         // stream wakes `lockReady` (a broadcast — grants go by ticket, so every waiter must look).
-        routes      = Namespace.wakeStreams.toChunk.map(_ -> queueReady).toMap + (LockKeys.wake -> lockReady)
+        routes      = QueueKeys.wakeStreams.toChunk.map(_ -> queueReady).toMap + (LockKeys.wake -> lockReady)
         listener   <- WakeListener.make(connection, config.wakeBlock, routes)
         // Forked here rather than in the composition root because both stores are unusable without it: a
         // waiter that finds nothing parks on a readiness token, and an unrun listener offers none.

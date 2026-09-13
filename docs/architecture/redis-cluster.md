@@ -34,7 +34,7 @@ Everything downstream is unchanged.
 
 ## Why the key layout was ready first
 
-Every key a queue owns carries the hash tag of the **partition** that queue falls in. `Namespace` builds all
+Every key a queue owns carries the hash tag of the **partition** that queue falls in. `QueueKeys` builds all
 ten from `prefix = "{p:<partition>}:v1:q:<queue>"`, with the wake stream tagged but not scoped to the queue:
 
 ```

@@ -11,7 +11,7 @@ tags: [redis, keys, data-structures, lua, claims, ordering, streams]
 Every piece of state lives in Redis; dkq pods hold nothing but connections. This is the whole layout, why
 each structure has the type it has, and which script touches it.
 
-`Namespace` builds the queue's names and `LockKeys` the lock's. Nothing else in the codebase constructs a
+`QueueKeys` builds the queue's names and `LockKeys` the lock's. Nothing else in the codebase constructs a
 key name, apart from `claim.lua`, `sweep.lua` and the lock's `trim.lua`, which rebuild per-key ones at
 runtime — see [Cluster](#one-partition-one-slot).
 

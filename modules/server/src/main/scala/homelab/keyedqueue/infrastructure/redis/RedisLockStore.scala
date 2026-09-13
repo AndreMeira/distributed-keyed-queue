@@ -7,7 +7,8 @@ import homelab.keyedqueue.domain.model.{ Acquisition, LockClaim }
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.lock.LockStore.Hold
 import homelab.keyedqueue.domain.types.{ LockName, QueueName }
-import homelab.keyedqueue.infrastructure.redis.script.{ LockAcquireScript, LockGrantScript }
+import homelab.keyedqueue.infrastructure.redis.script.LockScripts
+import homelab.keyedqueue.infrastructure.redis.script.lock.{ AcquireScript, GrantScript, TryScript }
 import zio.*
 
 import java.time.Instant
@@ -45,43 +46,103 @@ final class RedisLockStore(
   /** The least a waiter parks between grant attempts, so clock-boundary refusals cannot spin. */
   private val floor: Duration = 10.millis
 
+  /**
+   * One `try` call, which answers at once.
+   *
+   * Refuses a lock that is free but queued for: a live ticket means someone asked first, and granting past
+   * them is the barging the tickets exist to end. The script names the token and the deadline; naming the
+   * lock is this adapter's job, since only the caller knows which it asked for.
+   *
+   * @param acquisition the lock to take and how long to hold it; its patience is ignored here
+   * @return the hold, or `None` when the lock is held or queued for
+   */
   override def tryAcquire(acquisition: Acquisition): IO[RedisFailure, Option[Hold]] =
     monitor.trace("RedisLockStore.tryAcquire"):
       connection.provide:
-        scripts.tryAcquire.run(acquisition.name, acquisition.ttl)
+        scripts.tryAcquire.execute(acquisition.name, acquisition.ttl).map {
+          case None          => None
+          case Some(granted) => Some(hold(acquisition.name)(granted))
+        }
 
-  override def acquire(acquisition: Acquisition): IO[RedisFailure, Option[Hold]] =
+  /**
+   * Enter for the lock, and wait out the turns until it is this caller's or the patience is spent.
+   *
+   * The mailbox is subscribed '''before''' entering, so a release cannot fall into the gap between asking
+   * and parking. What comes back is either the lock or a ticket; the ticket's wait is [[queued]].
+   *
+   * @param acquisition the lock to take, how long to hold it, and how long to wait
+   * @return the hold, or `None` when the patience elapsed first
+   */
+  override def acquire(acquisition: Acquisition): IO[RedisFailure, Option[Hold]] = ZIO.scoped:
     // The span covers the whole wait, so its duration is the caller's wait time — read it the way the
     // observability doc reads dequeue's, not as a processing latency.
     monitor.trace("RedisLockStore.acquire"):
       Clock.instant.flatMap: asked =>
-        ZIO.scoped:
-          broadcast
-            .subscribe(QueueName(acquisition.name))
-            .flatMap: mailbox =>
-              connection
-                .provide(scripts.acquire.run(acquisition.name, acquisition.ttl, acquisition.patience))
-                .flatMap:
-                  case LockAcquireScript.Reply.Granted(hold)           => ZIO.some(hold)
-                  case LockAcquireScript.Reply.Queued(ticket, recheck) =>
-                    queued(acquisition, asked, ticket, recheck, mailbox)
+        broadcast.subscribe(acquisition.name).flatMap { mailbox =>
+          connection
+            .provide:
+              scripts.acquire.execute(acquisition.name, acquisition.ttl, acquisition.patience)
+            .flatMap:
+              case AcquireScript.Entered.Granted(token, until)   => ZIO.some(hold(acquisition.name)(token, until))
+              case AcquireScript.Entered.Queued(ticket, recheck) => queued(acquisition, asked, ticket, recheck, mailbox)
+        }
 
+  /**
+   * One `release` call, which frees the lock and wakes whoever waits on it.
+   *
+   * @param claim the claim from the hold
+   * @return true when released, false when the hold had already been revoked
+   */
   override def release(claim: LockClaim): IO[RedisFailure, Boolean] =
     // The wake is the script's job: lock/release.lua appends to the wake stream on a real release, and the
     // shared listener delivers it to every instance's readiness — so a waiter on another instance wakes,
     // which an in-process call could never reach.
     monitor.trace("RedisLockStore.release"):
-      connection.provide(scripts.release.run(claim.name, claim.token))
+      connection.provide:
+        scripts.release.execute(claim.name, claim.token)
 
+  /**
+   * One `refresh` call, which moves the lease if the caller still holds the lock.
+   *
+   * Token-only, deliberately: a holder whose lease lapsed but whom nobody displaced is late, not lost. The
+   * deadline it answers with is meaningless when the hold is gone, which is why the pair says both.
+   *
+   * @param claim the claim from the hold
+   * @param ttl how much longer to grant
+   * @return the new deadline, and whether the hold survived to take it
+   */
   override def refresh(claim: LockClaim, ttl: Duration): IO[RedisFailure, (Instant, Boolean)] =
     monitor.trace("RedisLockStore.refresh"):
       connection.provide:
-        scripts.refresh.run(claim.name, claim.token, ttl)
+        scripts.refresh.execute(claim.name, claim.token, ttl).map(_.toTuple)
 
+  /**
+   * One `trim` call, which removes holds abandoned past the grace and the waiter lists left with them.
+   *
+   * Hygiene, not liveness: a lock somebody wants is reclaimed inline by the next grant, so what this frees
+   * is what no request would ever reach.
+   *
+   * @param grace how long past lease expiry a hold survives before it may be removed
+   * @param limit the most holds one pass removes
+   * @return the names freed, oldest lease first
+   */
   override def trim(grace: Duration, limit: Int): IO[RedisFailure, Chunk[LockName]] =
     monitor.trace("RedisLockStore.trim"):
       connection.provide:
-        scripts.trim.run(grace, limit)
+        scripts.trim.execute(grace, limit)
+
+  /**
+   * The hold a granted reply amounts to.
+   *
+   * The reply carries the token and the deadline; only this caller knows which lock it asked for, which is
+   * why the script answers with less than a `Hold`.
+   *
+   * @param name the lock that was asked for
+   * @param granted the token the grant runs under, and when its lease lapses
+   * @return the hold, as the port promises it
+   */
+  private def hold(name: LockName)(granted: TryScript.Granted): Hold =
+    Hold(LockClaim(name, granted.token), granted.leaseUntil)
 
   /**
    * Hold a ticket to the end: wait out the turns, and withdraw it on any exit that is not a grant.
@@ -106,10 +167,9 @@ final class RedisLockStore(
       now       <- Clock.instant
       ticketRef <- Ref.make(ticket)
       recheckAt <- Ref.make(now.plus(atLeastFloor(recheck)))
-      result    <- awaitTurn(acquisition, asked, ticketRef, recheckAt, mailbox).onExit {
+      result    <- awaitTurn(acquisition, asked, ticketRef, recheckAt, mailbox).onExit:
                      case Exit.Success(Some(_)) => ZIO.unit
                      case _                     => withdraw(acquisition.name, ticketRef)
-                   }
     yield result
 
   /**
@@ -166,11 +226,11 @@ final class RedisLockStore(
     monitor.trace("RedisLockStore.grant"):
       ticket.get.flatMap: id =>
         connection
-          .provide(scripts.grant.run(acquisition.name, id, acquisition.ttl))
+          .provide(scripts.grant.execute(acquisition.name, id, acquisition.ttl))
           .flatMap:
-            case LockGrantScript.Reply.Granted(hold) => ZIO.some(hold)
-            case LockGrantScript.Reply.Wait(delay)   => nextEventIn(delay, recheckAt).as(None)
-            case LockGrantScript.Reply.Gone          => reenter(acquisition, asked, ticket, recheckAt)
+            case GrantScript.Asked.Granted(token, until) => ZIO.some(hold(acquisition.name)(token, until))
+            case GrantScript.Asked.Wait(delay)           => nextEventIn(delay, recheckAt).as(None)
+            case GrantScript.Asked.Gone                  => reenter(acquisition, asked, ticket, recheckAt)
 
   /**
    * Enter again after the queue lost the ticket — with what is '''left''' of the patience, not all of it.
@@ -194,12 +254,10 @@ final class RedisLockStore(
     remainingTime(acquisition.patience, asked).flatMap:
       case None       => ZIO.none
       case Some(left) =>
-        connection
-          .provide(scripts.acquire.run(acquisition.name, acquisition.ttl, left))
-          .flatMap:
-            case LockAcquireScript.Reply.Granted(hold)          => ZIO.some(hold)
-            case LockAcquireScript.Reply.Queued(fresh, recheck) =>
-              ticket.set(fresh) *> nextEventIn(recheck, recheckAt).as(None)
+        connection.provide(scripts.acquire.execute(acquisition.name, acquisition.ttl, left)).flatMap {
+          case AcquireScript.Entered.Granted(token, until)  => ZIO.some(hold(acquisition.name)(token, until))
+          case AcquireScript.Entered.Queued(fresh, recheck) => ticket.set(fresh) *> nextEventIn(recheck, recheckAt).as(None)
+        }
 
   /**
    * Note when the answer can next change.
@@ -242,7 +300,7 @@ final class RedisLockStore(
    * @return noop; a withdrawal that fails is left to the deadline prune
    */
   private def withdraw(name: LockName, ticket: Ref[Long]): UIO[Unit] =
-    ticket.get.flatMap(id => connection.provide(scripts.abandon.run(name, id)).ignore)
+    ticket.get.flatMap(id => connection.provide(scripts.abandon.execute(name, id)).ignore)
 
   /**
    * What is left of the caller's patience.

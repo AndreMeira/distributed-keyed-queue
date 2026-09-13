@@ -35,7 +35,15 @@ import zio.*
  *
  * @param queues queue → its token buffer, made on first use
  */
-final class Readiness(queues: Ref[Map[QueueName, Queue[Unit]]]) extends Waker:
+final class Readiness(queues: Ref[Map[Waker.Name, Queue[Unit]]]) extends Waker:
+
+  /**
+   * Read a name as a queue's, which is all this sink ever wakes.
+   *
+   * @param raw the name as the entry carried it
+   * @return it, as a queue name
+   */
+  override def name(raw: String): Waker.Name = QueueName(raw)
 
   /**
    * Announce that a queue may have work.
@@ -46,7 +54,7 @@ final class Readiness(queues: Ref[Map[QueueName, Queue[Unit]]]) extends Waker:
    * @param queue what became claimable
    * @return noop
    */
-  override def ready(queue: QueueName): UIO[Unit] =
+  override def ready(queue: Waker.Name): UIO[Unit] =
     buffer(queue).flatMap(_.offer(())).unit
 
   /**
@@ -77,7 +85,7 @@ final class Readiness(queues: Ref[Map[QueueName, Queue[Unit]]]) extends Waker:
    * @tparam A what `claim` produces
    * @return `claim`'s answer, or `None` when nothing became ready in time; aborts with `E` when `claim` does
    */
-  def awaitReady[E, A](queue: QueueName, patience: Duration)(claim: IO[E, Option[A]]): IO[E, Option[A]] =
+  def awaitReady[E, A](queue: Waker.Name, patience: Duration)(claim: IO[E, Option[A]]): IO[E, Option[A]] =
     buffer(queue).flatMap: found =>
       // Uninterruptible except where restored, so a token cannot be taken and then dropped in the gap
       // before its recovery is installed: interruption there would run neither handler.
@@ -113,7 +121,7 @@ final class Readiness(queues: Ref[Map[QueueName, Queue[Unit]]]) extends Waker:
    * @param name the queue whose buffer is wanted
    * @return the buffer
    */
-  private def buffer(name: QueueName): UIO[Queue[Unit]] =
+  private def buffer(name: Waker.Name): UIO[Queue[Unit]] =
     for {
       // get or create the token queue
       queue <- queues.get.flatMap: known =>
@@ -136,4 +144,4 @@ object Readiness:
    *
    * @return the readiness
    */
-  def make: UIO[Readiness] = Ref.make(Map.empty[QueueName, Queue[Unit]]).map(Readiness(_))
+  def make: UIO[Readiness] = Ref.make(Map.empty[Waker.Name, Queue[Unit]]).map(Readiness(_))
