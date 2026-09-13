@@ -42,17 +42,3 @@ object LockAcquireScript:
    */
   def load: ZIO[Connection.Commands, RedisFailure, LuaScript[Input, Output]] =
     LuaScript.register("lua/lock/acquire.lua").map(LuaScript[Input, Output](_, ScriptOutputType.MULTI))
-
-  /** What entering answered: the lock, or a place in its queue. */
-  enum Reply:
-
-    /** The lock was free with nobody queued, and is now held. */
-    case Granted(hold: Hold)
-
-    /**
-     * Queued: the ticket to ask with, and how long until the answer can next change.
-     *
-     * @param ticket the ticket's identity
-     * @param recheck the delay after which granting could answer differently
-     */
-    case Queued(ticket: Long, recheck: Duration)

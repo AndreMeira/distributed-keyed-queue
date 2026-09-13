@@ -40,19 +40,3 @@ object LockGrantScript:
    */
   def load: ZIO[Connection.Commands, RedisFailure, LuaScript[Input, Output]] =
     LuaScript.register("lua/lock/grant.lua").map(LuaScript[Input, Output](_, ScriptOutputType.MULTI))
-
-  /** What asking answered: the lock, a wait, or a queue that no longer knows the ticket. */
-  enum Reply:
-
-    /** The ticket was head and the lock free: it is now held. */
-    case Granted(hold: Hold)
-
-    /**
-     * Not yet: held, or queued behind the head.
-     *
-     * @param recheck the delay after which the answer can change
-     */
-    case Wait(recheck: Duration)
-
-    /** The ticket is not in the queue — expired and pruned, or withdrawn. */
-    case Gone
