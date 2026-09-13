@@ -9,7 +9,9 @@ import homelab.keyedqueue.domain.model.Settlement.Verdict
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.{ Connection, QueueKeys, Readiness, RedisQueueStore, QueueScripts, WakeListener }
+import homelab.keyedqueue.infrastructure.redis.keys.QueueKeys
+import homelab.keyedqueue.infrastructure.redis.script.QueueScripts
+import homelab.keyedqueue.infrastructure.redis.{ Connection, Readiness, RedisQueueStore, WakeListener }
 import io.lettuce.core.cluster.api.sync.RedisClusterCommands
 import org.testcontainers.containers.GenericContainer
 import zio.*

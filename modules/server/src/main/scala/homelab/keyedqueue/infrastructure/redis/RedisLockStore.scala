@@ -7,6 +7,7 @@ import homelab.keyedqueue.domain.model.{ Acquisition, LockClaim }
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.lock.LockStore.Hold
 import homelab.keyedqueue.domain.types.{ LockName, QueueName }
+import homelab.keyedqueue.infrastructure.redis.script.LockScripts
 import homelab.keyedqueue.infrastructure.redis.script.lock.{ AcquireScript, GrantScript, TryScript }
 import zio.*
 

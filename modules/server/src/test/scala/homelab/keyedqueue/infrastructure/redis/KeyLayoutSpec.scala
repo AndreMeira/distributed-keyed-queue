@@ -2,6 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.keyedqueue.infrastructure.configuration.{ Misconfigured, QueueConfig }
+import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
 import org.testcontainers.containers.GenericContainer
 import zio.*
 import zio.test.*

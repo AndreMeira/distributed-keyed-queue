@@ -4,7 +4,8 @@ package homelab.keyedqueue.infrastructure.redis.script.queue
 import homelab.keyedqueue.domain.model.{ Claim, Grant, Message }
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
-import homelab.keyedqueue.infrastructure.redis.{ Connection, QueueKeys, RedisFailure }
+import homelab.keyedqueue.infrastructure.redis.keys.QueueKeys
+import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisFailure }
 import io.lettuce.core.ScriptOutputType
 import homelab.keyedqueue.infrastructure.redis.script.Codecs.given
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript

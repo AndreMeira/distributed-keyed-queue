@@ -1,8 +1,8 @@
-package homelab.keyedqueue.infrastructure.redis
+package homelab.keyedqueue.infrastructure.redis.script
 
 
-import homelab.common.error.ApplicationError
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands
+import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import homelab.keyedqueue.infrastructure.redis.script.queue.*
 import zio.*

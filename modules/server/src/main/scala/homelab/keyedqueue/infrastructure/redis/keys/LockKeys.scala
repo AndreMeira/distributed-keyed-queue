@@ -1,4 +1,4 @@
-package homelab.keyedqueue.infrastructure.redis
+package homelab.keyedqueue.infrastructure.redis.keys
 
 import homelab.keyedqueue.domain.types.LockName
 
@@ -8,7 +8,7 @@ import homelab.keyedqueue.domain.types.LockName
  * and per-lock waiter lists, and the wake stream.
  *
  * Static but for the waiter lists, unlike the queue's per-key
- * [[homelab.keyedqueue.infrastructure.redis.QueueKeys]]: locks share one `held` zset, one `tokens` hash,
+ * [[QueueKeys]]: locks share one `held` zset, one `tokens` hash,
  * one `fence` counter and one `waiting` index, with the lock's name as a member or field; only `waiters`
  * is a key per lock, and it exists only while someone queues. All carry one hash tag so a script may touch
  * them together, and so every lock lands in one cluster slot. (Partitioning the tag by lock name — as the

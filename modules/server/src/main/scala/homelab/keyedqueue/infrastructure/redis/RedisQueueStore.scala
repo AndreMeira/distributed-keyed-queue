@@ -3,12 +3,13 @@ package homelab.keyedqueue.infrastructure.redis
 
 import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
-import homelab.keyedqueue.domain.model.{ Claim, Grant, Demand, Settlement, Submission }
+import homelab.keyedqueue.domain.model.{ Claim, Demand, Grant, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.RedisQueueStore.make
-import homelab.keyedqueue.infrastructure.redis.script.LuaScript
+import homelab.keyedqueue.infrastructure.redis.keys.QueueKeys
+import homelab.keyedqueue.infrastructure.redis.script.{ LuaScript, QueueScripts }
 import homelab.keyedqueue.infrastructure.redis.script.queue.{ ClaimScript, RenewScript }
 import io.lettuce.core.LMoveArgs
 import zio.*

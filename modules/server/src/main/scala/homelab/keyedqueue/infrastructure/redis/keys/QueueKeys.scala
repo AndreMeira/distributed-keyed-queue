@@ -1,4 +1,4 @@
-package homelab.keyedqueue.infrastructure.redis
+package homelab.keyedqueue.infrastructure.redis.keys
 
 
 import homelab.keyedqueue.domain.types.*

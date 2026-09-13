@@ -1,8 +1,9 @@
-package homelab.keyedqueue.infrastructure.redis
+package homelab.keyedqueue.infrastructure.redis.keys
 
 
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.infrastructure.configuration.Misconfigured
+import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisFailure }
 import io.lettuce.core.SetArgs
 import zio.*
 

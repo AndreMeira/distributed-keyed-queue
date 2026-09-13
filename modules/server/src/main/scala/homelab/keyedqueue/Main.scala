@@ -4,8 +4,9 @@ package homelab.keyedqueue
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.application.grpc.v1.GrpcApplication
 import homelab.keyedqueue.infrastructure.configuration.{ Misconfigured, QueueConfig }
-import homelab.keyedqueue.infrastructure.redis.{ Connection, KeyLayout }
+import homelab.keyedqueue.infrastructure.redis.Connection
 import homelab.keyedqueue.infrastructure.redis.Module as RedisModule
+import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
 import zio.*
 
 

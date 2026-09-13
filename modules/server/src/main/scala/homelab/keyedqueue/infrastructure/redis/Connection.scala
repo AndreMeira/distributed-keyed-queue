@@ -2,6 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.error.ApplicationError
+import homelab.keyedqueue.infrastructure.redis.keys.RedisKey
 import io.lettuce.core.cluster.{ RedisClusterClient, SlotHash }
 import io.lettuce.core.cluster.api.sync.RedisClusterCommands
 import io.lettuce.core.codec.{ ByteArrayCodec, RedisCodec, StringCodec }

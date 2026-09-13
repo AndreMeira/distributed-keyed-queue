@@ -6,6 +6,8 @@ import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
+import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, LockKeys, QueueKeys, RedisKey }
+import homelab.keyedqueue.infrastructure.redis.script.QueueScripts
 import io.lettuce.core.api.sync.RedisCommands
 import zio.*
 

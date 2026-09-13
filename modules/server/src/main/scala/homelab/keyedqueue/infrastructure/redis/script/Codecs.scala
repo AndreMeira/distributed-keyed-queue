@@ -7,8 +7,8 @@ import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import zio.{ Chunk, Duration }
-import homelab.keyedqueue.infrastructure.redis.LockKeys
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
+import homelab.keyedqueue.infrastructure.redis.keys.LockKeys
 import homelab.keyedqueue.infrastructure.redis.script.lock.*
 import homelab.keyedqueue.infrastructure.redis.script.queue.*
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript.Input.Encoder

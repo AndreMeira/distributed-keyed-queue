@@ -6,7 +6,8 @@ import homelab.keyedqueue.domain.model.Claim
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands
-import homelab.keyedqueue.infrastructure.redis.{ Connection, QueueKeys }
+import homelab.keyedqueue.infrastructure.redis.Connection
+import homelab.keyedqueue.infrastructure.redis.keys.QueueKeys
 import io.lettuce.core.ScriptOutputType
 import homelab.keyedqueue.infrastructure.redis.script.Codecs.given
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript
