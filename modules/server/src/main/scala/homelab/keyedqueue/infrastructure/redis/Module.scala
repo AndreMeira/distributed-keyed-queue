@@ -49,8 +49,8 @@ object Module:
    *
    * @return the layer
    */
-  val scripts: ZLayer[Connection, ApplicationError, Scripts] =
-    ZLayer(ZIO.serviceWithZIO[Connection](_.provide(Scripts.make)))
+  val scripts: ZLayer[Connection, ApplicationError, QueueScripts] =
+    ZLayer(ZIO.serviceWithZIO[Connection](_.provide(QueueScripts.make)))
 
   /**
    * The queue itself, as the port.
@@ -60,12 +60,12 @@ object Module:
    *
    * @return the layer
    */
-  val stores: ZLayer[Connection & Scripts & QueueConfig & Monitor, ApplicationError, QueueStore & LockStore] =
+  val stores: ZLayer[Connection & QueueScripts & QueueConfig & Monitor, ApplicationError, QueueStore & LockStore] =
     ZLayer.scopedEnvironment {
       for
         monitor    <- ZIO.service[Monitor]
         connection <- ZIO.service[Connection]
-        scripts    <- ZIO.service[Scripts]
+        scripts    <- ZIO.service[QueueScripts]
         config     <- ZIO.service[QueueConfig]
         // Before anything is built or served: an instance whose layout disagrees with the store's must not
         // come up at all — see KeyLayout.

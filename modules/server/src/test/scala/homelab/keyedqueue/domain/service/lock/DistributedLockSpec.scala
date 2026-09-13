@@ -6,7 +6,7 @@ import homelab.keyedqueue.domain.service.lock.DistributedLock.LockName
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
-import homelab.keyedqueue.infrastructure.redis.{ Connection, QueueKeys, Readiness, RedisQueueStore, Scripts, WakeListener }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, QueueKeys, Readiness, RedisQueueStore, QueueScripts, WakeListener }
 import homelab.common.monitor.Monitor
 import org.testcontainers.containers.GenericContainer
 import zio.*
@@ -46,7 +46,7 @@ object DistributedLockSpec extends ZIOSpecDefault:
                       Connection.Config(config.maxWait, config.redisUrl, config.cluster),
                       QueueKeys.wakeStreams.toChunk,
                     )
-      scripts    <- connection.provide(Scripts.make)
+      scripts    <- connection.provide(QueueScripts.make)
       readiness  <- Readiness.make
       listener   <- WakeListener.make(connection, readiness, config.wakeBlock)
       _          <- listener.run.forkScoped

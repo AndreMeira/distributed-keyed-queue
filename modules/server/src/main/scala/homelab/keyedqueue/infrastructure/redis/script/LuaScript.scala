@@ -489,7 +489,7 @@ object LuaScript:
    *
    * `RedisAdvancedClusterCommands` overrides the cluster-wide script commands — `SCRIPT FLUSH`, `SCRIPT
    * KILL` — but inherits `scriptLoad` unchanged, so on a cluster connection it still reaches a single node.
-   * With no `NOSCRIPT` fallback anywhere (see [[Scripts]]), a call routed to any other node would simply
+   * With no `NOSCRIPT` fallback anywhere (see [[QueueScripts]]), a call routed to any other node would simply
    * fail, which is why this reaches for the node-selection API instead.
    *
    * `upstream()` rather than `masters()`: the latter is the same selection under Lettuce's older name, and

@@ -9,7 +9,7 @@ import homelab.keyedqueue.domain.model.Settlement.Verdict
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.{ Connection, QueueKeys, Readiness, RedisQueueStore, Scripts, WakeListener }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, QueueKeys, Readiness, RedisQueueStore, QueueScripts, WakeListener }
 import io.lettuce.core.cluster.api.sync.RedisClusterCommands
 import org.testcontainers.containers.GenericContainer
 import zio.*
@@ -81,7 +81,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
                       Connection.Config(config.maxWait, config.redisUrl, config.cluster),
                       QueueKeys.wakeStreams.toChunk,
                     )
-      scripts    <- connection.provide(Scripts.make)
+      scripts    <- connection.provide(QueueScripts.make)
       readiness  <- Readiness.make
       listener   <- WakeListener.make(connection, readiness, config.wakeBlock)
       _          <- listener.run.forkScoped

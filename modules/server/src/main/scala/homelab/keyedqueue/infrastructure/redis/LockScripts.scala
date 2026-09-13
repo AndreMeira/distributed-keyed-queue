@@ -9,7 +9,7 @@ import zio.*
 
 
 /**
- * The lock scripts, loaded once and held as the calls they can make — the lock's [[Scripts]].
+ * The lock scripts, loaded once and held as the calls they can make — the lock's [[QueueScripts]].
  *
  * '''Static keys, shared by every lock.''' Unlike the queue, whose keys are per-key and built from a
  * [[QueueKeys]], all locks live in shared structures with the lock's name as a member or field — see

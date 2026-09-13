@@ -49,7 +49,7 @@ import java.time.Instant
 final class RedisQueueStore(
   monitor: Monitor,
   connection: Connection,
-  scripts: Scripts,
+  scripts: QueueScripts,
   readiness: Readiness,
   leaseTtl: Duration,
 ) extends QueueStore:
@@ -227,7 +227,7 @@ object RedisQueueStore:
   def make(
     monitor: Monitor,
     connection: Connection,
-    scripts: Scripts,
+    scripts: QueueScripts,
     readiness: Readiness,
     leaseTtl: Duration,
   ): UIO[RedisQueueStore] =

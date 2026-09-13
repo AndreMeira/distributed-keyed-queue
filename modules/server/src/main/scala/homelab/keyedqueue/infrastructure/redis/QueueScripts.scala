@@ -30,7 +30,7 @@ import zio.*
  * @param renew extends the claims a consumer still holds
  * @param sweep the two repair passes
  */
-final case class Scripts(
+final case class QueueScripts(
   enqueue: LuaScript[EnqueueScript.Input, EnqueueScript.Output],
   claim: LuaScript[ClaimScript.Input, ClaimScript.Output],
   settle: LuaScript[SettleScript.Input, SettleScript.Output],
@@ -39,7 +39,7 @@ final case class Scripts(
 )
 
 
-object Scripts:
+object QueueScripts:
 
   /**
    * Register every script, so a missing or unparseable one fails at startup rather than on the first
@@ -49,11 +49,11 @@ object Scripts:
    *
    * @return the calls they make; aborts with `RedisFailure` if one is missing or rejected
    */
-  def make: ZIO[Commands, RedisFailure, Scripts] =
+  def make: ZIO[Commands, RedisFailure, QueueScripts] =
     for
       enqueue <- EnqueueScript.load
       claim   <- ClaimScript.load
       settle  <- SettleScript.load
       renew   <- RenewScript.load
       sweep   <- SweepScript.load
-    yield Scripts(enqueue, claim, settle, renew, sweep)
+    yield QueueScripts(enqueue, claim, settle, renew, sweep)
