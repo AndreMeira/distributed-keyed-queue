@@ -136,7 +136,7 @@ object Codecs {
   /** The lock's name, the lease length, then how long the ticket lives. */
   given lockAcquireInput: LuaScript.Input.Encoder[AcquireScript.Input] = acquire =>
     LuaScript.Input(
-      key = LockKeys.granting(acquire.name),
+      key = LockKeys.of(acquire.name).granting(acquire.name),
       args = Array(
         Encoder.utf8(acquire.name),
         Encoder.millis(acquire.ttl),
@@ -147,7 +147,7 @@ object Codecs {
   /** The lock's name, the ticket asking, then the lease length a grant would run for. */
   given lockGrantInput: LuaScript.Input.Encoder[GrantScript.Input] = grant =>
     LuaScript.Input(
-      key = LockKeys.granting(grant.name),
+      key = LockKeys.of(grant.name).granting(grant.name),
       args = Array(
         Encoder.utf8(grant.name),
         Encoder.number(grant.ticket),
@@ -158,14 +158,14 @@ object Codecs {
   /** The lock's name, then the lease length. */
   given lockTryInput: LuaScript.Input.Encoder[TryScript.Input] = attempt =>
     LuaScript.Input(
-      key = LockKeys.granting(attempt.name),
+      key = LockKeys.of(attempt.name).granting(attempt.name),
       args = Array(Encoder.utf8(attempt.name), Encoder.millis(attempt.ttl)),
     )
 
   /** The lock's name, the token that authorises extending it, then how much longer to grant. */
   given lockRefreshInput: LuaScript.Input.Encoder[RefreshScript.Input] = refresh =>
     LuaScript.Input(
-      key = LockKeys.refresh,
+      key = LockKeys.of(refresh.name).refresh,
       args = Array(
         Encoder.utf8(refresh.name),
         Encoder.number(refresh.token),
@@ -176,14 +176,14 @@ object Codecs {
   /** The lock's name, then the token that authorises releasing it. */
   given lockReleaseInput: LuaScript.Input.Encoder[ReleaseScript.Input] = release =>
     LuaScript.Input(
-      key = LockKeys.release,
+      key = LockKeys.of(release.name).release,
       args = Array(Encoder.utf8(release.name), Encoder.number(release.token)),
     )
 
   /** The lock's name, then the ticket being withdrawn. */
   given lockAbandonInput: LuaScript.Input.Encoder[AbandonScript.Input] = abandon =>
     LuaScript.Input(
-      key = LockKeys.ticket(abandon.name),
+      key = LockKeys.of(abandon.name).ticket(abandon.name),
       args = Array(Encoder.utf8(abandon.name), Encoder.number(abandon.ticket)),
     )
 
@@ -193,12 +193,13 @@ object Codecs {
    * The prefix is an argument and not a key because the names it completes depend on what the trim finds.
    */
   given lockTrimInput: LuaScript.Input.Encoder[TrimScript.Input] = trim =>
+    val keys = LockKeys(trim.partition)
     LuaScript.Input(
-      key = LockKeys.trim,
+      key = keys.trim,
       args = Array(
         Encoder.millis(trim.grace),
         Encoder.number(trim.limit),
-        Encoder.utf8(LockKeys.waitersPrefix),
+        Encoder.utf8(keys.waitersPrefix),
       ),
     )
 

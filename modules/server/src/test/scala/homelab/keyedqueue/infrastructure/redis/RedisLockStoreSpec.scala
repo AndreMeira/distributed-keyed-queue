@@ -55,11 +55,11 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
     for
       connection <- Connection.make(
                       Connection.Config(config.maxWait, config.redisUrl, config.cluster),
-                      Chunk(LockKeys.wake),
+                      LockKeys.wakeStreams.toChunk,
                     )
       broadcast  <- Broadcast.make
       store      <- connection.provide(RedisLockStore.make(Monitor.Noop, connection, broadcast))
-      listener   <- WakeListener.make(connection, config.wakeBlock, Map(LockKeys.wake -> broadcast))
+      listener   <- WakeListener.make(connection, config.wakeBlock, LockKeys.wakeStreams.toChunk.map(_ -> broadcast).toMap)
       _          <- listener.run.forkScoped
     yield store
 

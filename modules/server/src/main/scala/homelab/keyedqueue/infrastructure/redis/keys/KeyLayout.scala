@@ -40,7 +40,7 @@ object KeyLayout:
    * the code that shaped it is gone — the property a future migration worker stands on
    * (`docs/research/schema-versioned-keys.md`).
    */
-  val schemaVersion: Int = 1
+  val schemaVersion: Int = 2
 
   /** The schema version as every key carries it, between the hash tag and the rest of the name. */
   val segment: String = s"v$schemaVersion"

@@ -8,6 +8,7 @@ import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.lock.LockStore.Hold
 import homelab.keyedqueue.domain.types.{ LockName, QueueName }
 import homelab.keyedqueue.infrastructure.redis.script.LockScripts
+import homelab.keyedqueue.infrastructure.redis.keys.LockKeys
 import homelab.keyedqueue.infrastructure.redis.script.lock.{ AcquireScript, GrantScript, TryScript }
 import zio.*
 
@@ -129,7 +130,22 @@ final class RedisLockStore(
   override def trim(grace: Duration, limit: Int): IO[RedisFailure, Chunk[LockName]] =
     monitor.trace("RedisLockStore.trim"):
       connection.provide:
-        scripts.trim.execute(grace, limit)
+        ZIO.foreach(Chunk.fromIterable(0 until LockKeys.partitions))(swept(grace, limit)).map(_.flatten)
+
+  /**
+   * One partition's trim.
+   *
+   * A pass is per partition because the structures are: a lock's abandoned hold sits in the partition its
+   * name falls in, and nothing indexes them across partitions. The limit is per partition for the same
+   * reason — it bounds one script, and a script sees one partition.
+   *
+   * @param grace how long past lease expiry a hold survives before it may be removed
+   * @param limit the most holds this pass removes
+   * @param partition the partition to sweep
+   * @return the names freed there, oldest lease first
+   */
+  private def swept(grace: Duration, limit: Int)(partition: Int): ZIO[Connection.Commands, RedisFailure, Chunk[LockName]] =
+    scripts.trim.execute(partition, grace, limit)
 
   /**
    * The hold a granted reply amounts to.

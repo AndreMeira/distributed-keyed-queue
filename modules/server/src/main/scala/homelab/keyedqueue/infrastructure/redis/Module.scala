@@ -43,7 +43,7 @@ object Module:
    * Named once because two things must agree on it — the connections opened for blocking reads, and the
    * routes those reads are announced through. A stream in one and not the other is a wake nobody hears.
    */
-  private val wakeStreams: Chunk[RedisKey] = QueueKeys.wakeStreams.toChunk :+ LockKeys.wake
+  private val wakeStreams: Chunk[RedisKey] = QueueKeys.wakeStreams.toChunk ++ LockKeys.wakeStreams.toChunk
 
   /**
    * The scripts, registered at startup so a missing or unparseable one fails here rather than on the first
@@ -75,9 +75,10 @@ object Module:
         queueReady <- Readiness.make
         lockReady  <- Broadcast.make
         // One listener over both stores' wake streams, routing each to its own readiness — see WakeListener.
-        // The queue's partition streams wake `queueReady` (one token, one consumer); the lock's one
-        // stream wakes `lockReady` (a broadcast — grants go by ticket, so every waiter must look).
-        routes      = QueueKeys.wakeStreams.toChunk.map(_ -> queueReady).toMap + (LockKeys.wake -> lockReady)
+        // The queue's partition streams wake `queueReady` (one token, one consumer); the lock's wake
+        // `lockReady` (a broadcast — grants go by ticket, so every waiter must look).
+        routes      = QueueKeys.wakeStreams.toChunk.map(_ -> queueReady).toMap
+                        ++ LockKeys.wakeStreams.toChunk.map(_ -> lockReady).toMap
         listener   <- WakeListener.make(connection, config.wakeBlock, routes)
         // Forked here rather than in the composition root because both stores are unusable without it: a
         // waiter that finds nothing parks on a readiness token, and an unrun listener offers none.

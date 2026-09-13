@@ -53,11 +53,18 @@ is hashed, so the segment moves nothing between slots — and a key's incarnatio
 the *same* slot, which is what would let a migration step read v1 and write v2 in one script
 ([`../research/schema-versioned-keys.md`](../research/schema-versioned-keys.md)).
 
-**The lock's keys are one tag, `{dkq:locks}`, and so one slot.** That is what lets each lock script touch
-the leases, the tokens, the fence counter and a waiters list together; partitioning the locks the way queues
-are partitioned is deferred until lock volume on one node is a measured problem rather than an aesthetic one.
-Its wake stream carries a tag of its own, and nothing says which slot that lands in — which is why the
-streams are grouped by *computed* slot rather than by kind or by partition. That grouping lives in
+**The locks are partitioned the same way, under their own tags `{l:<partition>}`.** A lock's partition
+follows its name, so every operation on one lock reaches the same slot, and each script touches that
+partition's leases, tokens, fence counter and waiters list together. Their own tag space rather than the
+queue's, because a shared tag would put lock wakes on a queue's stream — and a stream feeds exactly one
+waker, where a queue's readiness hands one token to one consumer and a lock's broadcast wakes everyone.
+
+The fence counter is therefore one per partition rather than one for the deployment, which is safe for the
+reason the global counter was: a fence need only increase within a single lock, and a lock never changes
+partition.
+
+Nothing says which slot a given tag lands in, which is why the streams are grouped by *computed* slot
+rather than by kind or by partition. That grouping lives in
 `Connection`, which is what knows whether the store is a cluster: it opens one connection per group of streams
 that a single command may name, at startup, and the listener runs a fiber on each.
 
@@ -68,9 +75,9 @@ queue: a stream tagged differently from the keys it announces could not be appen
 them claimable, and a separate append is a crash window where work exists and nobody is told.
 
 **The partition count is a constant, chosen once for everyone.** Sixteen, because the count is a ceiling on
-spread but a floor on overhead: the queue's data occupies at most sixteen slots — plus the lock's one, so
-seventeen nodes at the very most — which is far above any realistic cluster for one service, while the cost
-of carrying that ceiling is sixteen mostly-idle streams. On a single server they are one read on one
+spread but a floor on overhead: the queues occupy at most sixteen slots and the locks sixteen of their
+own — thirty-two nodes at the very most, far above any realistic cluster for one service — while the cost
+of carrying that ceiling is thirty-two mostly-idle streams. On a single server they are one read on one
 connection; on a cluster each read names only its own slot's streams, so the ceiling costs connections
 rather than round trips. It is deliberately not a deployment parameter: a knob nobody would set
 differently is a liability, and a *changeable* count was a standing trap — changing it moves queues between

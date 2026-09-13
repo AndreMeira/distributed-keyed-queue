@@ -13,7 +13,7 @@ import zio.*
 
 object TrimScript:
 
-  type Input  = (grace: Duration, limit: Int)
+  type Input  = (partition: Int, grace: Duration, limit: Int)
   type Output = Chunk[LockName]
 
   /**

@@ -165,20 +165,21 @@ them. See [`redis-cluster.md`](redis-cluster.md).
 ## The lock's structures
 
 The lock API shares the store but none of the queue's structures. Everything it owns is prefixed
-`{dkq:locks}:v1` — one hash tag for every lock, so one slot, which is what lets each script touch all of
-them atomically (partitioning the locks is deferred; see [`redis-cluster.md`](redis-cluster.md)). `{L}` below
-is that prefix:
+`{l:<partition>}:v2`, where the partition is `hash(lock) % 16` — its own tag space, so a lock's keys and the
+stream announcing it hash to one slot and a script may touch them together
+([`redis-cluster.md`](redis-cluster.md)). `{L}` below is one partition's prefix, and the structures it names
+are shared by every lock in that partition, with the lock's name as a member or field:
 
 | key | type | maps | written by |
 |---|---|---|---|
 | `{L}:held` | zset | lock name → lease deadline, unix millis | acquire, grant, try, refresh, release, trim |
 | `{L}:tokens` | hash | lock name → the live holder's fence token | acquire, grant, try, release, trim |
-| `{L}:fence` | string | one counter for every lock | acquire, grant, try |
+| `{L}:fence` | string | one counter for the partition | acquire, grant, try |
 | `{L}:waiting` | zset | lock name → the latest ticket deadline in its waiters list | acquire, grant, abandon, try, trim |
 | `{L}:waiters:<name>` | list | tickets `id:deadline`, arrival order; exists only while someone queues | acquire, grant, abandon, try |
 | `{L}:wake` | stream | one entry per lock freed, naming it | release, trim |
 
-**The fence is one counter for every lock, and `tokens` is why it can be.** Fences need only increase per
+**The fence is one counter per partition, and `tokens` is why it can be.** Fences need only increase per
 lock, which a globally increasing number satisfies a fortiori — while a per-lock counter could never be
 deleted, since the next grant must exceed every fence ever issued for the name. So the counter is the one
 key that outlives holds; `tokens` names the live holder and dies with its hold. The counter also mints
