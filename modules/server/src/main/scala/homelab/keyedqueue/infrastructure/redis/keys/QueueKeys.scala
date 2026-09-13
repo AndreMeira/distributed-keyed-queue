@@ -1,8 +1,6 @@
 package homelab.keyedqueue.infrastructure.redis.keys
 
-
 import homelab.keyedqueue.domain.types.*
-import zio.{ Chunk, NonEmptyChunk }
 
 
 /**
@@ -29,10 +27,10 @@ import zio.{ Chunk, NonEmptyChunk }
 final case class QueueKeys(queue: QueueName):
 
   /** Which partition this queue falls in, and therefore which slot and which wake stream it uses. */
-  val partition: Int = QueueKeys.partitionOf(queue)
+  val partition: Int = KeyLayout.partitionOf(queue)
 
   /** The tag every key shares, and what the scripts rebuild the per-key names from. */
-  val prefix: String = s"${QueueKeys.tag(partition)}:${KeyLayout.segment}:q:$queue"
+  val prefix: String = s"${KeyLayout.tag(partition)}:${KeyLayout.segment}:q:$queue"
 
   /**
    * Keys with work and nobody working them, scored by when each became claimable.
@@ -63,7 +61,7 @@ final case class QueueKeys(queue: QueueName):
    * The stream this queue announces on: one entry per key made claimable, appended by the same script
    * that made it so, and shared with every other queue in the partition.
    */
-  val wake: RedisKey = QueueKeys.wake(partition)
+  val wake: RedisKey = KeyLayout.wake(partition)
 
   /** key -> when a failed message may be retried. */
   val delayed: RedisKey = RedisKey(s"$prefix:delayed")
@@ -102,58 +100,3 @@ final case class QueueKeys(queue: QueueName):
    * @return the set name
    */
   def owned(key: MessageKey): RedisKey = RedisKey(s"$prefix:owned:$key")
-
-
-object QueueKeys:
-
-  /**
-   * How many partitions the deployment is divided into — fixed in code, not configured.
-   *
-   * The count is a ceiling on spread (at most this many cluster nodes ever hold this service's data) but a
-   * floor on overhead (the listener names every partition's stream in every read, maintenance iterates every
-   * partition), so it is one number chosen once: high enough that no realistic cluster hits the ceiling, low
-   * enough that the floor stays invisible. Sixteen node ceiling; sixteen-stream reads.
-   *
-   * '''Part of the schema.''' Changing it moves queues between tags and strands whatever was written under
-   * the old count, so a change here is a change to the shape of stored data — bump
-   * `KeyLayout.schemaVersion` with it, and the boot check turns the stranding into a refusal.
-   */
-  val partitions: Int = 16
-
-  /**
-   * The hash tag a partition's keys share.
-   *
-   * @param partition the partition
-   * @return the tag, braces included, so Redis hashes only what is inside them
-   */
-  def tag(partition: Int): String = s"{p:$partition}"
-
-  /**
-   * A partition's wake stream.
-   *
-   * @param partition the partition
-   * @return the stream name
-   */
-  def wake(partition: Int): RedisKey = RedisKey(s"${tag(partition)}:${KeyLayout.segment}:wake")
-
-  /**
-   * Which partition a queue falls in.
-   *
-   * `String`'s hash is specified by the JVM, so every instance agrees on where a queue lives without being
-   * told. `floorMod`, because a negative hash would otherwise produce a negative partition.
-   *
-   * @param queue the queue
-   * @return the partition
-   */
-  def partitionOf(queue: QueueName): Int = Math.floorMod(queue.toString.hashCode, partitions)
-
-  /**
-   * Every wake stream in the deployment — the fixed set a listener reads.
-   *
-   * Fixed is the point: the set is known before any queue is served, so no read is ever re-issued because
-   * a consumer arrived for a queue nobody had asked for yet.
-   *
-   * @return the stream names, in partition order
-   */
-  val wakeStreams: NonEmptyChunk[RedisKey] =
-    NonEmptyChunk.fromChunk(Chunk.fromIterable(0 until partitions).map(wake)).getOrElse(NonEmptyChunk(wake(0)))

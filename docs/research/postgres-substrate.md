@@ -210,7 +210,7 @@ Three properties, all fine for DKQ:
   same reason a trimmed stream is — the claim reads real state, the retry loop is the floor.
 - **Payload is small** (≤ ~8000 bytes; a queue name is nothing), and identical `(channel, payload)` pairs
   de-duplicate within a transaction — which is a small gift, since a burst of enqueues to one queue
-  collapses to one wake, exactly what `Readiness` wants.
+  collapses to one wake, exactly what `QueueReadiness` wants.
 
 **The trap: a transaction-pooling connection pooler breaks `LISTEN`.** PgBouncer in `transaction` or
 `statement` mode hands a different backend connection to each transaction, and `LISTEN` needs a connection
@@ -259,19 +259,19 @@ deployment.
 
 ## What building it would look like here
 
-The port is ready: `QueueStore` says nothing about Redis, and `Readiness` is already substrate-agnostic
+The port is ready: `QueueStore` says nothing about Redis, and `QueueReadiness` is already substrate-agnostic
 (its wake source is the only Redis-specific piece). A Postgres adapter is a new `infrastructure/postgres/`
 folder parallel to `infrastructure/redis/`, the shape `CLAUDE.md` prescribes and `zio-conduit-doobie`
 models:
 
 - `PostgresQueueStore` implementing the five operations as Doobie transactions;
-- a `PgWakeListener` that `LISTEN`s and drives the existing `Readiness` — the same seam the substrate note's
+- a `PgReadinessListener` that `LISTEN`s and drives the existing `QueueReadiness` — the same seam the substrate note's
   `WakeChannel` port would formalise;
 - `resources/migrations/` for the two tables, the sequence, the indexes;
 - the same in-memory parallel adapter the Redis side lacks today would be worth building alongside, since
   two real adapters is what actually validates the port.
 
-Nothing above the store changes — use cases, validation, the gRPC surface, `Readiness` itself.
+Nothing above the store changes — use cases, validation, the gRPC surface, `QueueReadiness` itself.
 
 ## When to choose it
 

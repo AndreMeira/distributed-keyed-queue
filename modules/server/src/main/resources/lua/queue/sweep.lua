@@ -51,7 +51,7 @@ for _, key in ipairs(expired) do
   -- claimers, and although the fence stops the loser corrupting anything, it does the work for nothing.
   if redis.call('ZSCORE', delayed, key) == false then
     redis.call('ZADD', ready, redis.call('INCR', sequence), key)
-    redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'queue', queue, 'key', key)
+    redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'kind', 'q', 'name', queue, 'key', key)
   end
 end
 
@@ -62,7 +62,7 @@ local due = redis.call('ZRANGEBYSCORE', delayed, '-inf', now, 'LIMIT', 0, limit)
 for _, key in ipairs(due) do
   redis.call('ZREM', delayed, key)
   redis.call('ZADD', ready, redis.call('INCR', sequence), key)
-  redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'queue', queue, 'key', key)
+  redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'kind', 'q', 'name', queue, 'key', key)
 end
 
 return { expired, due }

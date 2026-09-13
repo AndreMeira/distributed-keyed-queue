@@ -6,7 +6,7 @@ import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, LockKeys, QueueKeys, RedisKey }
+import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, RedisKey }
 import homelab.keyedqueue.infrastructure.redis.script.QueueScripts
 import io.lettuce.core.api.sync.RedisCommands
 import zio.*
@@ -43,7 +43,7 @@ object Module:
    * Named once because two things must agree on it — the connections opened for blocking reads, and the
    * routes those reads are announced through. A stream in one and not the other is a wake nobody hears.
    */
-  private val wakeStreams: Chunk[RedisKey] = QueueKeys.wakeStreams.toChunk ++ LockKeys.wakeStreams.toChunk
+  private val wakeStreams: Chunk[RedisKey] = KeyLayout.wakeStreams.toChunk
 
   /**
    * The scripts, registered at startup so a missing or unparseable one fails here rather than on the first
@@ -72,14 +72,12 @@ object Module:
         // Before anything is built or served: an instance whose layout disagrees with the store's must not
         // come up at all — see KeyLayout.
         _          <- connection.provide(KeyLayout.verify)
-        queueReady <- Readiness.make
-        lockReady  <- Broadcast.make
-        // One listener over both stores' wake streams, routing each to its own readiness — see WakeListener.
-        // The queue's partition streams wake `queueReady` (one token, one consumer); the lock's wake
+        queueReady <- QueueReadiness.make
+        lockReady  <- LockReadiness.make
+        // One listener over the partition wake streams, routing each entry by the kind it carries — see
+        // ReadinessListener. Queue entries wake `queueReady` (one token, one consumer); lock entries wake
         // `lockReady` (a broadcast — grants go by ticket, so every waiter must look).
-        routes      = QueueKeys.wakeStreams.toChunk.map(_ -> queueReady).toMap
-                        ++ LockKeys.wakeStreams.toChunk.map(_ -> lockReady).toMap
-        listener   <- WakeListener.make(connection, config.wakeBlock, routes)
+        listener   <- ReadinessListener.make(connection, config.wakeBlock, queueReady, lockReady)
         // Forked here rather than in the composition root because both stores are unusable without it: a
         // waiter that finds nothing parks on a readiness token, and an unrun listener offers none.
         _          <- listener.run.forkScoped

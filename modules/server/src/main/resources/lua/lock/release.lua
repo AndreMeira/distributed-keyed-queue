@@ -20,7 +20,6 @@ end
 
 redis.call('HDEL', tokens, name)
 redis.call('ZREM', held, name)
--- Field 'queue' names what became free — the same field the queue's wake entries use, so the shared
--- listener reads both with one extractor.
-redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'queue', name)
+-- Field 'kind' says a lock, since queues announce on this same stream; 'name' says which lock came free.
+redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'kind', 'l', 'name', name)
 return 1

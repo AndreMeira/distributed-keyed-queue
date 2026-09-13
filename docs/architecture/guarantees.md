@@ -128,7 +128,7 @@ one message. Where several nacks in a claim ask for different waits, the longest
 it used to. A consumer parallelises by processing claims concurrently, not by polling concurrently: claim a
 key, hand it to your own executor, poll again.
 
-The reason this was once emphatic has gone. Readiness used to be a broadcast, so every wake woke every
+The reason this was once emphatic has gone. QueueReadiness used to be a broadcast, so every wake woke every
 parked poll on that queue and the wasted claim attempts scaled with how many were parked. A wake is now a
 token that reaches exactly one, and a consumer that finds work passes it on — so extra parked polls cost a
 fiber each rather than a round trip each. What remains is that they are still fibers, and that one poll per

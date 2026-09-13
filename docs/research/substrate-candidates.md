@@ -51,7 +51,7 @@ does.
 ## The second question is independent: the wake
 
 The wake is an accelerator, not a correctness dependency — established in `minimal-structures.md` and the
-`Readiness` design: a token means "look now", the claim reads real state, and a lost token costs latency,
+`QueueReadiness` design: a token means "look now", the claim reads real state, and a lost token costs latency,
 never safety (a retrying caller re-looks). So the wake can come from anywhere, and a substrate scores on it
 *separately* from the atomic-claim axis. Native options, best to worst for our purposes:
 
@@ -135,8 +135,8 @@ or one whose change feed we would rather not depend on. Because correctness rest
 is pure acceleration, the wake can be built *beside* the substrate, pod to pod, and be best-effort without
 risking a lost message.
 
-**The seam already exists.** `Readiness` is a pure in-process coordination primitive — it knows nothing
-about Redis (its three "redis" mentions are prose). What is Redis-specific is `WakeListener`: it reads the
+**The seam already exists.** `QueueReadiness` is a pure in-process coordination primitive — it knows nothing
+about Redis (its three "redis" mentions are prose). What is Redis-specific is `ReadinessListener`: it reads the
 streams and calls `readiness.ready(queue)`. Replace *what calls `readiness.ready`* and the substrate's wake
 is gone without touching the claim path. Extract the port:
 
@@ -146,7 +146,7 @@ trait WakeChannel:
   def listen(onWake: QueueName => UIO[Unit]): UIO[Unit]   // deliver announcements to readiness.ready
 ```
 
-`RedisWakeChannel` is today's `WakeListener`. `PeerWakeChannel` is the substrate-free one.
+`RedisWakeChannel` is today's `ReadinessListener`. `PeerWakeChannel` is the substrate-free one.
 
 ### The peer mesh
 
@@ -211,7 +211,7 @@ lose on the wake. When the substrate offers a resumable change feed (Redis, Mong
    operational surface by dropping Redis.
 3. **The pod-to-pod wake is the interesting piece to prototype** regardless of substrate, because it
    converts the wake from a substrate requirement into a `WakeChannel` implementation — and the port seam is
-   already there in `Readiness`. The cheapest experiment: a `PeerWakeChannel` over the existing gRPC stack
+   already there in `QueueReadiness`. The cheapest experiment: a `PeerWakeChannel` over the existing gRPC stack
    with k8s-Endpoints membership, tested by running the demo's two instances and confirming an enqueue on
    one wakes a consumer on the other with no Redis stream involved.
 

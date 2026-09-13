@@ -2,7 +2,7 @@ package homelab.keyedqueue.infrastructure.redis.keys
 
 
 import homelab.keyedqueue.domain.types.LockName
-import zio.{ Chunk, NonEmptyChunk }
+import zio.Chunk
 
 
 /**
@@ -15,6 +15,10 @@ import zio.{ Chunk, NonEmptyChunk }
  * living on one node — and the wake stream spreads with them, which it must, because a release appends to
  * it in the same script that frees the lock, and a script may only touch one slot.
  *
+ * '''The wake stream is the partition's, not the locks'.''' It is the one [[QueueKeys]] announces on too:
+ * an entry says which kind of thing it names, so sharing a stream costs nothing and saves the slot — and
+ * the connection blocked on it — that a second one would need.
+ *
  * Unlike [[QueueKeys]], the structures are shared by every lock in the partition rather than being one
  * lock's own: `held` and `tokens` carry the name as a member or field. Only `waiters` is a key per lock,
  * and it exists only while someone queues.
@@ -24,7 +28,7 @@ import zio.{ Chunk, NonEmptyChunk }
 final case class LockKeys(partition: Int):
 
   /** The tag every key in this partition shares. */
-  private val prefix: String = s"${LockKeys.tag(partition)}:${KeyLayout.segment}"
+  private val prefix: String = s"${KeyLayout.tag(partition)}:${KeyLayout.segment}:l"
 
   /** Held leases, `name -> deadline`. */
   val held: RedisKey = RedisKey(s"$prefix:held")
@@ -47,7 +51,7 @@ final case class LockKeys(partition: Int):
   val waitersPrefix: String = s"$prefix:waiters:"
 
   /** The wake stream a release appends to, read by the shared listener. */
-  val wake: RedisKey = LockKeys.wake(partition)
+  val wake: RedisKey = KeyLayout.wake(partition)
 
   /**
    * One lock's waiters list: its tickets, in arrival order. Exists only while someone queues.
@@ -87,64 +91,16 @@ final case class LockKeys(partition: Int):
 object LockKeys:
 
   /**
-   * How many partitions the locks are divided into — fixed in code, not configured, for the reasons
-   * [[QueueKeys.partitions]] gives.
-   *
-   * Its own count and its own tag space rather than the queue's: sharing a tag would put a lock's wake
-   * entries on the queue's stream, and a stream feeds exactly one waker — a queue's readiness hands one
-   * token to one consumer, a lock's broadcast wakes everyone.
-   *
-   * '''Part of the schema.''' Changing it moves locks between tags and strands whatever was written under
-   * the old count, so bump `KeyLayout.schemaVersion` with it.
-   */
-  val partitions: Int = 16
-
-  /**
-   * The hash tag a partition's keys share.
-   *
-   * @param partition the partition
-   * @return the tag, braces included, so Redis hashes only what is inside them
-   */
-  def tag(partition: Int): String = s"{l:$partition}"
-
-  /**
-   * A partition's wake stream.
-   *
-   * @param partition the partition
-   * @return the stream name
-   */
-  def wake(partition: Int): RedisKey = RedisKey(s"${tag(partition)}:${KeyLayout.segment}:wake")
-
-  /**
-   * Which partition a lock falls in.
-   *
-   * `String`'s hash is specified by the JVM, so every instance agrees on where a lock lives without being
-   * told. `floorMod`, because a negative hash would otherwise produce a negative partition.
-   *
-   * @param name the lock
-   * @return the partition
-   */
-  def partitionOf(name: LockName): Int = Math.floorMod(name.toString.hashCode, partitions)
-
-  /**
    * The keys of the partition a lock falls in.
    *
    * @param name the lock
    * @return its partition's keys
    */
-  def of(name: LockName): LockKeys = LockKeys(partitionOf(name))
+  def of(name: LockName): LockKeys = LockKeys(KeyLayout.partitionOf(name))
 
   /**
    * Every partition's keys, for the passes that are not about one lock — the trim, which sweeps them all.
    *
    * @return the keys, in partition order
    */
-  val all: Chunk[LockKeys] = Chunk.fromIterable(0 until partitions).map(LockKeys(_))
-
-  /**
-   * Every wake stream the locks announce on — the fixed set a listener reads.
-   *
-   * @return the stream names, in partition order
-   */
-  val wakeStreams: NonEmptyChunk[RedisKey] =
-    NonEmptyChunk.fromChunk(Chunk.fromIterable(0 until partitions).map(wake)).getOrElse(NonEmptyChunk(wake(0)))
+  val all: Chunk[LockKeys] = Chunk.fromIterable(0 until KeyLayout.partitions).map(LockKeys(_))

@@ -66,7 +66,7 @@ Not CPU. **A parked thread per in-flight Redis call** — the thread waits out t
 doing anything. The question is therefore how many calls are in flight at once, and the answer is bounded by
 concurrency, not by consumers:
 
-- A consumer **waiting** for work holds no thread and no connection. It waits for a token in `Readiness`, and
+- A consumer **waiting** for work holds no thread and no connection. It waits for a token in `QueueReadiness`, and
   is woken by the listener. This is the part that changed: under the old `BLMOVE` design a parked consumer
   held a thread *and* a connection for its whole patience — up to thirty seconds of doing nothing.
 - A consumer **claiming** holds a blocking thread for the duration of one script — microseconds of Redis

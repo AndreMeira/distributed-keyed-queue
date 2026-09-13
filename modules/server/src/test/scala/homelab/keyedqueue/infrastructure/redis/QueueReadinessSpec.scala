@@ -17,11 +17,11 @@ object ReadinessSpec extends ZIOSpecDefault:
 
   private val queue = QueueName("orders")
 
-  def spec: Spec[TestEnvironment & Scope, Any] = suite("Readiness")(
+  def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueReadiness")(
     test("a token wakes one caller, not every caller") {
       // The whole point of the design: a broadcast would let both look.
       for
-        readiness <- Readiness.make
+        readiness <- QueueReadiness.make
         _         <- readiness.awaitReady(queue, 1.second)(ZIO.none) // spend the seed
         looked    <- Ref.make(0)
         _         <- readiness.ready(queue)
@@ -33,7 +33,7 @@ object ReadinessSpec extends ZIOSpecDefault:
       // The restart case: the wake stream is positioned at its end, so work already in `ready` would never
       // be announced. A fresh queue carries one token so its first caller looks instead of waiting.
       for
-        readiness <- Readiness.make
+        readiness <- QueueReadiness.make
         looked    <- Ref.make(0)
         found     <- readiness.awaitReady(QueueName("cold"), 50.millis)(looked.update(_ + 1).as(Some(1)))
         count     <- looked.get
@@ -43,7 +43,7 @@ object ReadinessSpec extends ZIOSpecDefault:
       // What replaces the broadcast: a burst drains one consumer at a time. The chain must end on the first
       // look that finds nothing, or consumers spin on the store for as long as they are waiting.
       for
-        readiness <- Readiness.make
+        readiness <- QueueReadiness.make
         looked    <- Ref.make(0)
         first     <- readiness.awaitReady(queue, 50.millis)(looked.update(_ + 1).as(Some(1)))
         second    <- readiness.awaitReady(queue, 50.millis)(looked.update(_ + 1).as(Some(2)))
@@ -54,7 +54,7 @@ object ReadinessSpec extends ZIOSpecDefault:
     },
     test("a queue announced for is not confused with another") {
       for
-        readiness <- Readiness.make
+        readiness <- QueueReadiness.make
         _         <- readiness.awaitReady(queue, 1.second)(ZIO.none)
         _         <- readiness.awaitReady(QueueName("elsewhere"), 1.second)(ZIO.none)
         _         <- readiness.ready(queue)
@@ -68,7 +68,7 @@ object ReadinessSpec extends ZIOSpecDefault:
       ZIO
         .foreach(1 to 500): _ =>
           for
-            readiness <- Readiness.make
+            readiness <- QueueReadiness.make
             _         <- readiness.awaitReady(queue, 1.second)(ZIO.none)
             // Claims rather than looking-and-finding-nothing: a fruitless look would consume the token
             // legitimately, which is not what this test is about.
@@ -87,7 +87,7 @@ object ReadinessSpec extends ZIOSpecDefault:
       // patience is spent; a single `awaitReady` is not how the store waits, and asserting on one tests a
       // momentary internal state rather than the recovery the design promises. Each look that finds nothing
       // re-arms a token on its way out, so the next look takes it and runs the claim.
-      def retryingCaller(readiness: Readiness): UIO[Option[Int]] =
+      def retryingCaller(readiness: QueueReadiness): UIO[Option[Int]] =
         readiness.awaitReady(queue, 100.millis)(ZIO.succeed(Some(1))).flatMap {
           case found @ Some(_) => ZIO.succeed(found)
           case None            => retryingCaller(readiness)
@@ -96,7 +96,7 @@ object ReadinessSpec extends ZIOSpecDefault:
       ZIO
         .foreach(1 to 500): _ =>
           for
-            readiness  <- Readiness.make
+            readiness  <- QueueReadiness.make
             _          <- readiness.awaitReady(queue, 1.second)(ZIO.none)
             awaiting   <- readiness.awaitReady(queue, 30.seconds)(ZIO.succeed(Some(1))).fork
             _          <- ZIO.sleep(1.milli)

@@ -35,29 +35,34 @@ Everything downstream is unchanged.
 ## Why the key layout was ready first
 
 Every key a queue owns carries the hash tag of the **partition** that queue falls in. `QueueKeys` builds all
-ten from `prefix = "{p:<partition>}:v1:q:<queue>"`, with the wake stream tagged but not scoped to the queue:
+ten from `prefix = "{p:<partition>}:v3:q:<queue>"`, with the wake stream tagged but not scoped to the queue:
 
 ```
-{p:0}:v1:q:orders:ready      {p:0}:v1:q:orders:fence       {p:0}:v1:q:orders:msgs:<key>
-{p:0}:v1:q:orders:seq        {p:0}:v1:q:orders:attempts    {p:0}:v1:q:orders:payloads:<key>
-{p:0}:v1:q:orders:claimed    {p:0}:v1:q:orders:delayed     {p:0}:v1:q:orders:owned:<key>
-                             {p:0}:v1:wake                 ← shared by every queue in partition 0
+{p:0}:v3:q:orders:ready      {p:0}:v3:q:orders:fence       {p:0}:v3:q:orders:msgs:<key>
+{p:0}:v3:q:orders:seq        {p:0}:v3:q:orders:attempts    {p:0}:v3:q:orders:payloads:<key>
+{p:0}:v3:q:orders:claimed    {p:0}:v3:q:orders:delayed     {p:0}:v3:q:orders:owned:<key>
+                             {p:0}:v3:wake                 ← shared by every queue in partition 0
 ```
 
 `partition = hash(queue) % 16` — the count is a constant of the code, not a deployment parameter. What each
 structure is for is [`redis-data-structures.md`](redis-data-structures.md); what matters here is only that
 everything a script touches carries the same tag.
 
-**The `v1` is the schema version, and it sits outside the tag on purpose.** Only what is inside the braces
+**The `v3` is the schema version, and it sits outside the tag on purpose.** Only what is inside the braces
 is hashed, so the segment moves nothing between slots — and a key's incarnations under two schemas land in
 the *same* slot, which is what would let a migration step read v1 and write v2 in one script
 ([`../research/schema-versioned-keys.md`](../research/schema-versioned-keys.md)).
 
-**The locks are partitioned the same way, under their own tags `{l:<partition>}`.** A lock's partition
-follows its name, so every operation on one lock reaches the same slot, and each script touches that
-partition's leases, tokens, fence counter and waiters list together. Their own tag space rather than the
-queue's, because a shared tag would put lock wakes on a queue's stream — and a stream feeds exactly one
-waker, where a queue's readiness hands one token to one consumer and a lock's broadcast wakes everyone.
+**The locks are partitioned the same way, and share the partition** — `{p:<partition>}:v3:l:…`. A lock's
+partition follows its name, so every operation on one lock reaches the same slot, and each script touches
+that partition's leases, tokens, fence counter and waiters list together.
+
+Sharing the tag means sharing the wake stream, which is the point: a stream costs a slot and therefore a
+blocking connection, and two tag spaces cost two of each for no gain. What used to make them separate was
+that a stream fed exactly one waker — a queue's readiness hands one token to one consumer, a lock's wakes
+everyone — so a shared stream would have sent lock wakes to the queue's sink. That is now decided by the
+entry rather than the stream: each carries a `kind` field (`q` or `l`) and the listener routes on it, so
+one stream feeds both sinks without either seeing the other's wakes.
 
 The fence counter is therefore one per partition rather than one for the deployment, which is safe for the
 reason the global counter was: a fence need only increase within a single lock, and a lock never changes
@@ -75,11 +80,11 @@ queue: a stream tagged differently from the keys it announces could not be appen
 them claimable, and a separate append is a crash window where work exists and nobody is told.
 
 **The partition count is a constant, chosen once for everyone.** Sixteen, because the count is a ceiling on
-spread but a floor on overhead: the queues occupy at most sixteen slots and the locks sixteen of their
-own — thirty-two nodes at the very most, far above any realistic cluster for one service — while the cost
-of carrying that ceiling is thirty-two mostly-idle streams. On a single server they are one read on one
-connection; on a cluster each read names only its own slot's streams, so the ceiling costs connections
-rather than round trips. It is deliberately not a deployment parameter: a knob nobody would set
+spread but a floor on overhead: queues and locks share the sixteen partitions, so sixteen nodes at the very
+most — far above any realistic cluster for one service — while the cost of carrying that ceiling is sixteen
+mostly-idle streams and, on a cluster, the connection each one's slot needs. On a single server they are
+one read on one connection; on a cluster each read names only its own slot's streams, so the ceiling costs
+connections rather than round trips. It is deliberately not a deployment parameter: a knob nobody would set
 differently is a liability, and a *changeable* count was a standing trap — changing it moves queues between
 tags and strands whatever was written under the old one. Changing the constant is therefore a change to the
 shape of stored data, which is what the schema version below exists to gate.

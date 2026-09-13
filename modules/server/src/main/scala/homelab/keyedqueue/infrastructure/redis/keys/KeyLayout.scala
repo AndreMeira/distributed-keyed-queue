@@ -27,7 +27,7 @@ object KeyLayout:
 
   /**
    * The shape of everything this code stores: the queue's and the lock's structures, the encodings written
-   * into them, and [[QueueKeys.partitions]]. '''Bump it on any change an older instance would misread''' — a
+   * into them, and [[partitions]]. '''Bump it on any change an older instance would misread''' — a
    * structure changing type, a field changing meaning, an encoding changing form, the partition constant
    * changing. That is a review discipline, not something the code can detect; an unbumped version makes
    * the check vouch for a compatibility that is not there.
@@ -40,10 +40,67 @@ object KeyLayout:
    * the code that shaped it is gone — the property a future migration worker stands on
    * (`docs/research/schema-versioned-keys.md`).
    */
-  val schemaVersion: Int = 2
+  val schemaVersion: Int = 3
 
   /** The schema version as every key carries it, between the hash tag and the rest of the name. */
   val segment: String = s"v$schemaVersion"
+
+  /**
+   * How many partitions the deployment is divided into — fixed in code, not configured.
+   *
+   * The count is a ceiling on spread (at most this many cluster nodes ever hold this service's data) but a
+   * floor on overhead (the listener names every partition's stream in every read and holds a connection per
+   * slot, maintenance iterates every partition), so it is one number chosen once: high enough that no
+   * realistic cluster hits the ceiling, low enough that the floor stays invisible.
+   *
+   * '''One count for every kind of name.''' Queues and locks share a partition, and with it a hash tag and
+   * a wake stream. They have no choice: a wake is written in the same call as the state it announces, so
+   * the stream can only live in the tag that state lives in.
+   *
+   * '''Part of the schema.''' Changing it moves names between tags and strands whatever was written under
+   * the old count, so a change here is a change to the shape of stored data — bump [[schemaVersion]] with
+   * it, and the boot check turns the stranding into a refusal.
+   */
+  val partitions: Int = 16
+
+  /**
+   * The hash tag a partition's keys share.
+   *
+   * @param partition the partition
+   * @return the tag, braces included, so Redis hashes only what is inside them
+   */
+  def tag(partition: Int): String = s"{p:$partition}"
+
+  /**
+   * Which partition a name falls in, whatever kind of thing it names.
+   *
+   * `String`'s hash is specified by the JVM, so every instance agrees on where a name lives without being
+   * told. `floorMod`, because a negative hash would otherwise produce a negative partition.
+   *
+   * @param name the queue or lock name
+   * @return the partition
+   */
+  def partitionOf(name: String): Int = Math.floorMod(name.hashCode, partitions)
+
+  /**
+   * A partition's wake stream — one stream per partition, carrying every kind of wake it announces.
+   *
+   * @param partition the partition
+   * @return the stream name
+   */
+  def wake(partition: Int): RedisKey = RedisKey(s"${tag(partition)}:$segment:wake")
+
+  /**
+   * Every wake stream in the deployment — the fixed set a listener reads, and so the count that decides how
+   * many connections it holds on a cluster.
+   *
+   * Fixed is the point: the set is known before any queue or lock is served, so no read is ever re-issued
+   * because a caller arrived for a name nobody had asked for yet.
+   *
+   * @return the stream names, in partition order
+   */
+  val wakeStreams: NonEmptyChunk[RedisKey] =
+    NonEmptyChunk.fromChunk(Chunk.fromIterable(0 until partitions).map(wake)).getOrElse(NonEmptyChunk(wake(0)))
 
   /**
    * Check this code's schema against the store's, recording it on a first boot.

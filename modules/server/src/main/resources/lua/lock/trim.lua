@@ -23,7 +23,7 @@ local names = redis.call('ZRANGEBYSCORE', held, '-inf', now - grace, 'LIMIT', 0,
 for _, name in ipairs(names) do
   redis.call('HDEL', tokens, name)
   redis.call('ZREM', held, name)
-  redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'queue', name)
+  redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'kind', 'l', 'name', name)
 end
 -- A waiters list whose latest ticket deadline is past the grace holds only expired tickets: every waiter
 -- is long gone, and no acquire will visit the name to prune it. Building the key from the prefix is legal

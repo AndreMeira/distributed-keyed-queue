@@ -22,7 +22,7 @@ import java.time.Instant
  *
  * '''Nothing here blocks in Redis.''' Every operation is a script that answers at once, so they all share
  * one connection. The only command in the process that parks is the listener's `XREAD`, and that belongs to
- * [[WakeListener]], on a connection of its own.
+ * [[ReadinessListener]], on a connection of its own.
  *
  * '''Every operation is one script.''' The interleavings between reading a key's state and acting on it are
  * exactly the bugs this design exists to avoid, so nothing here is a sequence of commands — see
@@ -51,7 +51,7 @@ final class RedisQueueStore(
   monitor: Monitor,
   connection: Connection,
   scripts: QueueScripts,
-  readiness: Readiness,
+  readiness: QueueReadiness,
   leaseTtl: Duration,
 ) extends QueueStore:
 
@@ -229,7 +229,7 @@ object RedisQueueStore:
     monitor: Monitor,
     connection: Connection,
     scripts: QueueScripts,
-    readiness: Readiness,
+    readiness: QueueReadiness,
     leaseTtl: Duration,
   ): UIO[RedisQueueStore] =
     ZIO.succeed(RedisQueueStore(monitor, connection, scripts, readiness, leaseTtl))

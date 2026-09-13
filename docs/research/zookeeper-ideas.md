@@ -73,7 +73,7 @@ reason to trust them.
 **Wake exactly one, not the herd.** ZooKeeper's lock recipe is famous for what the *naive* version gets
 wrong: every waiter watching the lock node means a release wakes them all, they stampede, one wins, the rest
 re-sleep — the herd effect. ZK's fix is each waiter watches only its predecessor, so a release wakes exactly
-one. DKQ's `Readiness` reaches the same "wake one" by a different route — a single-token buffer, one taker
+one. DKQ's `QueueReadiness` reaches the same "wake one" by a different route — a single-token buffer, one taker
 per token — and its whole reason for existing is stated as avoiding the broadcast that "wakes every consumer
 so one wins and the rest waste a round trip." Same problem, same principle, simpler mechanism: DKQ needs no
 predecessor chain because, unlike lock waiters, its consumers are interchangeable — any one can take any
@@ -96,7 +96,7 @@ enforce either.
 Not everything in ZooKeeper is worth having. Its watches are **one-shot and edge-triggered**: a watch fires
 once, for one change, and must be re-registered — and in the gap between firing and re-arming, changes are
 missed. This is the precise fragility the DKQ wake conversation settled against (`minimal-structures.md`,
-and the `Readiness` backstop discussion): correctness must rest on re-readable *state* (level-triggered),
+and the `QueueReadiness` backstop discussion): correctness must rest on re-readable *state* (level-triggered),
 with the edge wake as a best-effort accelerator. DKQ's claim reads real state every time and a lost wake
 costs only latency; a system built on ZK watches alone must get the re-arm race right on every recipe. DKQ
 is more robust here than the thing we came to learn from — worth stating plainly, because it is easy to

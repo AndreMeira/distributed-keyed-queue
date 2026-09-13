@@ -8,7 +8,7 @@ import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.lock.LockStore.Hold
 import homelab.keyedqueue.domain.types.{ LockName, QueueName }
 import homelab.keyedqueue.infrastructure.redis.script.LockScripts
-import homelab.keyedqueue.infrastructure.redis.keys.LockKeys
+import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, LockKeys }
 import homelab.keyedqueue.infrastructure.redis.script.lock.{ AcquireScript, GrantScript, TryScript }
 import zio.*
 
@@ -26,22 +26,22 @@ import java.time.Instant
  *
  * '''Waiters park until a known event, not on a poll.''' Every refusal names the delay after which the
  * answer can change — the lease's end when the lock is held, the head ticket's deadline when queued behind
- * it — and the waiter parks on its [[Broadcast]] mailbox for at most that long. The wake is
+ * it — and the waiter parks on its [[LockReadiness]] mailbox for at most that long. The wake is
  * cross-instance: release and trim append to a wake stream in the same script that frees the lock, and the
- * shared [[WakeListener]] delivers it to every instance's broadcast; every local waiter wakes and asks,
+ * shared [[ReadinessListener]] delivers it to every instance's readiness; every local waiter wakes and asks,
  * only the head ticket can win, so the woken crowd is a check, not a race. The mailbox is subscribed
  * before the enter, so no release can slip into the gap between asking and parking.
  *
  * @param monitor what each call on the substrate is traced against
  * @param connection where its connection comes from
  * @param scripts the loaded lock scripts
- * @param broadcast where a waiter's wakes land
+ * @param readiness where a waiter's wakes land
  */
 final class RedisLockStore(
   monitor: Monitor,
   connection: Connection,
   scripts: LockScripts,
-  broadcast: Broadcast,
+  readiness: LockReadiness,
 ) extends LockStore:
 
   /** The least a waiter parks between grant attempts, so clock-boundary refusals cannot spin. */
@@ -79,7 +79,7 @@ final class RedisLockStore(
     // observability doc reads dequeue's, not as a processing latency.
     monitor.trace("RedisLockStore.acquire"):
       Clock.instant.flatMap: asked =>
-        broadcast.subscribe(acquisition.name).flatMap { mailbox =>
+        readiness.subscribe(acquisition.name).flatMap { mailbox =>
           connection
             .provide:
               scripts.acquire.execute(acquisition.name, acquisition.ttl, acquisition.patience)
@@ -130,7 +130,7 @@ final class RedisLockStore(
   override def trim(grace: Duration, limit: Int): IO[RedisFailure, Chunk[LockName]] =
     monitor.trace("RedisLockStore.trim"):
       connection.provide:
-        ZIO.foreach(Chunk.fromIterable(0 until LockKeys.partitions))(swept(grace, limit)).map(_.flatten)
+        ZIO.foreach(Chunk.fromIterable(0 until KeyLayout.partitions))(swept(grace, limit)).map(_.flatten)
 
   /**
    * One partition's trim.
@@ -338,12 +338,12 @@ object RedisLockStore:
    *
    * @param monitor what each call on the substrate is traced against
    * @param connection where its connection comes from
-   * @param broadcast where waiters' wakes land
+   * @param readiness where waiters' wakes land
    * @return the store; aborts with `RedisFailure` when a script is missing or rejected
    */
   def make(
     monitor: Monitor,
     connection: Connection,
-    broadcast: Broadcast,
+    readiness: LockReadiness,
   ): ZIO[Connection.Commands, RedisFailure, RedisLockStore] =
-    LockScripts.make.map(RedisLockStore(monitor, connection, _, broadcast))
+    LockScripts.make.map(RedisLockStore(monitor, connection, _, readiness))
