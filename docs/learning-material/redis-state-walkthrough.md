@@ -14,7 +14,8 @@ what the service promises is [`../architecture/guarantees.md`](../architecture/g
 the middle: the mechanics in motion.
 
 Throughout: queue `orders`, key `k1`, worker `w1`. Names are shortened — every one really carries the
-`{p:0}:v3:q:orders` prefix — partition 0 of the fixed sixteen, `v3` the schema version. Empty structures are omitted.
+`{p:0}:v3:q:orders` prefix — partition 0, which on a single server is the only one (a cluster spreads names
+across sixteen), and `v3` the schema version. Empty structures are omitted.
 
 ## Where we start
 

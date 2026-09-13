@@ -12,20 +12,12 @@ import java.time.Duration as JavaDuration
 
 
 /**
- * Where an effect gets a connection from.
+ * Where an effect gets a connection from: it asks for a [[Connection.Commands]] by type, and this decides
+ * which one it gets. [[sync]] serves everything that answers immediately; [[blocking]] holds one connection
+ * per partition, since a blocking command occupies its connection whole. All are opened at startup, so the
+ * number a deployment holds is fixed before it serves.
  *
- * The connection arrives in the environment as [[Connection.Commands]]: an effect asks for one by type, and
- * this decides which one it gets. [[sync]] is shared by everything that answers immediately; [[blocking]]
- * holds one connection per partition — separate because a blocking command occupies its connection whole,
- * and one each because a partition's keys are a slot of their own, which a command may not leave. All of
- * them are opened at startup, so how many connections a deployment holds is a fact fixed before it serves.
- *
- * '''What each connection is for is not recorded here.''' Which keys a blocking read names is the reader's
- * to decide; this says only which connection serves a partition.
- *
- * Why the client is synchronous, and what that costs — Redis executes a script in about four microseconds,
- * a blocking-pool hop costs a third of one, and a waiting consumer holds no thread at all — is measured in
- * `docs/architecture/redis-connections.md`.
+ * Why the client is synchronous, and what that costs, is measured in `docs/architecture/redis-connections.md`.
  *
  * @param sync the connection every command that answers at once runs on
  * @param blocking partition -> the connection reserved for commands that park, one per partition
@@ -120,10 +112,7 @@ object Connection:
 
   /**
    * Every connection the deployment will hold, opened here and closed with the scope: the shared one, and
-   * one per group that a single command may name.
-   *
-   * The count is settled at startup rather than left to the caller, so `CLIENT LIST` on a running store
-   * shows what this says it will: one plus one per partition.
+   * one per partition. `CLIENT LIST` on a running store shows exactly that — one plus one per partition.
    *
    * @param config where Redis is, and the longest wait to honour
    * @param layout how many partitions there are, and so how many blocking connections to open
@@ -134,7 +123,7 @@ object Connection:
       client   <- client(config)
       sync     <- open(client, config.maxWait)
       timeout   = config.maxWait + listeningSlack
-      blocking <- ZIO.foreach(layout.partitionIds)(group => open(client, timeout).map(group -> _))
+      blocking <- ZIO.foreach(layout.partitionIds)(partition => open(client, timeout).map(partition -> _))
     yield Connection(sync, blocking.toMap)
 
   /**

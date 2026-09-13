@@ -16,7 +16,8 @@ page is the middle: the mechanics in motion. The queue's equivalent is
 [`redis-state-walkthrough.md`](redis-state-walkthrough.md).
 
 Throughout: lock `route-7`, callers `A`, `B`, `C`. Names are shortened — every one really carries the
-`{p:3}:v3:l` prefix, partition 3 of the fixed sixteen, `v3` the schema version. The fence counter and the
+`{p:3}:v3:l` prefix — partition 3 of the sixteen a cluster uses, `v3` the schema version. On a single
+server there is one partition and everything is in `{p:0}`. The fence counter and the
 `held`/`tokens`/`waiting` structures are **shared by every lock in the partition**; only `waiters:route-7`
 belongs to this lock alone. Empty structures are omitted, and `now` is whatever `TIME` said inside the
 script.

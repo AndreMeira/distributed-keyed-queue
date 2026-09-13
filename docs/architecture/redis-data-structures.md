@@ -162,7 +162,7 @@ would be a different slot, so the append could not share a script with the push 
 Tagging both by partition is what keeps them together.
 
 The consequence is that **a partition lives on one node**: sharding spreads partitions, never one queue and never
-one partition. With sixteen partitions fixed in code, a single node simply holds them all, and a cluster spreads
+one partition. A single server uses one partition and holds everything; a cluster uses sixteen and spreads
 them. See [`redis-cluster.md`](redis-cluster.md).
 
 ## The lock's structures

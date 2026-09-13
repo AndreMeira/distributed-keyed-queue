@@ -117,7 +117,7 @@ Two details make this sound rather than merely plausible:
 | `RedisLockStore` | the adapter: one method per script, plus the waiting loop (`queued` → `awaitTurn` → `turn`) |
 | `LockReadiness` | per-name mailboxes; a wake reaches **every** subscriber and is **dropped** if nobody waits |
 | `QueueReadiness` | the queue's counterpart, for contrast: one token to **one** consumer, and **kept** if nobody waits |
-| `ReadinessListener` | one blocking `XREAD` per group of wake streams; routes each entry to one readiness by the `kind` it carries |
+| `ReadinessListener` | one blocking `XREAD` per partition; routes each entry to one readiness by the `kind` it carries |
 | `LockCleanup` | the periodic `trim` — the only background pass the lock has |
 | `KeyLayout` / `LockKeys` | which partition a name falls in, and the keys that follow from it |
 

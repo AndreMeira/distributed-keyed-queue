@@ -5,38 +5,19 @@ import homelab.keyedqueue.domain.types.{ LockName, QueueName }
 import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, RedisKey }
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import io.lettuce.core.XReadArgs.StreamOffset
-import io.lettuce.core.{ Limit, Range, XReadArgs }
+import io.lettuce.core.{ Limit, Range, StreamMessage, XReadArgs }
 import zio.*
 
 import scala.jdk.CollectionConverters.*
 
 
 /**
- * A blocking read per group of wake streams, delivering each entry to the readiness that waits on it.
+ * A blocking read per partition, delivering each entry to the readiness that waits on it.
  *
- * '''One fiber per group, because the cluster bounds what one read may name.''' `XREAD` is multi-stream,
- * but Redis Cluster rejects a multi-key read whose keys span slots — and the partition tags exist precisely
- * to spread slots. [[Connection]] therefore opens a connection per group of streams that one command may
- * name, and this runs a fiber on each; on a single server there is one group, so one connection and one
- * fiber — the original design. Which readiness an entry reaches is decided by the kind the '''entry'''
- * carries, not by the stream it arrived on: every kind of wake for a partition shares that partition's
- * stream, so queue wakes and lock wakes stay separate without costing a stream, a slot and a connection
- * each. Reading an entry produces a [[ReadinessListener.Kind]], which holds the name at the type its kind
- * implies, so the readiness a wake goes to and the type it arrives as are decided together.
- *
- * '''The two readinesses answer opposite questions, which is why delivery is a match and not a table.''' A
- * [[QueueReadiness]] keeps a wake nobody is waiting for — work does not stop existing because no consumer
- * happened to be parked — while a [[LockReadiness]] drops it and wakes every parked waiter, since grants go
- * by ticket and only the store knows whose turn it is. Sending either one's wakes to the other would lose
- * the property it depends on, and neither will take the other's name.
- *
- * '''The set of streams is fixed, and that is the point.''' An `XREAD` names the streams it was issued
- * with, so the set is resolved once at startup — a queue or lock nobody has asked for yet is still heard
- * the instant something is appended for it, with no read re-issued.
- *
- * '''Why a stream and not pub/sub.''' A reader that reconnects resumes from the id it holds, so a blip
- * costs nothing; pub/sub would lose whatever arrived while it was away, and a lost wake is a waiter asleep
- * beside work it asked for.
+ * One fiber per partition, each blocked on that partition's wake stream. Which readiness an entry reaches
+ * is decided by the kind the entry carries rather than by the stream it arrived on, so queue wakes and lock
+ * wakes stay separate while sharing a stream. The set of streams is resolved at startup, so a queue or lock
+ * nobody has asked for yet is heard the instant something is appended for it.
  *
  * @param connection the blocking connections this reads on
  * @param layout which partitions there are, and the stream each one announces on
@@ -65,8 +46,7 @@ final class ReadinessListener(
    * was missed — every waker served is told to re-look. The backoff is short: it is the one interval a
    * waiter actually waits on.
    *
-   * @return never completes; aborts with `Unavailable` when a group has no connection to read on, which is
-   *         a startup mistake rather than a read that failed
+   * @return never completes; aborts when a partition has no connection to read on
    */
   def run: IO[RedisFailure, Nothing] =
     ZIO.foreachParDiscard(layout.partitionIds)(loop) *> ZIO.never
@@ -92,7 +72,7 @@ final class ReadinessListener(
       .catchAll: error =>
         // Announce-all is the safe recovery for a missed read — but a reader that lands here every round
         // has degraded into interval polling, which the log line is here to make visible.
-        ZIO.logWarning(s"wake read failed, announcing the group as recovery: ${error.message}")
+        ZIO.logWarning(s"wake read failed, announcing the partition as recovery: ${error.message}")
           *> announceAll *> ZIO.sleep(ReadinessListener.retryBackoff)
       .forever
 
@@ -121,7 +101,7 @@ final class ReadinessListener(
    */
   private def entries(
     offsets: Array[StreamOffset[String]]
-  ): ZIO[Connection.Commands, RedisFailure, List[io.lettuce.core.StreamMessage[String, Array[Byte]]]] =
+  ): ZIO[Connection.Commands, RedisFailure, List[StreamMessage[String, Array[Byte]]]] =
     Connection.use: commands =>
       ZIO
         .attemptBlocking:
@@ -130,6 +110,43 @@ final class ReadinessListener(
         .mapBoth(
           LuaScript.failure,
           reply => Option(reply).map(_.asScala.toList).getOrElse(Nil),
+        )
+
+  /**
+   * Record where each stream this listener will read stands right now.
+   *
+   * Taken from the same stream set the reads are issued with, so what is positioned is exactly what will be
+   * read.
+   *
+   * @return noop; aborts with `Unavailable` when a position cannot be read
+   */
+  private def positioned: IO[RedisFailure, Unit] =
+    connection.provide:
+      ZIO
+        .foreach(layout.wakeStreamKeys.toChunk)(position)
+        .flatMap(resolved => positions.set(resolved.toMap))
+
+  /**
+   * Where a wake stream is right now: the id of its last entry, or `0-0` when nothing has been appended.
+   *
+   * Asked on the shared connection: this answers at once, and the per-partition ones are for commands that
+   * block.
+   *
+   * @param stream the wake stream
+   * @return the stream, with the id to read after it; aborts with `Unavailable` when the read fails
+   */
+  private def position(
+    stream: RedisKey
+  ): ZIO[Connection.Commands, RedisFailure, (RedisKey, ReadinessListener.EntryId)] =
+    Connection.use: commands =>
+      ZIO
+        .attemptBlocking(commands.xrevrange(stream, Range.unbounded[String](), Limit.create(0, 1)))
+        .mapBoth(
+          LuaScript.failure,
+          reply =>
+            stream -> ReadinessListener.EntryId(
+              Option(reply).map(_.asScala.toList).getOrElse(Nil).headOption.map(_.getId).getOrElse("0-0")
+            ),
         )
 
   /**
@@ -156,8 +173,8 @@ final class ReadinessListener(
    * Tell every waker to re-look — the failure path, where a wake may have been missed and the safe move is
    * to assume so.
    *
-   * Every waker, not this group's: a stream carries every kind, so a read that failed could have been
-   * carrying any of them.
+   * Both, not just the kind this read was carrying: a stream carries either, so a failed read could have
+   * been carrying either.
    *
    * @return noop
    */
@@ -248,7 +265,7 @@ object ReadinessListener:
    * @param entry one stream entry
    * @return what it announces, absent when either field cannot be read
    */
-  private def wakeOf(entry: io.lettuce.core.StreamMessage[String, Array[Byte]]): Option[Kind] =
+  private def wakeOf(entry: StreamMessage[String, Array[Byte]]): Option[Kind] =
     for
       body <- Option(entry.getBody)
       kind <- Option(body.get("kind")).map(field)
@@ -285,41 +302,8 @@ object ReadinessListener:
     queueReady: QueueReadiness,
     lockReady: LockReadiness,
   ): IO[RedisFailure, ReadinessListener] =
-    positioned(connection, layout.wakeStreamKeys.toChunk)
-      .map(ReadinessListener(connection, layout, queueReady, lockReady, _, block))
-
-  /**
-   * Where each stream this listener will read stands right now.
-   *
-   * Given the same stream set the reads are built from, so what is positioned is exactly what will be read
-   * — there is no second opinion about which streams exist.
-   *
-   * @param connection whose shared connection answers
-   * @param streams every stream this will read
-   * @return the positions, ready to read from; aborts with `Unavailable` when one cannot be read
-   */
-  private def positioned(
-    connection: Connection,
-    streams: Chunk[RedisKey],
-  ): IO[RedisFailure, Ref[Map[RedisKey, EntryId]]] =
-    ZIO
-      .foreach(streams)(stream => position(connection.sync, stream).map(stream -> _))
-      .flatMap(resolved => Ref.make(resolved.toMap))
-
-  /**
-   * Where a wake stream is right now: the id of its last entry, or `0-0` when nothing has been appended.
-   *
-   * Asked on the shared connection, not a group's: this answers at once, and the groups are for commands
-   * that block.
-   *
-   * @param commands the connection to ask on
-   * @param stream the wake stream
-   * @return the id to read after; aborts with `Unavailable` when the read fails
-   */
-  private def position(commands: Connection.Commands, stream: RedisKey): IO[RedisFailure, EntryId] =
-    ZIO
-      .attemptBlocking(commands.xrevrange(stream, Range.unbounded[String](), Limit.create(0, 1)))
-      .mapBoth(
-        LuaScript.failure,
-        reply => EntryId(Option(reply).map(_.asScala.toList).getOrElse(Nil).headOption.map(_.getId).getOrElse("0-0")),
-      )
+    for
+      positions <- Ref.make(Map.empty[RedisKey, EntryId])
+      listener   = ReadinessListener(connection, layout, queueReady, lockReady, positions, block)
+      _         <- listener.positioned
+    yield listener

@@ -72,7 +72,8 @@ Nothing says which slot a given tag lands in, which is why the streams are group
 rather than by kind or by partition. What may be grouped is `KeyLayout`'s to say — it is the one thing that
 knows both the partition count and whether the store is a cluster, and the only part of it allowed to know
 the latter, since a key's own partition must come out the same on either deployment. `Connection` opens one
-connection per group it reports, at startup, and the listener runs a fiber on each.
+connection per partition, at startup, and the listener runs a fiber on each, reading that partition's one
+wake stream.
 
 A partition's keys hash to one slot, and **every script touches exactly one queue, whose keys are all in its
 partition's slot** — which is what makes the Lua legal at all, since a script may only reach keys in a single
@@ -80,31 +81,35 @@ slot. The wake stream is in that slot too, which is the whole reason the tag is 
 queue: a stream tagged differently from the keys it announces could not be appended by the script that made
 them claimable, and a separate append is a crash window where work exists and nobody is told.
 
-**The partition count is a constant, chosen once for everyone.** Sixteen, because the count is a ceiling on
-spread but a floor on overhead: queues and locks share the sixteen partitions, so sixteen nodes at the very
-most — far above any realistic cluster for one service — while the cost of carrying that ceiling is sixteen
-mostly-idle streams and, on a cluster, the connection each one's slot needs. On a single server they are
-one read on one connection; on a cluster each read names only its own slot's streams, so the ceiling costs
-connections rather than round trips. It is deliberately not a deployment parameter: a knob nobody would set
-differently is a liability, and a *changeable* count was a standing trap — changing it moves queues between
-tags and strands whatever was written under the old one. Changing the constant is therefore a change to the
-shape of stored data, which is what the schema version below exists to gate.
+**The partition count is the deployment's, and it is one of two values.** A cluster uses sixteen; a single
+server uses one. Partitions exist to spread keys across slots, and a server that has none has nothing to
+spread across — so on one the sixteen would buy nothing and cost a blocked connection each, while on a
+cluster the count is a ceiling on spread (sixteen nodes at the very most, far above any realistic cluster
+for one service) against a floor on overhead (sixteen mostly-idle streams, and the connection each one's
+slot needs).
+
+It is not a knob beyond that: an operator picks a store, not a count. And because the count is written into
+every key as its tag, an instance that disagrees about it would read and write different names entirely —
+which is why it is recorded in the marker below rather than left to configuration to get right.
 [`../research/bucketed-wake-streams.md`](../research/bucketed-wake-streams.md) has the original reasoning
 and what partitioning cost.
 
 **The store records the schema it was written under, and instances refuse to disagree.** At first boot each
-instance records the code's schema version (`dkq:layout:schema`, claimed with `SET NX` so racing first
-boots cannot both write); every later boot compares and **refuses to start on a mismatch**, before anything
-is served — a rolling deploy of incompatible code crash-loops loudly instead of misreading live structures.
+instance records its layout — the schema version and the partition count, as `v3.p16` (`dkq:layout:schema`,
+claimed with `SET NX` so racing first boots cannot both write); every later boot compares and **refuses to
+start on a mismatch**, before anything is served — a rolling deploy of incompatible code crash-loops loudly instead of misreading live structures.
 The version is bumped in code whenever an older instance would misread the store: a structure changing
-type, an encoding changing form, the partition constant changing. Gate-only, never migrated: the remedy is a
+type, an encoding changing form. The partition count needs no bump — it is in the marker itself. Gate-only, never migrated: the remedy is a
 ceremony, in this order — **stop every instance**, drain dkq (no queued work, no outstanding receipts or
 holds; delete dkq's keys, or flush the store **only if it is dkq's alone** — an existing shared Redis is a
-supported home, and its other tenants are not dkq's to flush), run the `layout accept` mode once, then
-start instances. Both halves are on the operator: `accept` records over whatever is there — it cannot
-verify the drain, because what a leftover key looks like depends on the schema being replaced, which the
-new code no longer knows — and it cannot see instances, which check their schema at boot and never again. What no store-side marker can cover is client-held state such as
-receipts: a receipt-format change breaks holds the store never sees.
+supported home, and its other tenants are not dkq's to flush), **delete the marker** (`DEL
+dkq:layout:schema`), then start instances: the first one records the new layout as it boots.
+
+The whole ceremony is on the operator, and nothing in the service can check it. Deleting the marker says
+"what is in this store is now yours" — it cannot verify the drain, because what a leftover key looks like
+depends on the layout being replaced, which the new code no longer knows; and it cannot see instances,
+which check their layout at boot and never again. What no store-side marker covers at all is client-held
+state such as receipts: a receipt-format change breaks holds the store never sees.
 
 Two consequences are easy to undo by accident:
 
