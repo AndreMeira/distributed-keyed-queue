@@ -1,4 +1,4 @@
-package homelab.keyedqueue.infrastructure.redis.script
+package homelab.keyedqueue.infrastructure.redis.script.lock
 
 
 import homelab.common.error.ApplicationError
@@ -9,15 +9,16 @@ import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection
 import io.lettuce.core.ScriptOutputType
 import homelab.keyedqueue.infrastructure.redis.script.Codecs.given
+import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import zio.*
 
 import java.time.Instant
 
 
-object LockAcquireScript:
+object AcquireScript:
 
   type Input  = (name: LockName, ttl: Duration, patience: Duration)
-  type Output = LockAcquireScript.Entered
+  type Output = AcquireScript.Entered
 
   /**
    * What entering answered: the lock, or a place in its queue.

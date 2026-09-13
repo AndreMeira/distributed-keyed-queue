@@ -7,7 +7,10 @@ import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import zio.{ Chunk, Duration }
+import homelab.keyedqueue.infrastructure.redis.LockKeys
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
+import homelab.keyedqueue.infrastructure.redis.script.lock.*
+import homelab.keyedqueue.infrastructure.redis.script.queue.*
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript.Input.Encoder
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript.Output.Decoder
 
@@ -131,7 +134,7 @@ object Codecs {
     )
 
   /** The lock's name, the lease length, then how long the ticket lives. */
-  given lockAcquireInput: LuaScript.Input.Encoder[LockAcquireScript.Input] = acquire =>
+  given lockAcquireInput: LuaScript.Input.Encoder[AcquireScript.Input] = acquire =>
     LuaScript.Input(
       key = LockKeys.granting(acquire.name),
       args = Array(
@@ -142,7 +145,7 @@ object Codecs {
     )
 
   /** The lock's name, the ticket asking, then the lease length a grant would run for. */
-  given lockGrantInput: LuaScript.Input.Encoder[LockGrantScript.Input] = grant =>
+  given lockGrantInput: LuaScript.Input.Encoder[GrantScript.Input] = grant =>
     LuaScript.Input(
       key = LockKeys.granting(grant.name),
       args = Array(
@@ -153,14 +156,14 @@ object Codecs {
     )
 
   /** The lock's name, then the lease length. */
-  given lockTryInput: LuaScript.Input.Encoder[LockTryScript.Input] = attempt =>
+  given lockTryInput: LuaScript.Input.Encoder[TryScript.Input] = attempt =>
     LuaScript.Input(
       key = LockKeys.granting(attempt.name),
       args = Array(Encoder.utf8(attempt.name), Encoder.millis(attempt.ttl)),
     )
 
   /** The lock's name, the token that authorises extending it, then how much longer to grant. */
-  given lockRefreshInput: LuaScript.Input.Encoder[LockRefreshScript.Input] = refresh =>
+  given lockRefreshInput: LuaScript.Input.Encoder[RefreshScript.Input] = refresh =>
     LuaScript.Input(
       key = LockKeys.refresh,
       args = Array(
@@ -171,14 +174,14 @@ object Codecs {
     )
 
   /** The lock's name, then the token that authorises releasing it. */
-  given lockReleaseInput: LuaScript.Input.Encoder[LockReleaseScript.Input] = release =>
+  given lockReleaseInput: LuaScript.Input.Encoder[ReleaseScript.Input] = release =>
     LuaScript.Input(
       key = LockKeys.release,
       args = Array(Encoder.utf8(release.name), Encoder.number(release.token)),
     )
 
   /** The lock's name, then the ticket being withdrawn. */
-  given lockAbandonInput: LuaScript.Input.Encoder[LockAbandonScript.Input] = abandon =>
+  given lockAbandonInput: LuaScript.Input.Encoder[AbandonScript.Input] = abandon =>
     LuaScript.Input(
       key = LockKeys.ticket(abandon.name),
       args = Array(Encoder.utf8(abandon.name), Encoder.number(abandon.ticket)),
@@ -189,7 +192,7 @@ object Codecs {
    *
    * The prefix is an argument and not a key because the names it completes depend on what the trim finds.
    */
-  given lockTrimInput: LuaScript.Input.Encoder[LockTrimScript.Input] = trim =>
+  given lockTrimInput: LuaScript.Input.Encoder[TrimScript.Input] = trim =>
     LuaScript.Input(
       key = LockKeys.trim,
       args = Array(
@@ -265,38 +268,38 @@ object Codecs {
     }
 
   /** `{1, token, leaseUntil}` when the lock was taken, `{0, ticketId, recheckMillis}` when it was queued for. */
-  given lockAcquireOutput: LuaScript.Output.Decoder[LockAcquireScript.Output] =
+  given lockAcquireOutput: LuaScript.Output.Decoder[AcquireScript.Output] =
     Decoder.sized(3) {
       Decoder.long.at(0).flatMap {
         case 1     =>
           for
             token <- Decoder.long.at(1).map(Token(_))
             until <- Decoder.instant.at(2)
-          yield LockAcquireScript.Entered.Granted(token, until)
+          yield AcquireScript.Entered.Granted(token, until)
         case 0     =>
           for
             ticket  <- Decoder.long.at(1)
             recheck <- Decoder.duration.at(2)
-          yield LockAcquireScript.Entered.Queued(ticket, recheck)
+          yield AcquireScript.Entered.Queued(ticket, recheck)
         case other => Decoder.fail(s"lock.acquire answered with status $other")
       }
     }
 
   /** `{1, token, leaseUntil}` granted, `{0, recheckMillis}` not yet, `{2, 0}` when the ticket is gone. */
-  given lockGrantOutput: LuaScript.Output.Decoder[LockGrantScript.Output] =
+  given lockGrantOutput: LuaScript.Output.Decoder[GrantScript.Output] =
     Decoder.long.at(0).flatMap {
       case 1     =>
         for
           token <- Decoder.long.at(1).map(Token(_))
           until <- Decoder.instant.at(2)
-        yield LockGrantScript.Asked.Granted(token, until)
-      case 0     => Decoder.duration.at(1).map(LockGrantScript.Asked.Wait(_))
-      case 2     => Decoder.constant(LockGrantScript.Asked.Gone)
+        yield GrantScript.Asked.Granted(token, until)
+      case 0     => Decoder.duration.at(1).map(GrantScript.Asked.Wait(_))
+      case 2     => Decoder.constant(GrantScript.Asked.Gone)
       case other => Decoder.fail(s"lock.grant answered with status $other")
     }
 
   /** `{token, leaseUntil}`, or nil when the lock is held or queued for. */
-  given lockTryOutput: LuaScript.Output.Decoder[LockTryScript.Output] =
+  given lockTryOutput: LuaScript.Output.Decoder[TryScript.Output] =
     Decoder
       .sized(2) {
         for
@@ -307,7 +310,7 @@ object Codecs {
       .orNone
 
   /** `{leaseUntil, ok}` — the new deadline, and whether the hold survived to take it. */
-  given lockRefreshOutput: LuaScript.Output.Decoder[LockRefreshScript.Output] =
+  given lockRefreshOutput: LuaScript.Output.Decoder[RefreshScript.Output] =
     Decoder.sized(2) {
       for
         until   <- Decoder.instant.at(0)
@@ -316,6 +319,6 @@ object Codecs {
     }
 
   /** The names a trim removed, oldest lease first. */
-  given lockTrimOutput: LuaScript.Output.Decoder[LockTrimScript.Output] =
+  given lockTrimOutput: LuaScript.Output.Decoder[TrimScript.Output] =
     Decoder.text.many.map(_.map(LockName(_)))
 }

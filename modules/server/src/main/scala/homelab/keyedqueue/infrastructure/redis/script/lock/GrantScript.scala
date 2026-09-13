@@ -1,4 +1,4 @@
-package homelab.keyedqueue.infrastructure.redis.script
+package homelab.keyedqueue.infrastructure.redis.script.lock
 
 
 import homelab.common.error.ApplicationError
@@ -9,15 +9,16 @@ import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection
 import io.lettuce.core.ScriptOutputType
 import homelab.keyedqueue.infrastructure.redis.script.Codecs.given
+import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import zio.*
 
 import java.time.Instant
 
 
-object LockGrantScript:
+object GrantScript:
 
   type Input  = (name: LockName, ticket: Long, ttl: Duration)
-  type Output = LockGrantScript.Asked
+  type Output = GrantScript.Asked
 
   /** What asking for a turn answered: the lock, a wait, or a queue that no longer knows the ticket. */
   enum Asked:

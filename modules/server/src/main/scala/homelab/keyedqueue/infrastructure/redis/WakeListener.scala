@@ -215,7 +215,7 @@ object WakeListener:
    * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
    */
   def make(connection: Connection, readiness: Readiness, block: Duration): ZIO[Scope, RedisFailure, WakeListener] =
-    make(connection, block, Namespace.wakeStreams.toChunk.map(stream => stream -> (readiness: Waker)).toMap)
+    make(connection, block, QueueKeys.wakeStreams.toChunk.map(stream => stream -> (readiness: Waker)).toMap)
 
   /**
    * Where a wake stream is right now: the id of its last entry, or `0-0` when nothing has been appended.

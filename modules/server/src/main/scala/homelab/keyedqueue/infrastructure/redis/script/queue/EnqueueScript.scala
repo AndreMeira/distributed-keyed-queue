@@ -1,4 +1,4 @@
-package homelab.keyedqueue.infrastructure.redis.script
+package homelab.keyedqueue.infrastructure.redis.script.queue
 
 
 import homelab.common.error.ApplicationError
@@ -6,15 +6,16 @@ import homelab.keyedqueue.domain.model.Message
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands
-import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, QueueKeys }
 import io.lettuce.core.ScriptOutputType
 import homelab.keyedqueue.infrastructure.redis.script.Codecs.given
+import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import zio.*
 
 
 object EnqueueScript:
 
-  type Input  = (ns: Namespace, message: Message)
+  type Input  = (ns: QueueKeys, message: Message)
   type Output = Long
 
   /**

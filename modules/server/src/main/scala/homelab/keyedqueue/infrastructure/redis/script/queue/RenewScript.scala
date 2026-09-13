@@ -1,4 +1,4 @@
-package homelab.keyedqueue.infrastructure.redis.script
+package homelab.keyedqueue.infrastructure.redis.script.queue
 
 
 import homelab.common.error.ApplicationError
@@ -6,9 +6,10 @@ import homelab.keyedqueue.domain.model.Claim
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands
-import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, QueueKeys }
 import io.lettuce.core.ScriptOutputType
 import homelab.keyedqueue.infrastructure.redis.script.Codecs.given
+import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import zio.*
 
 import java.time.Instant
@@ -16,7 +17,7 @@ import java.time.Instant
 
 object RenewScript:
 
-  type Input  = (ns: Namespace, leaseTtl: Duration, held: Chunk[Claim])
+  type Input  = (ns: QueueKeys, leaseTtl: Duration, held: Chunk[Claim])
   type Output = (renewedUntil: Instant, lost: Chunk[MessageKey])
 
   /**

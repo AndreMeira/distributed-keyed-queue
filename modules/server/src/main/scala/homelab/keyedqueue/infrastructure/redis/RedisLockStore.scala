@@ -7,7 +7,7 @@ import homelab.keyedqueue.domain.model.{ Acquisition, LockClaim }
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.lock.LockStore.Hold
 import homelab.keyedqueue.domain.types.{ LockName, QueueName }
-import homelab.keyedqueue.infrastructure.redis.script.{ LockAcquireScript, LockGrantScript, LockTryScript }
+import homelab.keyedqueue.infrastructure.redis.script.lock.{ AcquireScript, GrantScript, TryScript }
 import zio.*
 
 import java.time.Instant
@@ -81,8 +81,8 @@ final class RedisLockStore(
             .provide:
               scripts.acquire.execute(acquisition.name, acquisition.ttl, acquisition.patience)
             .flatMap:
-              case LockAcquireScript.Entered.Granted(token, until)   => ZIO.some(hold(acquisition.name)((token, until)))
-              case LockAcquireScript.Entered.Queued(ticket, recheck) => queued(acquisition, asked, ticket, recheck, mailbox)
+              case AcquireScript.Entered.Granted(token, until)   => ZIO.some(hold(acquisition.name)((token, until)))
+              case AcquireScript.Entered.Queued(ticket, recheck) => queued(acquisition, asked, ticket, recheck, mailbox)
         }
 
   /**
@@ -138,7 +138,7 @@ final class RedisLockStore(
    * @param granted the token the grant runs under, and when its lease lapses
    * @return the hold, as the port promises it
    */
-  private def hold(name: LockName)(granted: LockTryScript.Granted): Hold =
+  private def hold(name: LockName)(granted: TryScript.Granted): Hold =
     Hold(LockClaim(name, granted.token), granted.leaseUntil)
 
   /**
@@ -226,10 +226,10 @@ final class RedisLockStore(
         connection
           .provide(scripts.grant.execute(acquisition.name, id, acquisition.ttl))
           .flatMap:
-            case LockGrantScript.Asked.Granted(token, until) =>
+            case GrantScript.Asked.Granted(token, until) =>
               ZIO.some(hold(acquisition.name)((token = token, leaseUntil = until)))
-            case LockGrantScript.Asked.Wait(delay)           => nextEventIn(delay, recheckAt).as(None)
-            case LockGrantScript.Asked.Gone                  => reenter(acquisition, asked, ticket, recheckAt)
+            case GrantScript.Asked.Wait(delay)           => nextEventIn(delay, recheckAt).as(None)
+            case GrantScript.Asked.Gone                  => reenter(acquisition, asked, ticket, recheckAt)
 
   /**
    * Enter again after the queue lost the ticket — with what is '''left''' of the patience, not all of it.
@@ -256,9 +256,9 @@ final class RedisLockStore(
         connection
           .provide(scripts.acquire.execute(acquisition.name, acquisition.ttl, left))
           .flatMap:
-            case LockAcquireScript.Entered.Granted(token, until)  =>
+            case AcquireScript.Entered.Granted(token, until)  =>
               ZIO.some(hold(acquisition.name)((token = token, leaseUntil = until)))
-            case LockAcquireScript.Entered.Queued(fresh, recheck) =>
+            case AcquireScript.Entered.Queued(fresh, recheck) =>
               ticket.set(fresh) *> nextEventIn(recheck, recheckAt).as(None)
 
   /**

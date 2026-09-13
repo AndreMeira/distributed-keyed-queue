@@ -3,7 +3,8 @@ package homelab.keyedqueue.infrastructure.redis
 
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands
-import homelab.keyedqueue.infrastructure.redis.script.*
+import homelab.keyedqueue.infrastructure.redis.script.LuaScript
+import homelab.keyedqueue.infrastructure.redis.script.lock.*
 import zio.*
 
 
@@ -11,8 +12,8 @@ import zio.*
  * The lock scripts, loaded once and held as the calls they can make — the lock's [[Scripts]].
  *
  * '''Static keys, shared by every lock.''' Unlike the queue, whose keys are per-key and built from a
- * [[Namespace]], all locks live in shared structures with the lock's name as a member or field — see
- * [[homelab.keyedqueue.infrastructure.redis.script.LockKeys]] — which keeps them in one cluster slot.
+ * [[QueueKeys]], all locks live in shared structures with the lock's name as a member or field — see
+ * [[homelab.keyedqueue.infrastructure.redis.script.Keys]] — which keeps them in one cluster slot.
  *
  * @param acquire enters for a named lock — an immediate grant or a tail ticket
  * @param grant asks for a queued waiter's turn
@@ -23,13 +24,13 @@ import zio.*
  * @param trim removes holds and waiter lists abandoned past a grace window
  */
 final case class LockScripts(
-  acquire: LuaScript[LockAcquireScript.Input, LockAcquireScript.Output],
-  grant: LuaScript[LockGrantScript.Input, LockGrantScript.Output],
-  abandon: LuaScript[LockAbandonScript.Input, LockAbandonScript.Output],
-  tryAcquire: LuaScript[LockTryScript.Input, LockTryScript.Output],
-  release: LuaScript[LockReleaseScript.Input, LockReleaseScript.Output],
-  refresh: LuaScript[LockRefreshScript.Input, LockRefreshScript.Output],
-  trim: LuaScript[LockTrimScript.Input, LockTrimScript.Output],
+  acquire: LuaScript[AcquireScript.Input, AcquireScript.Output],
+  grant: LuaScript[GrantScript.Input, GrantScript.Output],
+  abandon: LuaScript[AbandonScript.Input, AbandonScript.Output],
+  tryAcquire: LuaScript[TryScript.Input, TryScript.Output],
+  release: LuaScript[ReleaseScript.Input, ReleaseScript.Output],
+  refresh: LuaScript[RefreshScript.Input, RefreshScript.Output],
+  trim: LuaScript[TrimScript.Input, TrimScript.Output],
 )
 
 
@@ -42,11 +43,11 @@ object LockScripts:
    */
   def make: ZIO[Commands, RedisFailure, LockScripts] =
     for
-      acquire    <- LockAcquireScript.load
-      grant      <- LockGrantScript.load
-      abandon    <- LockAbandonScript.load
-      tryAcquire <- LockTryScript.load
-      release    <- LockReleaseScript.load
-      refresh    <- LockRefreshScript.load
-      trim       <- LockTrimScript.load
+      acquire    <- AcquireScript.load
+      grant      <- GrantScript.load
+      abandon    <- AbandonScript.load
+      tryAcquire <- TryScript.load
+      release    <- ReleaseScript.load
+      refresh    <- RefreshScript.load
+      trim       <- TrimScript.load
     yield LockScripts(acquire, grant, abandon, tryAcquire, release, refresh, trim)

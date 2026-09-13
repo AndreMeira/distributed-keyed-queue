@@ -7,7 +7,6 @@ import homelab.keyedqueue.domain.model.Acquisition
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.types.LockName
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.script.LockKeys
 import org.testcontainers.containers.GenericContainer
 import zio.*
 import zio.test.*

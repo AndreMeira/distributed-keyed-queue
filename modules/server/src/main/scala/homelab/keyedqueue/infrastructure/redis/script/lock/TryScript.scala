@@ -1,4 +1,4 @@
-package homelab.keyedqueue.infrastructure.redis.script
+package homelab.keyedqueue.infrastructure.redis.script.lock
 
 
 import homelab.common.error.ApplicationError
@@ -9,12 +9,13 @@ import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection
 import io.lettuce.core.ScriptOutputType
 import homelab.keyedqueue.infrastructure.redis.script.Codecs.given
+import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import zio.*
 
 import java.time.Instant
 
 
-object LockTryScript:
+object TryScript:
 
   type Input   = (name: LockName, ttl: Duration)
   type Granted = (token: Token, leaseUntil: Instant)

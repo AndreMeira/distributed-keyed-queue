@@ -26,7 +26,7 @@ object KeyLayout:
 
   /**
    * The shape of everything this code stores: the queue's and the lock's structures, the encodings written
-   * into them, and [[Namespace.partitions]]. '''Bump it on any change an older instance would misread''' — a
+   * into them, and [[QueueKeys.partitions]]. '''Bump it on any change an older instance would misread''' — a
    * structure changing type, a field changing meaning, an encoding changing form, the partition constant
    * changing. That is a review discipline, not something the code can detect; an unbumped version makes
    * the check vouch for a compatibility that is not there.
@@ -80,10 +80,9 @@ object KeyLayout:
     for
       previous <- recorded
       _        <- record
-      _        <- ZIO.logInfo(
+      _        <- ZIO.logInfo:
                     s"layout accepted: schema ${previous.getOrElse("unset")} -> $schemaVersion. " +
                       "Start instances only now: a running instance checks its layout at boot and never again."
-                  )
     yield ()
 
   /**

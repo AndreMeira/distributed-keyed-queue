@@ -1,4 +1,4 @@
-package homelab.keyedqueue.infrastructure.redis.script
+package homelab.keyedqueue.infrastructure.redis.script.lock
 
 
 import homelab.common.error.ApplicationError
@@ -7,10 +7,11 @@ import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection
 import io.lettuce.core.ScriptOutputType
 import homelab.keyedqueue.infrastructure.redis.script.Codecs.given
+import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import zio.*
 
 
-object LockReleaseScript:
+object ReleaseScript:
 
   type Input  = (name: LockName, token: Token)
   type Output = Boolean

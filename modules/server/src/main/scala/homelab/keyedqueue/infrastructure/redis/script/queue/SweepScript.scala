@@ -1,4 +1,4 @@
-package homelab.keyedqueue.infrastructure.redis.script
+package homelab.keyedqueue.infrastructure.redis.script.queue
 
 
 import homelab.common.error.ApplicationError
@@ -6,15 +6,16 @@ import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands
-import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, QueueKeys }
 import io.lettuce.core.ScriptOutputType
 import homelab.keyedqueue.infrastructure.redis.script.Codecs.given
+import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import zio.*
 
 
 object SweepScript:
 
-  type Input  = (ns: Namespace, limit: Int)
+  type Input  = (ns: QueueKeys, limit: Int)
   type Output = QueueStore.Swept
 
   /**

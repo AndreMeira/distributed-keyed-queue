@@ -1,12 +1,13 @@
-package homelab.keyedqueue.infrastructure.redis.script
+package homelab.keyedqueue.infrastructure.redis.script.queue
 
 
 import homelab.keyedqueue.domain.model.{ Claim, Grant, Message }
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
-import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace, RedisFailure }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, QueueKeys, RedisFailure }
 import io.lettuce.core.ScriptOutputType
 import homelab.keyedqueue.infrastructure.redis.script.Codecs.given
+import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import zio.*
 
 import java.time.Instant
@@ -14,7 +15,7 @@ import java.time.Instant
 
 object ClaimScript:
 
-  type Input   = (ns: Namespace, leaseTtl: Duration, maxBatch: Int)
+  type Input   = (ns: QueueKeys, leaseTtl: Duration, maxBatch: Int)
   type Claimed = (key: MessageKey, token: Token, deadline: Instant, backlog: Int, batch: NonEmptyChunk[Grant.Owned])
   type Output  = Option[Claimed]
 
