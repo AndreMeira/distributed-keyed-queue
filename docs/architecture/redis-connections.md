@@ -8,23 +8,25 @@ tags: [redis, lettuce, connections, threads, zio, latency, measurement]
 
 # Connections and threads
 
-Two connections on a single server — the shared one, and the one the listener blocks on; on a cluster,
-one per slot group instead, since a blocked read occupies its connection whole and a cluster refuses
-one command spanning slots. All of them are opened by `Connection.make` at startup, so the count is fixed
-before anything serves. A synchronous client, and `ZIO.attemptBlocking` around every call. All three look
-like
-things to apologise for, and this page is the measurement that says they are not.
+One shared connection plus one per group of wake streams a single command may name — two in all on a
+single server, where there is one group; on a cluster, one per slot. A blocked read occupies its connection
+whole, and a cluster refuses one command spanning slots, so the listener cannot share. All of them are
+opened by `Connection.make` at startup, so the count is fixed before anything serves. A synchronous client,
+and `ZIO.attemptBlocking` around every call. All of it looks like things to apologise for, and this page is
+the measurement that says they are not.
 
 ## The model
 
-`Connection` holds exactly two:
+`Connection` holds one shared connection and one per group:
 
 - **A shared one** for everything that answers immediately — every claim, settle, heartbeat and sweep is a
   single `EVALSHA`. Lettuce connections are safe to use from many threads and pipeline what they are given,
   so one serves the whole instance.
-- **An exclusive one** for the listener's `XREAD … BLOCK`, which parks for as long as it is told. Sharing it
-  would put every claim and settle behind that read, and its command timeout is deliberately set above the
-  longest block so Lettuce does not abandon a read that is doing what it was asked to.
+- **One per group of wake streams** for the listener's `XREAD … BLOCK`, which parks for as long as it is
+  told. Sharing would put every claim and settle behind that read, and its command timeout is deliberately
+  set above the longest block so Lettuce does not abandon a read that is doing what it was asked to. A group
+  is what one command may name: on a single server that is every wake stream, so one connection; on a
+  cluster it is one slot's worth, since a cluster refuses a command spanning slots.
 
 Nothing else is pooled, because nothing else waits.
 

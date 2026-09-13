@@ -88,8 +88,9 @@ story. Nothing else can be holding a key.
 offered when an entry naming that queue arrives on its partition's `wake` stream — appended by whatever next
 makes a key claimable. A token wakes '''one''' consumer, which claims and hands the token on if it found
 work, so a burst drains one consumer at a time instead of waking all of them for one key. That wait costs a
-fiber, not a connection: one listener per instance reads every partition on one connection, from startup, so a
-queue nobody has asked for yet is heard as promptly as a busy one.
+fiber, not a connection: one listener per instance reads the partitions from startup — on a single server
+that is every one of them on a single connection, on a cluster one connection per slot — so a queue nobody
+has asked for yet is heard as promptly as a busy one.
 
 ---
 

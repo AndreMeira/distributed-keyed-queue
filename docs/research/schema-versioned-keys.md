@@ -9,7 +9,7 @@ tags: [schema, migration, layout, keys, hash-tag, versioning]
 # Schema-versioned keys
 
 Every key dkq writes carries the schema version between the hash tag and the rest of the name —
-`{w:3}:v1:q:jobs:ready`, `{dkq:locks}:v1:held`. This note records why, and sketches the migration model it
+`{p:3}:v1:q:jobs:ready`, `{dkq:locks}:v1:held`. This note records why, and sketches the migration model it
 enables but does not yet build.
 
 ## The problem it solves
@@ -25,13 +25,13 @@ Two attempts failed for the same root cause:
   longer knows. It would have found nothing and vouched for a drain that did not happen.
 
 The missing principle: **the convention must outlive the shapes.** With the version in every key, "what
-does schema N own" is answerable by pattern — `{w:*}:vN:*` — by any later version, knowing nothing about
+does schema N own" is answerable by pattern — `{p:*}:vN:*` — by any later version, knowing nothing about
 N's structures. Ownership across versions becomes a fact of the store instead of a memory of the code.
 
 ## Placement is load-bearing
 
 The version sits **after** the hash tag, never inside it. A key's incarnations under different schemas —
-`{w:3}:v1:…` and `{w:3}:v2:…` — therefore share a slot, so one Lua script can read v1 and write v2
+`{p:3}:v1:…` and `{p:3}:v2:…` — therefore share a slot, so one Lua script can read v1 and write v2
 **atomically**. Version inside the tag would scatter old and new across cluster nodes and turn every
 migration step into a two-phase crash window.
 
