@@ -25,9 +25,23 @@ import zio.*
  */
 final class Broadcast(waiting: Ref[Map[QueueName, Set[Queue[Unit]]]]) extends Waker:
 
+  /**
+   * Wake every waiter parked on this name.
+   *
+   * Reaches the mailboxes subscribed at this moment and no others — a wake nobody is waiting for is
+   * dropped, which the lock can afford because a waiter subscribes before it enters.
+   *
+   * @param queue what became ready
+   * @return noop
+   */
   override def ready(queue: QueueName): UIO[Unit] =
     waiting.get.flatMap(current => ZIO.foreachDiscard(current.getOrElse(queue, Set.empty))(_.offer(()).unit))
 
+  /**
+   * Wake every waiter this instance holds, whatever they wait on — the listener's error path.
+   *
+   * @return noop
+   */
   override def readyAll: UIO[Unit] =
     waiting.get.flatMap(current => ZIO.foreachDiscard(current.keys)(ready))
 
