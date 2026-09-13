@@ -227,8 +227,7 @@ final class RedisLockStore(
         connection
           .provide(scripts.grant.execute(acquisition.name, id, acquisition.ttl))
           .flatMap:
-            case GrantScript.Asked.Granted(token, until) =>
-              ZIO.some(hold(acquisition.name)((token = token, leaseUntil = until)))
+            case GrantScript.Asked.Granted(token, until) => ZIO.some(hold(acquisition.name)(token, until))
             case GrantScript.Asked.Wait(delay)           => nextEventIn(delay, recheckAt).as(None)
             case GrantScript.Asked.Gone                  => reenter(acquisition, asked, ticket, recheckAt)
 
@@ -254,13 +253,10 @@ final class RedisLockStore(
     remainingTime(acquisition.patience, asked).flatMap:
       case None       => ZIO.none
       case Some(left) =>
-        connection
-          .provide(scripts.acquire.execute(acquisition.name, acquisition.ttl, left))
-          .flatMap:
-            case AcquireScript.Entered.Granted(token, until)  =>
-              ZIO.some(hold(acquisition.name)((token = token, leaseUntil = until)))
-            case AcquireScript.Entered.Queued(fresh, recheck) =>
-              ticket.set(fresh) *> nextEventIn(recheck, recheckAt).as(None)
+        connection.provide(scripts.acquire.execute(acquisition.name, acquisition.ttl, left)).flatMap {
+          case AcquireScript.Entered.Granted(token, until)  => ZIO.some(hold(acquisition.name)(token, until))
+          case AcquireScript.Entered.Queued(fresh, recheck) => ticket.set(fresh) *> nextEventIn(recheck, recheckAt).as(None)
+        }
 
   /**
    * Note when the answer can next change.

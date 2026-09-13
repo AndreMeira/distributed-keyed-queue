@@ -30,7 +30,7 @@ import scala.jdk.CollectionConverters.*
  * beside work it asked for.
  *
  * @param groups the connections to block on, each with the streams one read may name
- * @param routes wake stream -> the readiness its entries wake
+ * @param routes wake stream -> the waker its entries wake
  * @param positions wake stream -> the last entry id delivered from it; the key set never changes
  * @param block how long one read waits before going round again
  */
@@ -42,14 +42,14 @@ final class WakeListener(
 ):
 
   /**
-   * Read the wake streams forever, routing each entry to its readiness.
+   * Read the wake streams forever, routing each entry to its waker.
    *
    * '''Supervised, because a dead listener is silent.''' A failed read is retried rather than killing the
    * fiber: a stopped listener leaves every waiter here parked beside work that is ready.
    *
    * '''A failure re-announces everything before retrying.''' Entries can be trimmed while a reader is away
    * and `XREAD` does not report stepping over any, so after a failure the safe assumption is that something
-   * was missed — every readiness served is told to re-look. The backoff is short: it is the one interval a
+   * was missed — every waker served is told to re-look. The backoff is short: it is the one interval a
    * waiter actually waits on.
    *
    * @return never completes
@@ -75,12 +75,12 @@ final class WakeListener(
       .forever
 
   /**
-   * One `XREAD` across this group's streams, resuming from where each was left, paired with the readiness
+   * One `XREAD` across this group's streams, resuming from where each was left, paired with the waker
    * each entry belongs to.
    *
    * @param commands the group's connection
    * @param streams the streams it reads
-   * @return the (readiness, name) wakes the entries carry, one per entry
+   * @return the waker each entry belongs to, with the name it carried, unread
    */
   private def read(
     commands: Connection.Commands,
@@ -113,9 +113,9 @@ final class WakeListener(
       .mapBoth(LuaScript.failure, reply => Option(reply).map(_.asScala.toList).getOrElse(Nil))
 
   /**
-   * Deliver each wake to its readiness, once.
+   * Deliver each wake to its waker, once — each reading the name as its own kind.
    *
-   * @param woken the (readiness, name) pairs this batch carried
+   * @param woken the waker and raw name this batch carried, one pair per entry
    * @return noop
    */
   private def announce(woken: Chunk[(Waker, String)]): UIO[Unit] =

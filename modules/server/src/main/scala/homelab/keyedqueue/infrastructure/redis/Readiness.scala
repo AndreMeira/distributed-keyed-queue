@@ -38,6 +38,14 @@ import zio.*
 final class Readiness(queues: Ref[Map[Waker.Name, Queue[Unit]]]) extends Waker:
 
   /**
+   * Read a name as a queue's, which is all this sink ever wakes.
+   *
+   * @param raw the name as the entry carried it
+   * @return it, as a queue name
+   */
+  override def name(raw: String): Waker.Name = QueueName(raw)
+
+  /**
    * Announce that a queue may have work.
    *
    * Repeated announcements with nobody waiting collapse into one, which is sound because a consumer claims
@@ -46,8 +54,6 @@ final class Readiness(queues: Ref[Map[Waker.Name, Queue[Unit]]]) extends Waker:
    * @param queue what became claimable
    * @return noop
    */
-  override def name(raw: String): Waker.Name = QueueName(raw)
-
   override def ready(queue: Waker.Name): UIO[Unit] =
     buffer(queue).flatMap(_.offer(())).unit
 
