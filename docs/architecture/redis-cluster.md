@@ -69,9 +69,10 @@ reason the global counter was: a fence need only increase within a single lock, 
 partition.
 
 Nothing says which slot a given tag lands in, which is why the streams are grouped by *computed* slot
-rather than by kind or by partition. That grouping lives in
-`Connection`, which is what knows whether the store is a cluster: it opens one connection per group of streams
-that a single command may name, at startup, and the listener runs a fiber on each.
+rather than by kind or by partition. What may be grouped is `KeyLayout`'s to say — it is the one thing that
+knows both the partition count and whether the store is a cluster, and the only part of it allowed to know
+the latter, since a key's own partition must come out the same on either deployment. `Connection` opens one
+connection per group it reports, at startup, and the listener runs a fiber on each.
 
 A partition's keys hash to one slot, and **every script touches exactly one queue, whose keys are all in its
 partition's slot** — which is what makes the Lua legal at all, since a script may only reach keys in a single

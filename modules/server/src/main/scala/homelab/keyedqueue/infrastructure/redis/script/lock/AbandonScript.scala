@@ -1,8 +1,8 @@
 package homelab.keyedqueue.infrastructure.redis.script.lock
 
 
-import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.types.*
+import homelab.keyedqueue.infrastructure.redis.keys.LockKeys
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection
 import io.lettuce.core.ScriptOutputType
@@ -13,7 +13,7 @@ import zio.*
 
 object AbandonScript:
 
-  type Input  = (name: LockName, ticket: Long)
+  type Input  = (keys: LockKeys, name: LockName, ticket: Long)
   type Output = Boolean
 
   /**

@@ -23,6 +23,9 @@ import zio.test.*
  */
 object DistributedLockSpec extends ZIOSpecDefault:
 
+  /** The layout these tests read and write under — their Redis is a single server, so nothing groups by slot. */
+  private val layout: KeyLayout = KeyLayout.of(cluster = false)
+
   private val leaseTtl = 2.seconds
 
   private val substrate: ZLayer[Any, Any, DistributedLock] =
@@ -46,14 +49,14 @@ object DistributedLockSpec extends ZIOSpecDefault:
     for
       connection <- Connection.make(
                       Connection.Config(config.maxWait, config.redisUrl, config.cluster),
-                      KeyLayout.wakeStreams.toChunk,
+                      layout,
                     )
       scripts    <- connection.provide(QueueScripts.make)
       readiness  <- QueueReadiness.make
       lockReady  <- LockReadiness.make
-      listener   <- ReadinessListener.make(connection, config.wakeBlock, readiness, lockReady)
+      listener   <- ReadinessListener.make(connection, config.wakeBlock, layout, readiness, lockReady)
       _          <- listener.run.forkScoped
-      store      <- RedisQueueStore.make(Monitor.Noop, connection, scripts, readiness, config.leaseTtl)
+      store      <- RedisQueueStore.make(Monitor.Noop, connection, scripts, readiness, layout, config.leaseTtl)
     yield store
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("DistributedLock")(

@@ -1,6 +1,8 @@
 package homelab.keyedqueue.infrastructure.redis
 
+
 import homelab.common.error.ApplicationError
+import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
 
 
 /**
@@ -27,8 +29,9 @@ enum RedisFailure extends ApplicationError.AdapterError:
   /** A script returned something this code does not know how to read — a defect, not a runtime condition. */
   case MalformedReply(reason: String) extends RedisFailure, ApplicationError.ImplementationError
 
-  /**   */
   case DecodingError(reason: String) extends RedisFailure, ApplicationError.DecodingError
+
+  case GroupConnectionMissing(group: KeyLayout.GroupId) extends RedisFailure, ApplicationError.ImplementationError
 
   /**
    * What to tell a human. Phrased in terms of the queue rather than of Redis, because a reason can reach a
@@ -37,6 +40,7 @@ enum RedisFailure extends ApplicationError.AdapterError:
    * @return the message
    */
   override def message: String = this match
-    case Unavailable(reason)    => s"The queue store is unavailable: $reason"
-    case MalformedReply(reason) => s"The queue store replied with something unreadable: $reason"
-    case DecodingError(reason)  => s"Failed to decode Lua script output: $reason"
+    case Unavailable(reason)             => s"The queue store is unavailable: $reason"
+    case MalformedReply(reason)          => s"The queue store replied with something unreadable: $reason"
+    case DecodingError(reason)           => s"Failed to decode Lua script output: $reason"
+    case GroupConnectionMissing(groupId) => s"No connection found for ${groupId}"

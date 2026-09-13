@@ -22,15 +22,13 @@ import homelab.keyedqueue.domain.types.*
  * in flight goes unheard until that read returns. A fixed set of partitions is heard from the first read
  * onwards, which takes the block off the latency path entirely.
  *
+ * @param tag the hash tag of the partition these keys fall in
  * @param queue the queue these keys belong to
  */
-final case class QueueKeys(queue: QueueName):
-
-  /** Which partition this queue falls in, and therefore which slot and which wake stream it uses. */
-  val partition: Int = KeyLayout.partitionOf(queue)
+final case class QueueKeys(tag: KeyLayout.Tag, queue: QueueName):
 
   /** The tag every key shares, and what the scripts rebuild the per-key names from. */
-  val prefix: String = s"${KeyLayout.tag(partition)}:${KeyLayout.segment}:q:$queue"
+  val prefix: String = s"$tag:${KeyLayout.segment}:q:$queue"
 
   /**
    * Keys with work and nobody working them, scored by when each became claimable.
@@ -61,7 +59,7 @@ final case class QueueKeys(queue: QueueName):
    * The stream this queue announces on: one entry per key made claimable, appended by the same script
    * that made it so, and shared with every other queue in the partition.
    */
-  val wake: RedisKey = KeyLayout.wake(partition)
+  val wake: RedisKey = KeyLayout.wakeStreamKey(tag)
 
   /** key -> when a failed message may be retried. */
   val delayed: RedisKey = RedisKey(s"$prefix:delayed")

@@ -1,8 +1,8 @@
 package homelab.keyedqueue.infrastructure.redis.script.lock
 
 
-import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.types.*
+import homelab.keyedqueue.infrastructure.redis.keys.LockKeys
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection
 import io.lettuce.core.ScriptOutputType
@@ -13,7 +13,7 @@ import zio.*
 
 object TrimScript:
 
-  type Input  = (partition: Int, grace: Duration, limit: Int)
+  type Input  = (keys: LockKeys, grace: Duration, limit: Int)
   type Output = Chunk[LockName]
 
   /**

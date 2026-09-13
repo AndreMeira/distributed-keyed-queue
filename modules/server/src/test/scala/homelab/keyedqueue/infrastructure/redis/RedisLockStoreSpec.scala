@@ -23,6 +23,9 @@ import zio.test.*
  */
 object RedisLockStoreSpec extends ZIOSpecDefault:
 
+  /** The layout these tests read and write under — their Redis is a single server, so nothing groups by slot. */
+  private val layout: KeyLayout = KeyLayout.of(cluster = false)
+
   private val ttl = 1.second
 
   /** An acquisition for a name — patience defaults to none, which `tryAcquire` ignores anyway. */
@@ -55,12 +58,12 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
     for
       connection <- Connection.make(
                       Connection.Config(config.maxWait, config.redisUrl, config.cluster),
-                      KeyLayout.wakeStreams.toChunk,
+                      layout,
                     )
       readiness  <- LockReadiness.make
       queueReady <- QueueReadiness.make
-      store      <- connection.provide(RedisLockStore.make(Monitor.Noop, connection, readiness))
-      listener   <- ReadinessListener.make(connection, config.wakeBlock, queueReady, readiness)
+      store      <- connection.provide(RedisLockStore.make(Monitor.Noop, connection, readiness, layout))
+      listener   <- ReadinessListener.make(connection, config.wakeBlock, layout, queueReady, readiness)
       _          <- listener.run.forkScoped
     yield store
 

@@ -167,6 +167,8 @@ them. See [`redis-cluster.md`](redis-cluster.md).
 
 ## The lock's structures
 
+What moves between them is [`lock-mechanics.md`](lock-mechanics.md).
+
 The lock API shares the store but none of the queue's structures. Everything it owns is prefixed
 `{p:<partition>}:v3:l`, where the partition is `hash(lock) % 16` — the queue's tag space, so a lock's keys
 and the stream announcing it hash to one slot and a script may touch them together

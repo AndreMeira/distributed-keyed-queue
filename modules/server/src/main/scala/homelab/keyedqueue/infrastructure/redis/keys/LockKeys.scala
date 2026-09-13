@@ -1,8 +1,6 @@
 package homelab.keyedqueue.infrastructure.redis.keys
 
-
 import homelab.keyedqueue.domain.types.LockName
-import zio.Chunk
 
 
 /**
@@ -23,12 +21,12 @@ import zio.Chunk
  * lock's own: `held` and `tokens` carry the name as a member or field. Only `waiters` is a key per lock,
  * and it exists only while someone queues.
  *
- * @param partition which partition these keys belong to
+ * @param tag the hash tag of the partition these keys belong to
  */
-final case class LockKeys(partition: Int):
+final case class LockKeys(tag: KeyLayout.Tag):
 
   /** The tag every key in this partition shares. */
-  private val prefix: String = s"${KeyLayout.tag(partition)}:${KeyLayout.segment}:l"
+  private val prefix: String = s"$tag:${KeyLayout.segment}:l"
 
   /** Held leases, `name -> deadline`. */
   val held: RedisKey = RedisKey(s"$prefix:held")
@@ -51,7 +49,7 @@ final case class LockKeys(partition: Int):
   val waitersPrefix: String = s"$prefix:waiters:"
 
   /** The wake stream a release appends to, read by the shared listener. */
-  val wake: RedisKey = KeyLayout.wake(partition)
+  val wake: RedisKey = KeyLayout.wakeStreamKey(tag)
 
   /**
    * One lock's waiters list: its tickets, in arrival order. Exists only while someone queues.
@@ -86,21 +84,3 @@ final case class LockKeys(partition: Int):
 
   /** `held`, `tokens`, `wake`, `waiting` — a trim frees abandoned holds and deletes dead waiter lists. */
   val trim: Array[String] = Array(held, tokens, wake, waiting)
-
-
-object LockKeys:
-
-  /**
-   * The keys of the partition a lock falls in.
-   *
-   * @param name the lock
-   * @return its partition's keys
-   */
-  def of(name: LockName): LockKeys = LockKeys(KeyLayout.partitionOf(name))
-
-  /**
-   * Every partition's keys, for the passes that are not about one lock — the trim, which sweeps them all.
-   *
-   * @return the keys, in partition order
-   */
-  val all: Chunk[LockKeys] = Chunk.fromIterable(0 until KeyLayout.partitions).map(LockKeys(_))

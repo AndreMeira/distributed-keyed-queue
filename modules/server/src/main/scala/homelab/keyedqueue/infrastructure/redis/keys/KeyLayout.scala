@@ -2,12 +2,111 @@ package homelab.keyedqueue.infrastructure.redis.keys
 
 
 import homelab.common.error.ApplicationError
+import homelab.keyedqueue.domain.types.{ LockName, QueueName }
 import homelab.keyedqueue.infrastructure.configuration.Misconfigured
 import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisFailure }
 import io.lettuce.core.SetArgs
+import io.lettuce.core.cluster.SlotHash
 import zio.*
 
 import java.nio.charset.StandardCharsets
+
+
+/**
+ * How one deployment divides its keys: which partition a name falls in, the keys that follow from it, and
+ * which of them a single command may name together.
+ *
+ * '''The partition of a name must not depend on the deployment.''' It is written into every key as a hash
+ * tag, so an instance computing it differently would look for keys in a partition they were never written
+ * to — and nothing would report it, the schema marker being about shape rather than placement. [[groupOf]]
+ * is the one member allowed to know whether this is a cluster.
+ *
+ * @param partitions how many partitions this deployment is divided into
+ * @param cluster whether the store is a Redis Cluster
+ */
+final case class KeyLayout(partitions: Int, cluster: Boolean):
+
+  /** Each partition's tag, in partition order. */
+  private val tags: Chunk[KeyLayout.Tag] =
+    Chunk
+      .fromIterable(0 until partitions)
+      .map(KeyLayout.Tag(_))
+
+  /**
+   * Which partition a name falls in, whatever kind of thing it names.
+   *
+   * `String`'s hash is specified by the JVM, so every instance agrees on where a name lives without being
+   * told. `floorMod`, because a negative hash would otherwise produce a negative partition.
+   *
+   * @param name the queue or lock name
+   * @return the partition
+   */
+  def partitionOf(name: String): Int = 
+    Math.floorMod(name.hashCode, partitions)
+
+  /**
+   * The keys a queue owns.
+   *
+   * @param name the queue
+   * @return its keys
+   */
+  def queue(name: QueueName): QueueKeys = 
+    QueueKeys(KeyLayout.Tag(partitionOf(name)), name)
+
+  /**
+   * The keys of the partition a lock falls in.
+   *
+   * @param name the lock
+   * @return its partition's keys
+   */
+  def lock(name: LockName): LockKeys = 
+    LockKeys(KeyLayout.Tag(partitionOf(name)))
+
+  /**
+   * Every partition's lock keys — for the passes that are not about one lock, the trim sweeping them all.
+   *
+   * @return the keys, in partition order
+   */
+  val locks: Chunk[LockKeys] = tags.map(LockKeys(_))
+
+  /**
+   * Every wake stream in the deployment — the fixed set a listener reads, and so what decides how many
+   * connections it holds on a cluster.
+   *
+   * Fixed is the point: the set is known before any queue or lock is served, so no read is ever re-issued
+   * because a caller arrived for a name nobody had asked for yet.
+   *
+   * @return the stream names, in partition order
+   */
+  val wakeStreamKeys: NonEmptyChunk[RedisKey] =
+    NonEmptyChunk
+      .fromChunk(tags.map(KeyLayout.wakeStreamKey))
+      .getOrElse(NonEmptyChunk(KeyLayout.wakeStreamKey(KeyLayout.Tag(0))))
+
+  /**
+   * The distinct groups this deployment's wake streams fall into — one blocking connection each.
+   *
+   * Sixteen on a cluster, where every partition's tag hashes to its own slot; one on a single server,
+   * which has no slots and so reads every stream with one command.
+   *
+   * @return the ids, each naming a set that may be read together
+   */
+  val groupIds: Chunk[KeyLayout.GroupId] = 
+    wakeStreamKeys.toChunk.map(groupOf).distinct
+
+  /**
+   * Which keys may be named together in one command — equal ids may, different ids may not.
+   *
+   * On a cluster that is the slot, since Redis refuses a multi-key command spanning slots even when those
+   * slots share a server. A single server has no slots and so has one id for everything, which is what
+   * collapses sixteen blocking reads into one.
+   *
+   * @param key the key
+   * @return the id of the set it may be named with
+   */
+  def groupOf(key: RedisKey): KeyLayout.GroupId =
+    if cluster then KeyLayout.GroupId(SlotHash.getSlot(key))
+    else KeyLayout.GroupId(0)
 
 
 /**
@@ -46,7 +145,7 @@ object KeyLayout:
   val segment: String = s"v$schemaVersion"
 
   /**
-   * How many partitions the deployment is divided into — fixed in code, not configured.
+   * How many partitions a deployment is divided into unless it says otherwise.
    *
    * The count is a ceiling on spread (at most this many cluster nodes ever hold this service's data) but a
    * floor on overhead (the listener names every partition's stream in every read and holds a connection per
@@ -59,48 +158,66 @@ object KeyLayout:
    *
    * '''Part of the schema.''' Changing it moves names between tags and strands whatever was written under
    * the old count, so a change here is a change to the shape of stored data — bump [[schemaVersion]] with
-   * it, and the boot check turns the stranding into a refusal.
+   * it, and the boot check turns the stranding into a refusal. What the check covers is this '''constant''',
+   * not the count an instance was built with: two instances given different counts would strand each
+   * other's keys with nothing to notice, so a count that ever comes from configuration has to be recorded
+   * in the marker alongside the version.
    */
   val partitions: Int = 16
 
   /**
-   * The hash tag a partition's keys share.
-   *
-   * @param partition the partition
-   * @return the tag, braces included, so Redis hashes only what is inside them
+   * The hash tag a partition's keys share — the only part of a key Redis hashes, so keys carrying the same
+   * one are guaranteed the same slot.
    */
-  def tag(partition: Int): String = s"{p:$partition}"
+  type Tag = Tag.Type
+
+  object Tag:
+
+    opaque type Type <: String = String
+
+    /**
+     * A partition's tag.
+     *
+     * @param partition the partition
+     * @return the tag, braces included
+     */
+    def apply(partition: Int): Type = s"{p:$partition}"
 
   /**
-   * Which partition a name falls in, whatever kind of thing it names.
+   * Which keys one command may name together: equal ids may, different ids may not.
    *
-   * `String`'s hash is specified by the JVM, so every instance agrees on where a name lives without being
-   * told. `floorMod`, because a negative hash would otherwise produce a negative partition.
-   *
-   * @param name the queue or lock name
-   * @return the partition
+   * Named, because it is a slot on a cluster and a single constant on a server that has none — a caller
+   * reading either number as meaningful would be reading something that is only ever compared.
    */
-  def partitionOf(name: String): Int = Math.floorMod(name.hashCode, partitions)
+  type GroupId = GroupId.Type
+
+  object GroupId:
+
+    opaque type Type <: Int = Int
+
+    /**
+     * An id, trusted.
+     *
+     * @param value what distinguishes this group from the others
+     * @return the id
+     */
+    def apply(value: Int): Type = value
 
   /**
-   * A partition's wake stream — one stream per partition, carrying every kind of wake it announces.
+   * A partition's wake stream — one per partition, carrying every kind of wake it announces.
    *
-   * @param partition the partition
+   * @param tag the partition's tag
    * @return the stream name
    */
-  def wake(partition: Int): RedisKey = RedisKey(s"${tag(partition)}:$segment:wake")
+  def wakeStreamKey(tag: Tag): RedisKey = RedisKey(s"$tag:$segment:wake")
 
   /**
-   * Every wake stream in the deployment — the fixed set a listener reads, and so the count that decides how
-   * many connections it holds on a cluster.
+   * The layout of a deployment that takes the partition count as it comes.
    *
-   * Fixed is the point: the set is known before any queue or lock is served, so no read is ever re-issued
-   * because a caller arrived for a name nobody had asked for yet.
-   *
-   * @return the stream names, in partition order
+   * @param cluster whether the store is a Redis Cluster
+   * @return the layout
    */
-  val wakeStreams: NonEmptyChunk[RedisKey] =
-    NonEmptyChunk.fromChunk(Chunk.fromIterable(0 until partitions).map(wake)).getOrElse(NonEmptyChunk(wake(0)))
+  def of(cluster: Boolean): KeyLayout = KeyLayout(partitions, cluster)
 
   /**
    * Check this code's schema against the store's, recording it on a first boot.

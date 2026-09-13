@@ -1,9 +1,8 @@
 package homelab.keyedqueue.infrastructure.redis
 
 
-import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.types.{ LockName, QueueName }
-import homelab.keyedqueue.infrastructure.redis.keys.RedisKey
+import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, RedisKey }
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import io.lettuce.core.XReadArgs.StreamOffset
 import io.lettuce.core.{ Limit, Range, XReadArgs }
@@ -39,14 +38,16 @@ import scala.jdk.CollectionConverters.*
  * costs nothing; pub/sub would lose whatever arrived while it was away, and a lost wake is a waiter asleep
  * beside work it asked for.
  *
- * @param groups the connections to block on, each with the streams one read may name
+ * @param connection the blocking connections this reads on
+ * @param layout which streams there are, and which of them one read may name together
  * @param queueReady where queue wakes go
  * @param lockReady where lock wakes go
  * @param positions wake stream -> the last entry id delivered from it; the key set never changes
  * @param block how long one read waits before going round again
  */
 final class ReadinessListener(
-  groups: Chunk[Connection.Group],
+  connection: Connection,
+  layout: KeyLayout,
   queueReady: QueueReadiness,
   lockReady: LockReadiness,
   positions: Ref[Map[RedisKey, ReadinessListener.EntryId]],
@@ -66,18 +67,31 @@ final class ReadinessListener(
    *
    * @return never completes
    */
-  def run: UIO[Nothing] =
-    ZIO.foreachParDiscard(groups)(loop) *> ZIO.never
+  def run: IO[RedisFailure, Nothing] = {
+    val streams = layout.wakeStreamKeys.toChunk.groupBy(layout.groupOf)
+    ZIO.foreachParDiscard(streams)(loop) *> ZIO.never
+  }
 
   /**
    * One group's read loop, forever.
    *
-   * @param group the connection to block on, and the streams one read may name
+   * @param group a group id, and the streams of this listener's that fall in it
    * @return never completes
    */
-  private def loop(group: Connection.Group): UIO[Unit] =
-    val Connection.Group(commands, streams) = group
-    read(commands, streams)
+  private def loop(group: (KeyLayout.GroupId, Chunk[RedisKey])): IO[RedisFailure, Unit] = {
+    val (id, streams) = group
+    connection.useBlocking(id)(reading(_, streams))
+  }
+
+  /**
+   * Read these streams on this connection, forever.
+   *
+   * @param commands the connection to block on
+   * @param streams what one `XREAD` on it names
+   * @return never completes
+   */
+  private def reading(commands: Connection.Commands, streams: Chunk[RedisKey]): UIO[Unit] =
+    poll(commands, streams)
       .flatMap(announce)
       .catchAll: error =>
         // Announce-all is the safe recovery for a missed read — but a reader that lands here every round
@@ -94,7 +108,7 @@ final class ReadinessListener(
    * @param streams the streams it reads
    * @return what the entries announce; one naming no known kind is dropped
    */
-  private def read(
+  private def poll(
     commands: Connection.Commands,
     streams: Chunk[RedisKey],
   ): IO[RedisFailure, Chunk[ReadinessListener.Kind]] =
@@ -119,8 +133,15 @@ final class ReadinessListener(
     offsets: Array[StreamOffset[String]],
   ): IO[RedisFailure, List[io.lettuce.core.StreamMessage[String, Array[Byte]]]] =
     ZIO
-      .attemptBlocking(commands.xread(XReadArgs.Builder.block(block.toMillis).count(ReadinessListener.count), offsets*))
-      .mapBoth(LuaScript.failure, reply => Option(reply).map(_.asScala.toList).getOrElse(Nil))
+      .attemptBlocking:
+        val arg = XReadArgs.Builder
+          .block(block.toMillis)
+          .count(ReadinessListener.count)
+        commands.xread(arg, offsets*)
+      .mapBoth(
+        LuaScript.failure,
+        reply => Option(reply).map(_.asScala.toList).getOrElse(Nil),
+      )
 
   /**
    * Deliver each wake to its waker, once.
@@ -261,8 +282,9 @@ object ReadinessListener:
    * would be a bug: it is re-evaluated by each read, so anything appended between two reads would be stepped
    * over. Resolving once means every read asks for "after the last entry I actually saw".
    *
-   * @param connection whose groups this listens on, and whose shared connection resolves the positions
+   * @param connection the blocking connections to read on, and the shared one that resolves the positions
    * @param block how long one read waits before going round again
+   * @param layout which streams there are, and which of them one read may name together
    * @param queueReady where queue wakes go
    * @param lockReady where lock wakes go
    * @return the listener; aborts with `Unavailable` when a stream's position cannot be read
@@ -270,23 +292,29 @@ object ReadinessListener:
   def make(
     connection: Connection,
     block: Duration,
+    layout: KeyLayout,
     queueReady: QueueReadiness,
     lockReady: LockReadiness,
   ): IO[RedisFailure, ReadinessListener] =
-    positioned(connection).map(ReadinessListener(connection.groups, queueReady, lockReady, _, block))
+    positioned(connection, layout.wakeStreamKeys.toChunk)
+      .map(ReadinessListener(connection, layout, queueReady, lockReady, _, block))
 
   /**
    * Where each stream this listener will read stands right now.
    *
-   * Taken from the groups rather than from `routes`, so what is positioned is exactly what will be read —
-   * there is no third opinion about which streams exist.
+   * Given the same stream set the reads are built from, so what is positioned is exactly what will be read
+   * — there is no second opinion about which streams exist.
    *
-   * @param connection whose groups name the streams, and whose shared connection answers
+   * @param connection whose shared connection answers
+   * @param streams every stream this will read
    * @return the positions, ready to read from; aborts with `Unavailable` when one cannot be read
    */
-  private def positioned(connection: Connection): IO[RedisFailure, Ref[Map[RedisKey, EntryId]]] =
+  private def positioned(
+    connection: Connection,
+    streams: Chunk[RedisKey],
+  ): IO[RedisFailure, Ref[Map[RedisKey, EntryId]]] =
     ZIO
-      .foreach(connection.groups.flatMap(_.keys))(stream => position(connection.sync, stream).map(stream -> _))
+      .foreach(streams)(stream => position(connection.sync, stream).map(stream -> _))
       .flatMap(resolved => Ref.make(resolved.toMap))
 
   /**

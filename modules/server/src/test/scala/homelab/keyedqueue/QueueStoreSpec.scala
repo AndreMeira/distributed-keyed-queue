@@ -9,7 +9,7 @@ import homelab.keyedqueue.domain.model.Settlement.Verdict
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, QueueKeys }
+import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
 import homelab.keyedqueue.infrastructure.redis.script.QueueScripts
 import homelab.keyedqueue.infrastructure.redis.{ Connection, LockReadiness, QueueReadiness, RedisQueueStore, ReadinessListener }
 import io.lettuce.core.cluster.api.sync.RedisClusterCommands
@@ -26,6 +26,9 @@ import zio.test.*
  * a second substrate has to pass them unchanged.
  */
 object QueueStoreSpec extends ZIOSpecDefault:
+
+  /** The layout these tests read and write under — their Redis is a single server, so nothing groups by slot. */
+  private val layout: KeyLayout = KeyLayout.of(cluster = false)
 
   private val leaseTtl = 2.seconds
 
@@ -81,16 +84,16 @@ object QueueStoreSpec extends ZIOSpecDefault:
     for
       connection <- Connection.make(
                       Connection.Config(config.maxWait, config.redisUrl, config.cluster),
-                      KeyLayout.wakeStreams.toChunk,
+                      layout,
                     )
       scripts    <- connection.provide(QueueScripts.make)
       readiness  <- QueueReadiness.make
       lockReady  <- LockReadiness.make
-      listener   <- ReadinessListener.make(connection, config.wakeBlock, readiness, lockReady)
+      listener   <- ReadinessListener.make(connection, config.wakeBlock, layout, readiness, lockReady)
       _          <- listener.run.forkScoped
       // Unobserved: these tests are about what the store does to Redis, and `Noop` keeps the telemetry
       // wiring out of the assertions without changing a single code path.
-      store      <- RedisQueueStore.make(Monitor.Noop, connection, scripts, readiness, config.leaseTtl)
+      store      <- RedisQueueStore.make(Monitor.Noop, connection, scripts, readiness, layout, config.leaseTtl)
     yield (store, connection)
 
   /** A message whose cargo is `body`: these tests care about order and ownership, not about content. */
@@ -327,11 +330,11 @@ object QueueStoreSpec extends ZIOSpecDefault:
         _                  <- ZIO.foreachDiscard(List("a", "b"))(m => worker.enqueue(Submission(queue, message(key, m))))
         held               <- worker.claim(Demand(queue, 2.seconds, 2))
         _                  <- ZIO.foreachDiscard(held)(batch => worker.settle(settlement(batch.claim, acks(batch))))
-        payloads           <- ZIO.attemptBlocking(redis.hlen(QueueKeys(QueueName("cleanup")).payloads(MessageKey("k1")))).orDie
-        owned              <- ZIO.attemptBlocking(redis.scard(QueueKeys(QueueName("cleanup")).owned(MessageKey("k1")))).orDie
+        payloads           <- ZIO.attemptBlocking(redis.hlen(layout.queue(QueueName("cleanup")).payloads(MessageKey("k1")))).orDie
+        owned              <- ZIO.attemptBlocking(redis.scard(layout.queue(QueueName("cleanup")).owned(MessageKey("k1")))).orDie
         // Idle is the absence of the key from every structure — there is no state entry to check any more.
-        claimed            <- ZIO.attemptBlocking(redis.zcard(QueueKeys(QueueName("cleanup")).claimed)).orDie
-        ready              <- ZIO.attemptBlocking(redis.zcard(QueueKeys(QueueName("cleanup")).ready)).orDie
+        claimed            <- ZIO.attemptBlocking(redis.zcard(layout.queue(QueueName("cleanup")).claimed)).orDie
+        ready              <- ZIO.attemptBlocking(redis.zcard(layout.queue(QueueName("cleanup")).ready)).orDie
       yield assertTrue(payloads == 0L, owned == 0L, claimed == 0L, ready == 0L)
     },
     test("a claim reclaimed while a nack's backoff is pending queues its key once, not twice") {
@@ -350,7 +353,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
         // Let the lease lapse and the backoff fall due, then sweep both in one pass.
         _                        <- ZIO.sleep(leaseTtl + 1.second)
         _                        <- sweeper.sweep(queue, 100)
-        ready                    <- ZIO.attemptBlocking(redis.zcard(QueueKeys(queue).ready)).orDie
+        ready                    <- ZIO.attemptBlocking(redis.zcard(layout.queue(queue).ready)).orDie
       yield assertTrue(ready == 1L)
     },
     test("a heartbeat renews what is held and names what is lost") {

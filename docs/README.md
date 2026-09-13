@@ -16,6 +16,8 @@ What is specific to this repo:
     exclusion, the fence, fairness, and what a holder owes.
   - [`research/schema-versioned-keys.md`](research/schema-versioned-keys.md) — why every key carries its
     schema version, and the migration model that stands on it.
+  - [`architecture/lock-mechanics.md`](architecture/lock-mechanics.md) — how the lock works: the three
+    states, the script that performs each move, how a waiter waits, and which class does what.
   - [`architecture/redis-data-structures.md`](architecture/redis-data-structures.md) — what is kept in
     Redis, and what each structure is for.
   - [`architecture/redis-cluster.md`](architecture/redis-cluster.md) — the key layout was built for cluster
@@ -30,6 +32,8 @@ What is specific to this repo:
   And in `learning-material/`:
   - [`claiming-identity.md`](learning-material/claiming-identity.md) — *superseded*: why a claim taken in
     two steps needed an identity, and what removing the second step removed with it.
+  - [`lock-state-walkthrough.md`](learning-material/lock-state-walkthrough.md) — every lock call traced
+    through the keys it touches, from a free lock to a trimmed one.
   - [`redis-state-walkthrough.md`](learning-material/redis-state-walkthrough.md) — every request traced
     through the structures it touches; the page for when something is stuck and you are looking at a live
     instance.
