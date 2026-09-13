@@ -43,7 +43,9 @@ final class Broadcast(waiting: Ref[Map[Waker.Name, Set[Queue[Unit]]]]) extends W
    * @return noop
    */
   override def ready(lock: Waker.Name): UIO[Unit] =
-    waiting.get.flatMap(current => ZIO.foreachDiscard(current.getOrElse(lock, Set.empty))(_.offer(()).unit))
+    waiting.get.flatMap: current =>
+      val queues = current.getOrElse(lock, Set.empty)
+      ZIO.foreachDiscard(queues)(queue => queue.offer(()))
 
   /**
    * Wake every waiter this instance holds, whatever they wait on — the listener's error path.
@@ -51,7 +53,8 @@ final class Broadcast(waiting: Ref[Map[Waker.Name, Set[Queue[Unit]]]]) extends W
    * @return noop
    */
   override def readyAll: UIO[Unit] =
-    waiting.get.flatMap(current => ZIO.foreachDiscard(current.keys)(ready))
+    waiting.get.flatMap: current =>
+      ZIO.foreachDiscard(current.keys)(ready)
 
   /**
    * A mailbox for this name's wakes, held for the life of the scope.
@@ -60,9 +63,11 @@ final class Broadcast(waiting: Ref[Map[Waker.Name, Set[Queue[Unit]]]]) extends W
    * @return the mailbox; wakes land in it until the scope closes
    */
   def subscribe(lock: Waker.Name): ZIO[Scope, Nothing, Queue[Unit]] =
-    ZIO.acquireRelease(
-      Queue.sliding[Unit](1).tap(mailbox => waiting.update(joined(lock, mailbox)))
-    )(mailbox => waiting.update(left(lock, mailbox)))
+    ZIO.acquireRelease {
+      Queue.sliding[Unit](1).tap { mailbox =>
+        waiting.update(joined(lock, mailbox))
+      }
+    }(mailbox => waiting.update(left(lock, mailbox)))
 
   /**
    * The map with this mailbox added under the name.
