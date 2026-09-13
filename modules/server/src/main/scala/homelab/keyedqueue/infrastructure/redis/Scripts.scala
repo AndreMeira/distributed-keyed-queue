@@ -30,11 +30,11 @@ import zio.*
  * @param sweep the two repair passes
  */
 final case class Scripts(
-  enqueue: EnqueueScript,
-  claim: ClaimScript,
-  settle: SettleScript,
-  renew: RenewScript,
-  sweep: SweepScript,
+  enqueue: LuaScript[EnqueueScript.Input, EnqueueScript.Output],
+  claim: LuaScript[ClaimScript.Input, ClaimScript.Output],
+  settle: LuaScript[SettleScript.Input, SettleScript.Output],
+  renew: LuaScript[RenewScript.Input, RenewScript.Output],
+  sweep: LuaScript[SweepScript.Input, SweepScript.Output],
 )
 
 
@@ -50,9 +50,9 @@ object Scripts:
    */
   def make: ZIO[Commands, RedisFailure, Scripts] =
     for
-      enqueue <- EnqueueScript.make
-      claim   <- ClaimScript.make
-      settle  <- SettleScript.make
-      renew   <- RenewScript.make
-      sweep   <- SweepScript.make
+      enqueue <- EnqueueScript.load
+      claim   <- ClaimScript.load
+      settle  <- SettleScript.load
+      renew   <- RenewScript.load
+      sweep   <- SweepScript.load
     yield Scripts(enqueue, claim, settle, renew, sweep)

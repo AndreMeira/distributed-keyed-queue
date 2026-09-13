@@ -7,7 +7,7 @@ import homelab.keyedqueue.domain.model.{ Acquisition, LockClaim }
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.lock.LockStore.Hold
 import homelab.keyedqueue.domain.types.{ LockName, QueueName }
-import homelab.keyedqueue.infrastructure.redis.script.{ LockAcquireScript, LockGrantScript }
+import homelab.keyedqueue.infrastructure.redis.script.{ LockAcquireScript, LockGrantScript, LockTryScript }
 import zio.*
 
 import java.time.Instant
@@ -48,7 +48,9 @@ final class RedisLockStore(
   override def tryAcquire(acquisition: Acquisition): IO[RedisFailure, Option[Hold]] =
     monitor.trace("RedisLockStore.tryAcquire"):
       connection.provide:
-        scripts.tryAcquire.run(acquisition.name, acquisition.ttl)
+        scripts.tryAcquire
+          .execute((name = acquisition.name, ttl = acquisition.ttl))
+          .map(_.map(hold(acquisition.name)))
 
   override def acquire(acquisition: Acquisition): IO[RedisFailure, Option[Hold]] =
     // The span covers the whole wait, so its duration is the caller's wait time — read it the way the
@@ -60,10 +62,11 @@ final class RedisLockStore(
             .subscribe(QueueName(acquisition.name))
             .flatMap: mailbox =>
               connection
-                .provide(scripts.acquire.run(acquisition.name, acquisition.ttl, acquisition.patience))
+                .provide(scripts.acquire.execute((name = acquisition.name, ttl = acquisition.ttl, patience = acquisition.patience)))
                 .flatMap:
-                  case LockAcquireScript.Reply.Granted(hold)           => ZIO.some(hold)
-                  case LockAcquireScript.Reply.Queued(ticket, recheck) =>
+                  case LockAcquireScript.Entered.Granted(token, until)   =>
+                    ZIO.some(hold(acquisition.name)((token = token, leaseUntil = until)))
+                  case LockAcquireScript.Entered.Queued(ticket, recheck) =>
                     queued(acquisition, asked, ticket, recheck, mailbox)
 
   override def release(claim: LockClaim): IO[RedisFailure, Boolean] =
@@ -71,17 +74,30 @@ final class RedisLockStore(
     // shared listener delivers it to every instance's readiness — so a waiter on another instance wakes,
     // which an in-process call could never reach.
     monitor.trace("RedisLockStore.release"):
-      connection.provide(scripts.release.run(claim.name, claim.token))
+      connection.provide(scripts.release.execute((name = claim.name, token = claim.token)))
 
   override def refresh(claim: LockClaim, ttl: Duration): IO[RedisFailure, (Instant, Boolean)] =
     monitor.trace("RedisLockStore.refresh"):
       connection.provide:
-        scripts.refresh.run(claim.name, claim.token, ttl)
+        scripts.refresh.execute((name = claim.name, token = claim.token, ttl = ttl)).map(_.toTuple)
 
   override def trim(grace: Duration, limit: Int): IO[RedisFailure, Chunk[LockName]] =
     monitor.trace("RedisLockStore.trim"):
       connection.provide:
-        scripts.trim.run(grace, limit)
+        scripts.trim.execute((grace = grace, limit = limit))
+
+  /**
+   * The hold a granted reply amounts to.
+   *
+   * The reply carries the token and the deadline; only this caller knows which lock it asked for, which is
+   * why the script answers with less than a `Hold`.
+   *
+   * @param name the lock that was asked for
+   * @param granted the token the grant runs under, and when its lease lapses
+   * @return the hold, as the port promises it
+   */
+  private def hold(name: LockName)(granted: LockTryScript.Granted): Hold =
+    Hold(LockClaim(name, granted.token), granted.leaseUntil)
 
   /**
    * Hold a ticket to the end: wait out the turns, and withdraw it on any exit that is not a grant.
@@ -166,11 +182,12 @@ final class RedisLockStore(
     monitor.trace("RedisLockStore.grant"):
       ticket.get.flatMap: id =>
         connection
-          .provide(scripts.grant.run(acquisition.name, id, acquisition.ttl))
+          .provide(scripts.grant.execute((name = acquisition.name, ticket = id, ttl = acquisition.ttl)))
           .flatMap:
-            case LockGrantScript.Reply.Granted(hold) => ZIO.some(hold)
-            case LockGrantScript.Reply.Wait(delay)   => nextEventIn(delay, recheckAt).as(None)
-            case LockGrantScript.Reply.Gone          => reenter(acquisition, asked, ticket, recheckAt)
+            case LockGrantScript.Asked.Granted(token, until) =>
+              ZIO.some(hold(acquisition.name)((token = token, leaseUntil = until)))
+            case LockGrantScript.Asked.Wait(delay)           => nextEventIn(delay, recheckAt).as(None)
+            case LockGrantScript.Asked.Gone                  => reenter(acquisition, asked, ticket, recheckAt)
 
   /**
    * Enter again after the queue lost the ticket — with what is '''left''' of the patience, not all of it.
@@ -195,10 +212,11 @@ final class RedisLockStore(
       case None       => ZIO.none
       case Some(left) =>
         connection
-          .provide(scripts.acquire.run(acquisition.name, acquisition.ttl, left))
+          .provide(scripts.acquire.execute((name = acquisition.name, ttl = acquisition.ttl, patience = left)))
           .flatMap:
-            case LockAcquireScript.Reply.Granted(hold)          => ZIO.some(hold)
-            case LockAcquireScript.Reply.Queued(fresh, recheck) =>
+            case LockAcquireScript.Entered.Granted(token, until)  =>
+              ZIO.some(hold(acquisition.name)((token = token, leaseUntil = until)))
+            case LockAcquireScript.Entered.Queued(fresh, recheck) =>
               ticket.set(fresh) *> nextEventIn(recheck, recheckAt).as(None)
 
   /**
@@ -242,7 +260,7 @@ final class RedisLockStore(
    * @return noop; a withdrawal that fails is left to the deadline prune
    */
   private def withdraw(name: LockName, ticket: Ref[Long]): UIO[Unit] =
-    ticket.get.flatMap(id => connection.provide(scripts.abandon.run(name, id)).ignore)
+    ticket.get.flatMap(id => connection.provide(scripts.abandon.execute((name = name, ticket = id))).ignore)
 
   /**
    * What is left of the caller's patience.

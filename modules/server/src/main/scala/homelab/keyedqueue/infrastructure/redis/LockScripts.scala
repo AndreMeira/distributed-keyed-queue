@@ -23,13 +23,13 @@ import zio.*
  * @param trim removes holds and waiter lists abandoned past a grace window
  */
 final case class LockScripts(
-  acquire: LockAcquireScript,
-  grant: LockGrantScript,
-  abandon: LockAbandonScript,
-  tryAcquire: LockTryScript,
-  release: LockReleaseScript,
-  refresh: LockRefreshScript,
-  trim: LockTrimScript,
+  acquire: LuaScript[LockAcquireScript.Input, LockAcquireScript.Output],
+  grant: LuaScript[LockGrantScript.Input, LockGrantScript.Output],
+  abandon: LuaScript[LockAbandonScript.Input, LockAbandonScript.Output],
+  tryAcquire: LuaScript[LockTryScript.Input, LockTryScript.Output],
+  release: LuaScript[LockReleaseScript.Input, LockReleaseScript.Output],
+  refresh: LuaScript[LockRefreshScript.Input, LockRefreshScript.Output],
+  trim: LuaScript[LockTrimScript.Input, LockTrimScript.Output],
 )
 
 
@@ -42,11 +42,11 @@ object LockScripts:
    */
   def make: ZIO[Commands, RedisFailure, LockScripts] =
     for
-      acquire    <- LockAcquireScript.make
-      grant      <- LockGrantScript.make
-      abandon    <- LockAbandonScript.make
-      tryAcquire <- LockTryScript.make
-      release    <- LockReleaseScript.make
-      refresh    <- LockRefreshScript.make
-      trim       <- LockTrimScript.make
+      acquire    <- LockAcquireScript.load
+      grant      <- LockGrantScript.load
+      abandon    <- LockAbandonScript.load
+      tryAcquire <- LockTryScript.load
+      release    <- LockReleaseScript.load
+      refresh    <- LockRefreshScript.load
+      trim       <- LockTrimScript.load
     yield LockScripts(acquire, grant, abandon, tryAcquire, release, refresh, trim)

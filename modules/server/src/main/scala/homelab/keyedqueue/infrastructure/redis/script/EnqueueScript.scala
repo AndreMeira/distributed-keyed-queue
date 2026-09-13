@@ -8,83 +8,21 @@ import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands
 import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace }
 import io.lettuce.core.ScriptOutputType
+import homelab.keyedqueue.infrastructure.redis.script.Codecs.given
 import zio.*
-
-
-/**
- * Append a message and make its key claimable — `lua/queue/enqueue.lua`.
- *
- * The conditional push inside the script is what keeps a key in `ready` at most once, which is why this is
- * one call and not a read followed by a write.
- *
- * The message is serialised here rather than by the caller: what a message looks like at rest is this
- * adapter's choice — see [[StoredMessage]].
- *
- * @param ref the digest this script was loaded under, from [[Scripts]]
- */
-final class EnqueueScript(ref: LuaScript.Sha):
-
-  /** Integer, because the script's last act is an `LLEN`. */
-  private val output: ScriptOutputType = ScriptOutputType.INTEGER
-
-  /**
-   * Append a message and make its key claimable.
-   *
-   * @param ns the queue to append in
-   * @param message the message; the key it carries decides where it lands
-   * @return the key's depth after the append; aborts with `RedisFailure` when the store fails or the reply
-   *         cannot be read
-   */
-  def run(ns: Namespace, message: Message): ZIO[Connection.Commands, RedisFailure, Long] =
-    Connection.use: redis =>
-      ZIO
-        .attemptBlocking(redis.evalsha[Any](ref, output, keys(ns, message), args(ns, message)*))
-        .mapError(LuaScript.failure)
-        .flatMap(reply => ZIO.fromEither(read(reply)))
-
-  /**
-   * The five structures an append touches: where claimable keys queue, where their state is kept, where
-   * this key's own messages and payloads accumulate, and the wake stream it appends to when the key becomes
-   * claimable.
-   *
-   * @param ns the queue to append in
-   * @param message the message; the key it carries decides where it lands
-   * @return `ready`, `claimed`, `delayed`, `msgs`, `payloads`, `wake`, `sequence`, in the order
-   *         `lua/queue/enqueue.lua` reads them
-   */
-  private def keys(ns: Namespace, message: Message): Array[String] =
-    Array(ns.ready, ns.claimed, ns.delayed, ns.msgs(message.key), ns.payloads(message.key), ns.wake, ns.sequence)
-
-  /**
-   * The key to append under, and the message as it will be stored.
-   *
-   * @param message the message to serialise
-   * @return `key`, `id`, `payload`, in the order `lua/queue/enqueue.lua` reads them
-   */
-  private def args(ns: Namespace, message: Message): Array[Array[Byte]] =
-    Array(
-      LuaScript.utf8(message.key),
-      LuaScript.utf8(message.messageId),
-      StoredMessage.toBytes(message).toArray,
-      LuaScript.utf8(ns.queue),
-    )
-
-  /**
-   * Read the key's depth after the append.
-   *
-   * @param value the raw reply
-   * @return how many messages that key now holds, or `MalformedReply` when the reply is not an integer
-   */
-  private def read(value: Any): Either[RedisFailure, Long] =
-    LuaScript.Decode.long.decode("produce", value)
 
 
 object EnqueueScript:
 
+  type Input  = (ns: Namespace, message: Message)
+  type Output = Long
+
   /**
-   * Register `lua/queue/enqueue.lua` and hold the digest it was given.
+   * Register `lua/queue/enqueue.lua` and hold it as the one call it makes.
+   *
+   * Integer, because the script's last act is an `LLEN`.
    *
    * @return the script, ready to run; aborts with `RedisFailure` if it is missing or the server rejects it
    */
-  def make: ZIO[Connection.Commands, RedisFailure, EnqueueScript] =
-    LuaScript.register("lua/queue/enqueue.lua").map(EnqueueScript(_))
+  def load: ZIO[Connection.Commands, RedisFailure, LuaScript[Input, Output]] =
+    LuaScript.register("lua/queue/enqueue.lua").map(LuaScript[Input, Output](_, ScriptOutputType.INTEGER))
