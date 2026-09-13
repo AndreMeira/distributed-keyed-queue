@@ -66,7 +66,7 @@ final class RedisQueueStore(
   override def enqueue(submission: Submission): IO[RedisFailure, Long] =
     monitor.trace("RedisQueueStore.enqueue"):
       connection.provide:
-        scripts.enqueue.execute((ns = Namespace(submission.queue), message = submission.message))
+        scripts.enqueue.execute(Namespace(submission.queue), submission.message)
 
   /**
    * One `claim` call, and — when it finds nothing — a wait for the queue to be worth another look.
@@ -118,7 +118,7 @@ final class RedisQueueStore(
   private def attemptClaim(ns: Namespace, demand: Demand): IO[RedisFailure, Option[Grant]] =
     monitor.trace("RedisQueueStore.attemptClaim"):
       connection.provide:
-        scripts.claim.execute((ns = ns, leaseTtl = leaseTtl, maxBatch = demand.batch)).map(_.map(granted(ns)))
+        scripts.claim.execute(ns, leaseTtl, demand.batch).map(_.map(granted(ns)))
 
   /**
    * The claim a granted reply amounts to.
@@ -172,7 +172,7 @@ final class RedisQueueStore(
   override def settle(settlement: Settlement): IO[RedisFailure, Boolean] =
     monitor.trace("RedisQueueStore.settle"):
       connection.provide:
-        scripts.settle.execute((ns = Namespace(settlement.claimed.queue), settlement = settlement))
+        scripts.settle.execute(Namespace(settlement.claimed.queue), settlement)
 
   /**
    * One `renew` call '''per queue''', because claims are namespaced by queue while a caller's receipts
@@ -189,7 +189,7 @@ final class RedisQueueStore(
       connection.provide:
         ZIO
           .foreach(claims.groupBy(_.queue).toList): (queue, held) =>
-            scripts.renew.execute((ns = Namespace(queue), leaseTtl = leaseTtl, held = held)).map(renewed(held))
+            scripts.renew.execute(Namespace(queue), leaseTtl, held).map(renewed(held))
           .map: results =>
             val (when, chunk) = results.unzip
             when.maxOption.getOrElse(Instant.EPOCH) -> Chunk.fromIterable(chunk).flatten
@@ -205,7 +205,7 @@ final class RedisQueueStore(
   override def sweep(queue: QueueName, limit: Int): IO[RedisFailure, QueueStore.Swept] =
     monitor.trace("RedisQueueStore.sweep"):
       connection.provide:
-        scripts.sweep.execute((ns = Namespace(queue), limit = limit))
+        scripts.sweep.execute(Namespace(queue), limit)
 
 
 object RedisQueueStore:
