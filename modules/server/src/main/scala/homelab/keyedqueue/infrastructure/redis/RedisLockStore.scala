@@ -71,22 +71,19 @@ final class RedisLockStore(
    * @param acquisition the lock to take, how long to hold it, and how long to wait
    * @return the hold, or `None` when the patience elapsed first
    */
-  override def acquire(acquisition: Acquisition): IO[RedisFailure, Option[Hold]] =
+  override def acquire(acquisition: Acquisition): IO[RedisFailure, Option[Hold]] = ZIO.scoped:
     // The span covers the whole wait, so its duration is the caller's wait time — read it the way the
     // observability doc reads dequeue's, not as a processing latency.
     monitor.trace("RedisLockStore.acquire"):
       Clock.instant.flatMap: asked =>
-        ZIO.scoped:
-          broadcast
-            .subscribe(QueueName(acquisition.name))
-            .flatMap: mailbox =>
-              connection
-                .provide(scripts.acquire.execute(acquisition.name, acquisition.ttl, acquisition.patience))
-                .flatMap:
-                  case LockAcquireScript.Entered.Granted(token, until)   =>
-                    ZIO.some(hold(acquisition.name)((token = token, leaseUntil = until)))
-                  case LockAcquireScript.Entered.Queued(ticket, recheck) =>
-                    queued(acquisition, asked, ticket, recheck, mailbox)
+        broadcast.subscribe(QueueName(acquisition.name)).flatMap { mailbox =>
+          connection
+            .provide:
+              scripts.acquire.execute(acquisition.name, acquisition.ttl, acquisition.patience)
+            .flatMap:
+              case LockAcquireScript.Entered.Granted(token, until)   => ZIO.some(hold(acquisition.name)((token, until)))
+              case LockAcquireScript.Entered.Queued(ticket, recheck) => queued(acquisition, asked, ticket, recheck, mailbox)
+        }
 
   /**
    * One `release` call, which frees the lock and wakes whoever waits on it.
