@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.redis
 
 
-import homelab.keyedqueue.domain.types.QueueName
+import homelab.keyedqueue.domain.types.{ LockName, QueueName }
 import zio.*
 
 
@@ -26,12 +26,24 @@ import zio.*
 trait Waker:
 
   /**
+   * Read a name as this sink's own kind.
+   *
+   * The listener reads a name out of a stream entry and cannot tell what kind of thing it names — the
+   * stream it arrived on decides that, and the route already knows. So the sink says: a queue's readiness
+   * reads a queue name, a lock's broadcast reads a lock name.
+   *
+   * @param raw the name as the entry carried it
+   * @return it, as the kind this sink wakes
+   */
+  def name(raw: String): Waker.Name
+
+  /**
    * Announce that this name may have something to act on.
    *
-   * @param queue what became ready
+   * @param name what became ready
    * @return noop
    */
-  def ready(queue: QueueName): UIO[Unit]
+  def ready(name: Waker.Name): UIO[Unit]
 
   /**
    * Announce every name this instance knows of — the listener's error path, where a read may have stepped
@@ -40,3 +52,15 @@ trait Waker:
    * @return noop
    */
   def readyAll: UIO[Unit]
+
+
+object Waker:
+
+  /**
+   * What a wake names: the queue that has work, or the lock that came free.
+   *
+   * A union rather than one type, because the wake path carries both and neither is the other — a lock is
+   * not a queue. Both are opaque over `String`, so what travels on the wire is the same either way; what
+   * the union keeps is the ability to say which kind arrived.
+   */
+  type Name = QueueName | LockName

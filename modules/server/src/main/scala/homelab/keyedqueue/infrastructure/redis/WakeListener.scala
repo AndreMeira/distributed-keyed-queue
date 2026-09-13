@@ -2,7 +2,6 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.types.QueueName
 import homelab.keyedqueue.infrastructure.redis.keys.{ QueueKeys, RedisKey }
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import io.lettuce.core.XReadArgs.StreamOffset
@@ -86,7 +85,7 @@ final class WakeListener(
   private def read(
     commands: Connection.Commands,
     streams: Chunk[RedisKey],
-  ): IO[RedisFailure, Chunk[(Waker, QueueName)]] =
+  ): IO[RedisFailure, Chunk[(Waker, String)]] =
     positions.get.flatMap: current =>
       // `from[String]` pins what Lettuce is handed: an Array[StreamOffset[RedisKey]] would not be an
       // Array[StreamOffset[String]], arrays being invariant.
@@ -119,8 +118,8 @@ final class WakeListener(
    * @param woken the (readiness, name) pairs this batch carried
    * @return noop
    */
-  private def announce(woken: Chunk[(Waker, QueueName)]): UIO[Unit] =
-    ZIO.foreachDiscard(woken.distinct)((waker, name) => waker.ready(name))
+  private def announce(woken: Chunk[(Waker, String)]): UIO[Unit] =
+    ZIO.foreachDiscard(woken.distinct)((waker, raw) => waker.ready(waker.name(raw)))
 
   /**
    * Tell this group's wakers to re-look — the failure path, where a wake may have been missed and the safe
@@ -173,10 +172,10 @@ object WakeListener:
    * @param entry one stream entry
    * @return the name it carries, or `None` when the entry has no `queue` field
    */
-  private def nameOf(entry: io.lettuce.core.StreamMessage[String, Array[Byte]]): Option[QueueName] =
+  private def nameOf(entry: io.lettuce.core.StreamMessage[String, Array[Byte]]): Option[String] =
     Option(entry.getBody)
       .flatMap(body => Option(body.get("queue")))
-      .map(bytes => QueueName(String(bytes, "UTF-8")))
+      .map(bytes => String(bytes, "UTF-8"))
 
   /**
    * A listener over the given wake streams, each positioned at its end, routing entries to their readiness.

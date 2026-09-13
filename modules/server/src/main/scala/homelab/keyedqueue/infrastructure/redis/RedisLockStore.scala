@@ -77,7 +77,7 @@ final class RedisLockStore(
     // observability doc reads dequeue's, not as a processing latency.
     monitor.trace("RedisLockStore.acquire"):
       Clock.instant.flatMap: asked =>
-        broadcast.subscribe(QueueName(acquisition.name)).flatMap { mailbox =>
+        broadcast.subscribe(acquisition.name).flatMap { mailbox =>
           connection
             .provide:
               scripts.acquire.execute(acquisition.name, acquisition.ttl, acquisition.patience)

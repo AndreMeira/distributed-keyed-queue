@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.redis
 
 
-import homelab.keyedqueue.domain.types.QueueName
+import homelab.keyedqueue.domain.types.LockName
 import zio.*
 
 
@@ -23,7 +23,7 @@ import zio.*
  *
  * @param waiting name → the mailboxes of its parked waiters
  */
-final class Broadcast(waiting: Ref[Map[QueueName, Set[Queue[Unit]]]]) extends Waker:
+final class Broadcast(waiting: Ref[Map[Waker.Name, Set[Queue[Unit]]]]) extends Waker:
 
   /**
    * Wake every waiter parked on this name.
@@ -34,7 +34,9 @@ final class Broadcast(waiting: Ref[Map[QueueName, Set[Queue[Unit]]]]) extends Wa
    * @param queue what became ready
    * @return noop
    */
-  override def ready(queue: QueueName): UIO[Unit] =
+  override def name(raw: String): Waker.Name = LockName(raw)
+
+  override def ready(queue: Waker.Name): UIO[Unit] =
     waiting.get.flatMap(current => ZIO.foreachDiscard(current.getOrElse(queue, Set.empty))(_.offer(()).unit))
 
   /**
@@ -51,7 +53,7 @@ final class Broadcast(waiting: Ref[Map[QueueName, Set[Queue[Unit]]]]) extends Wa
    * @param queue the name to be woken for
    * @return the mailbox; wakes land in it until the scope closes
    */
-  def subscribe(queue: QueueName): ZIO[Scope, Nothing, Queue[Unit]] =
+  def subscribe(queue: Waker.Name): ZIO[Scope, Nothing, Queue[Unit]] =
     ZIO.acquireRelease(
       Queue.sliding[Unit](1).tap(mailbox => waiting.update(joined(queue, mailbox)))
     )(mailbox => waiting.update(left(queue, mailbox)))
@@ -65,11 +67,11 @@ final class Broadcast(waiting: Ref[Map[QueueName, Set[Queue[Unit]]]]) extends Wa
    * @return the map as it becomes
    */
   private def joined(
-    queue: QueueName,
+    queue: Waker.Name,
     mailbox: Queue[Unit],
   )(
-    current: Map[QueueName, Set[Queue[Unit]]]
-  ): Map[QueueName, Set[Queue[Unit]]] =
+    current: Map[Waker.Name, Set[Queue[Unit]]]
+  ): Map[Waker.Name, Set[Queue[Unit]]] =
     current.updated(queue, current.getOrElse(queue, Set.empty) + mailbox)
 
   /**
@@ -81,11 +83,11 @@ final class Broadcast(waiting: Ref[Map[QueueName, Set[Queue[Unit]]]]) extends Wa
    * @return the map as it becomes
    */
   private def left(
-    queue: QueueName,
+    queue: Waker.Name,
     mailbox: Queue[Unit],
   )(
-    current: Map[QueueName, Set[Queue[Unit]]]
-  ): Map[QueueName, Set[Queue[Unit]]] =
+    current: Map[Waker.Name, Set[Queue[Unit]]]
+  ): Map[Waker.Name, Set[Queue[Unit]]] =
     val remaining = current.getOrElse(queue, Set.empty) - mailbox
     if remaining.isEmpty then current.removed(queue) else current.updated(queue, remaining)
 
@@ -98,4 +100,4 @@ object Broadcast:
    * @return one with nobody waiting
    */
   def make: UIO[Broadcast] =
-    Ref.make(Map.empty[QueueName, Set[Queue[Unit]]]).map(Broadcast(_))
+    Ref.make(Map.empty[Waker.Name, Set[Queue[Unit]]]).map(Broadcast(_))
