@@ -19,13 +19,33 @@ import scala.sys.process.{ Process, ProcessLogger }
  */
 object Compose:
 
+  /**
+   * The deployments this suite knows how to bring up, each owning its project name and host ports so two
+   * of them can never collide — not when both are up, and not when one run follows another closely enough
+   * to overlap the previous teardown.
+   *
+   * @param file the compose file
+   * @param project the compose project name; also the prefix on every container it creates
+   * @param ports where its instances answer on the host, in service order
+   */
+  enum Stack(val file: String, val project: String, val ports: Chunk[Int]):
+
+    /** One Valkey — the everyday run. */
+    case Standalone extends Stack("docker-compose.e2e.yml", "dkq-e2e", Chunk(9101, 9102))
+
+    /** Three Valkeys in cluster mode — the only run that can see a cluster-only fault. */
+    case Cluster extends Stack("docker-compose.e2e-cluster.yml", "dkq-e2e-cluster", Chunk(9111, 9112))
+
+  /** Which deployment this run drives; `DKQ_E2E_STACK=cluster` picks the cluster, anything else the server. */
+  val stack: Stack = if sys.env.get("DKQ_E2E_STACK").contains("cluster") then Stack.Cluster else Stack.Standalone
+
   /** The compose project name; also the prefix on every container this suite creates. */
-  val project: String = "dkq-e2e"
+  val project: String = stack.project
 
   /** The instance names, which are both compose service names and the suite's names for them. */
   val instances: Chunk[String] = Chunk("dkq-a", "dkq-b")
 
-  private val file = "docker-compose.e2e.yml"
+  private val file = stack.file
 
   /**
    * Bring the stack up and wait for every service to report healthy.

@@ -8,8 +8,8 @@
 -- KEYS[5] wake       stream  one entry per key made claimable
 -- KEYS[6] sequence   string  the counter that scores `ready`
 -- ARGV[1] limit      most entries to handle per sweep
--- ARGV[2] prefix     key namespace, e.g. {w:3}:q:orders — see the note on cluster hash tags
--- ARGV[3] queue      named in the wake entries, because the stream is shared by the whole bucket
+-- ARGV[2] prefix     key namespace, e.g. {p:3}:v1:q:orders — see the note on cluster hash tags
+-- ARGV[3] queue      named in the wake entries, because the stream is shared by the whole partition
 -- returns            {reclaimed keys, released keys}
 --
 -- Idempotent, so every pod can run it and no leader election is needed. Bounded by `limit` because a script

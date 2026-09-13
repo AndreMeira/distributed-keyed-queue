@@ -13,6 +13,9 @@ import zio.*
  * "there may be something to claim", and the caller does the claiming — which is what keeps the claim in
  * the fiber that will do the work.
  *
+ * '''As a [[Waker]]: a wake is kept.''' Offered with nobody waiting, the token stays in the buffer for the
+ * next look — which is what a queue's wake requires, work not having stopped existing.
+ *
  * '''One token, one consumer.''' This is the point of the design. A broadcast wakes every consumer parked
  * on a queue so that one of them can win a claim and the rest waste a round trip; taking a token wakes
  * exactly one. What replaces the broadcast is the hand-on in [[awaitReady]]: a consumer that finds work offers
@@ -82,7 +85,7 @@ final class Readiness(queues: Ref[Map[QueueName, Queue[Unit]]]) extends Waker:
         for
           // Recovers a token the interruption would otherwise swallow. Attached outside the timeout on
           // purpose: when the timeout discards an element the take itself was never interrupted, so a
-          // finaliser on the take never runs.
+          // finalizer on the take never runs.
           ready  <- restore(found.take.timeout(patience)).onInterrupt(found.offer(()))
           // Flattened here, where the nesting is created: the outer `Option` says whether the claim ran,
           // the inner what it found, and conflating the two is how a fruitless look ends up handing the

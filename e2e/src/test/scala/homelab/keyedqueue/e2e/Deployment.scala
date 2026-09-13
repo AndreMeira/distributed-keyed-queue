@@ -58,7 +58,7 @@ final case class Deployment(a: Instance, b: Instance, run: String):
 object Deployment:
 
   /** Where `docker-compose.e2e.yml` publishes the instances. */
-  private val local = Chunk("localhost:9101", "localhost:9102")
+  private val local = Compose.stack.ports.map(port => s"localhost:$port")
 
   /** Point the suite at an existing deployment — a cluster, a colleague's laptop — instead of composing one. */
   private val endpoints = "DKQ_E2E_ENDPOINTS"

@@ -29,11 +29,6 @@ import zio.*
  *                  bound: a read returns the moment an entry lands, and the streams it names are fixed, so
  *                  nothing waits on this. It bounds how long a half-open connection goes unnoticed
  *                  and how long a stopping instance waits out a read it cannot cancel
- * @param wakeBuckets how many wake streams the deployment is divided into, and therefore how many hash
- *                    tags its keys are spread over. Permanent for a deployment: changing it moves
- *                    queues between tags and strands what was written under the old one. One is the
- *                    single-node answer — one stream, one slot; above one, queues spread across
- *                    slots and each bucket carries its own
  * @param maxWait the longest a caller may ask to wait, and the connection's command timeout
  * @param maxBatchLimit the most messages this service will hand over in one claim
  */
@@ -48,7 +43,6 @@ final case class QueueConfig(
   lockTrimGrace: Duration,
   lockMaxTtl: Duration,
   wakeBlock: Duration,
-  wakeBuckets: Int,
   maxWait: Duration,
   maxBatchLimit: Int,
 ) derives ConfigReader
@@ -104,7 +98,6 @@ object QueueConfig:
       Option.when(config.lockTrimGrace.toMillis < 0)("lock-trim-grace must not be negative"),
       Option.when(config.lockMaxTtl.toMillis <= 0)("lock-max-ttl must be greater than zero"),
       Option.when(config.wakeBlock.toMillis <= 0)("wake-block must be greater than zero"),
-      Option.when(config.wakeBuckets <= 0)("wake-buckets must be greater than zero"),
       Option.when(config.maxWait.toMillis <= 0)("max-wait must be greater than zero"),
       Option.when(config.maxBatchLimit <= 0)("max-batch-limit must be greater than zero"),
     ).flatten

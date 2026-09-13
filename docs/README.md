@@ -14,6 +14,8 @@ What is specific to this repo:
     caller can design against and a test can assert. The page to read first.
   - [`architecture/lock-guarantees.md`](architecture/lock-guarantees.md) — the same, for the lock API:
     exclusion, the fence, fairness, and what a holder owes.
+  - [`research/schema-versioned-keys.md`](research/schema-versioned-keys.md) — why every key carries its
+    schema version, and the migration model that stands on it.
   - [`architecture/redis-data-structures.md`](architecture/redis-data-structures.md) — what is kept in
     Redis, and what each structure is for.
   - [`architecture/redis-cluster.md`](architecture/redis-cluster.md) — the key layout was built for cluster

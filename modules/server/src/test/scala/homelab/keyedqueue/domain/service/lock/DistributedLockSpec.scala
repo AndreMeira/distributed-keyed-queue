@@ -6,7 +6,7 @@ import homelab.keyedqueue.domain.service.lock.DistributedLock.LockName
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
-import homelab.keyedqueue.infrastructure.redis.{ Connection, Readiness, RedisQueueStore, Scripts, WakeListener }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, Namespace, Readiness, RedisQueueStore, Scripts, WakeListener }
 import homelab.common.monitor.Monitor
 import org.testcontainers.containers.GenericContainer
 import zio.*
@@ -35,19 +35,22 @@ object DistributedLockSpec extends ZIOSpecDefault:
                          started
                      )(container => ZIO.attemptBlocking(container.stop()).ignore)
         url        = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-        config     = QueueConfig(url, cluster = false, 0, leaseTtl, 1.second, 100, 120.seconds, 10.minutes, 10.minutes, 200.millis, 1, 5.seconds, 32)
+        config     = QueueConfig(url, cluster = false, 0, leaseTtl, 1.second, 100, 120.seconds, 10.minutes, 10.minutes, 200.millis, 5.seconds, 32)
         store     <- newStore(config)
         watchdog  <- Watchdog.make(store, Watchdog.Config(config.sweepInterval, config.sweepLimit))
       yield DistributedLock.make(store, watchdog, leaseTtl)
 
   private def newStore(config: QueueConfig): ZIO[Scope, ApplicationError, QueueStore] =
     for
-      connection <- Connection.make(Connection.Config(config.maxWait, config.redisUrl, config.cluster))
+      connection <- Connection.make(
+                      Connection.Config(config.maxWait, config.redisUrl, config.cluster),
+                      Namespace.wakeStreams.toChunk,
+                    )
       scripts    <- connection.provide(Scripts.make)
       readiness  <- Readiness.make
-      listener   <- WakeListener.make(connection, readiness, config.wakeBuckets, config.wakeBlock)
+      listener   <- WakeListener.make(connection, readiness, config.wakeBlock)
       _          <- listener.run.forkScoped
-      store      <- RedisQueueStore.make(Monitor.Noop, connection, scripts, readiness, config.leaseTtl, config.wakeBuckets)
+      store      <- RedisQueueStore.make(Monitor.Noop, connection, scripts, readiness, config.leaseTtl)
     yield store
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("DistributedLock")(

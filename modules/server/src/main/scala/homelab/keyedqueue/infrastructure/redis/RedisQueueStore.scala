@@ -44,7 +44,6 @@ import java.time.Instant
  * @param scripts the loaded script digests
  * @param readiness where a caller waits for a queue to have something worth looking at
  * @param leaseTtl how long a claim survives without a heartbeat
- * @param buckets how many wake streams the deployment has, which decides every key's hash tag
  */
 final class RedisQueueStore(
   monitor: Monitor,
@@ -52,7 +51,6 @@ final class RedisQueueStore(
   scripts: Scripts,
   readiness: Readiness,
   leaseTtl: Duration,
-  buckets: Int,
 ) extends QueueStore:
 
   /**
@@ -68,7 +66,7 @@ final class RedisQueueStore(
   override def enqueue(submission: Submission): IO[RedisFailure, Long] =
     monitor.trace("RedisQueueStore.enqueue"):
       connection.provide:
-        scripts.enqueue.run(Namespace(submission.queue, buckets), submission.message)
+        scripts.enqueue.run(Namespace(submission.queue), submission.message)
 
   /**
    * One `claim` call, and — when it finds nothing — a wait for the queue to be worth another look.
@@ -87,7 +85,7 @@ final class RedisQueueStore(
     monitor.trace("RedisQueueStore.claim"):
       for
         asked   <- Clock.instant
-        claimed <- claimWithin(Namespace(demand.queue, buckets), demand, asked)
+        claimed <- claimWithin(Namespace(demand.queue), demand, asked)
       yield claimed
 
   /**
@@ -148,7 +146,7 @@ final class RedisQueueStore(
   override def settle(settlement: Settlement): IO[RedisFailure, Boolean] =
     monitor.trace("RedisQueueStore.settle"):
       connection.provide:
-        scripts.settle.run(Namespace(settlement.claimed.queue, buckets), settlement)
+        scripts.settle.run(Namespace(settlement.claimed.queue), settlement)
 
   /**
    * One `renew` call '''per queue''', because claims are namespaced by queue while a caller's receipts
@@ -165,7 +163,7 @@ final class RedisQueueStore(
       connection.provide:
         ZIO
           .foreach(claims.groupBy(_.queue).toList): (queue, held) =>
-            scripts.renew.run(Namespace(queue, buckets), leaseTtl, held)
+            scripts.renew.run(Namespace(queue), leaseTtl, held)
           .map: results =>
             val (when, chunk) = results.unzip
             when.maxOption.getOrElse(Instant.EPOCH) -> Chunk.fromIterable(chunk).flatten
@@ -181,7 +179,7 @@ final class RedisQueueStore(
   override def sweep(queue: QueueName, limit: Int): IO[RedisFailure, QueueStore.Swept] =
     monitor.trace("RedisQueueStore.sweep"):
       connection.provide:
-        scripts.sweep.run(Namespace(queue, buckets), limit)
+        scripts.sweep.run(Namespace(queue), limit)
 
 
 object RedisQueueStore:
@@ -196,7 +194,6 @@ object RedisQueueStore:
    * @param connection where its connection comes from
    * @param scripts the loaded digests
    * @param readiness where a caller waits for a queue to have something worth looking at
-   * @param buckets how many wake streams the deployment has, which decides every key's hash tag
    * @param leaseTtl how long a claim survives without a heartbeat
    * @return the store
    */
@@ -206,6 +203,5 @@ object RedisQueueStore:
     scripts: Scripts,
     readiness: Readiness,
     leaseTtl: Duration,
-    buckets: Int,
   ): UIO[RedisQueueStore] =
-    ZIO.succeed(RedisQueueStore(monitor, connection, scripts, readiness, leaseTtl, buckets))
+    ZIO.succeed(RedisQueueStore(monitor, connection, scripts, readiness, leaseTtl))

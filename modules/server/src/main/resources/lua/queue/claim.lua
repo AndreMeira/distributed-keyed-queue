@@ -4,7 +4,7 @@
 -- KEYS[2] claimed    zset  key -> deadline (unix millis); the lease
 -- KEYS[3] fence      hash  key -> monotonic claim counter
 -- KEYS[4] attempts   hash  message id -> how many times it has been delivered
--- ARGV[1] prefix     key namespace, e.g. {q:orders} — see the note on cluster hash tags
+-- ARGV[1] prefix     key namespace, e.g. {p:0}:v1:q:orders — see the note on cluster hash tags
 -- ARGV[2] ttl        millis
 -- ARGV[3] batch      the most messages to hand over; at least 1
 -- returns            {key, token, deadline, backlog, ids, messages, attempts}, or nil when nothing is

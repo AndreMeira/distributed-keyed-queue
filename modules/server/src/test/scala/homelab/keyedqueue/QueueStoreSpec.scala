@@ -27,8 +27,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
 
   private val leaseTtl = 2.seconds
 
-  /** These tests run one bucket, so the tag every key carries is this one's. */
-  private val buckets = 1
+  /** These tests run one partition, so the tag every key carries is this one's. */
 
   /** A Valkey container for the suite, and two stores over it — a worker's, and a sweeper's. */
   private val substrate: ZLayer[Any, Any, (QueueStore, QueueStore, RedisClusterCommands[String, Array[Byte]])] =
@@ -58,7 +57,6 @@ object QueueStoreSpec extends ZIOSpecDefault:
                              10.minutes,
                              10.minutes,
                              200.millis,
-                             buckets,
                              5.seconds,
                              maxBatchLimit = 32,
                            )
@@ -80,15 +78,16 @@ object QueueStoreSpec extends ZIOSpecDefault:
   private def store(config: QueueConfig): ZIO[Scope, ApplicationError, (QueueStore, Connection)] =
     for
       connection <- Connection.make(
-                      Connection.Config(config.maxWait, config.redisUrl, config.cluster)
+                      Connection.Config(config.maxWait, config.redisUrl, config.cluster),
+                      Namespace.wakeStreams.toChunk,
                     )
       scripts    <- connection.provide(Scripts.make)
       readiness  <- Readiness.make
-      listener   <- WakeListener.make(connection, readiness, config.wakeBuckets, config.wakeBlock)
+      listener   <- WakeListener.make(connection, readiness, config.wakeBlock)
       _          <- listener.run.forkScoped
       // Unobserved: these tests are about what the store does to Redis, and `Noop` keeps the telemetry
       // wiring out of the assertions without changing a single code path.
-      store      <- RedisQueueStore.make(Monitor.Noop, connection, scripts, readiness, config.leaseTtl, config.wakeBuckets)
+      store      <- RedisQueueStore.make(Monitor.Noop, connection, scripts, readiness, config.leaseTtl)
     yield (store, connection)
 
   /** A message whose cargo is `body`: these tests care about order and ownership, not about content. */
@@ -325,11 +324,11 @@ object QueueStoreSpec extends ZIOSpecDefault:
         _                  <- ZIO.foreachDiscard(List("a", "b"))(m => worker.enqueue(Submission(queue, message(key, m))))
         held               <- worker.claim(Demand(queue, 2.seconds, 2))
         _                  <- ZIO.foreachDiscard(held)(batch => worker.settle(settlement(batch.claim, acks(batch))))
-        payloads           <- ZIO.attemptBlocking(redis.hlen(Namespace(QueueName("cleanup"), buckets).payloads(MessageKey("k1")))).orDie
-        owned              <- ZIO.attemptBlocking(redis.scard(Namespace(QueueName("cleanup"), buckets).owned(MessageKey("k1")))).orDie
+        payloads           <- ZIO.attemptBlocking(redis.hlen(Namespace(QueueName("cleanup")).payloads(MessageKey("k1")))).orDie
+        owned              <- ZIO.attemptBlocking(redis.scard(Namespace(QueueName("cleanup")).owned(MessageKey("k1")))).orDie
         // Idle is the absence of the key from every structure — there is no state entry to check any more.
-        claimed            <- ZIO.attemptBlocking(redis.zcard(Namespace(QueueName("cleanup"), buckets).claimed)).orDie
-        ready              <- ZIO.attemptBlocking(redis.zcard(Namespace(QueueName("cleanup"), buckets).ready)).orDie
+        claimed            <- ZIO.attemptBlocking(redis.zcard(Namespace(QueueName("cleanup")).claimed)).orDie
+        ready              <- ZIO.attemptBlocking(redis.zcard(Namespace(QueueName("cleanup")).ready)).orDie
       yield assertTrue(payloads == 0L, owned == 0L, claimed == 0L, ready == 0L)
     },
     test("a claim reclaimed while a nack's backoff is pending queues its key once, not twice") {
@@ -348,7 +347,7 @@ object QueueStoreSpec extends ZIOSpecDefault:
         // Let the lease lapse and the backoff fall due, then sweep both in one pass.
         _                        <- ZIO.sleep(leaseTtl + 1.second)
         _                        <- sweeper.sweep(queue, 100)
-        ready                    <- ZIO.attemptBlocking(redis.zcard(Namespace(queue, buckets).ready)).orDie
+        ready                    <- ZIO.attemptBlocking(redis.zcard(Namespace(queue).ready)).orDie
       yield assertTrue(ready == 1L)
     },
     test("a heartbeat renews what is held and names what is lost") {

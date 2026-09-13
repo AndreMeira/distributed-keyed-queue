@@ -14,7 +14,7 @@ what the service promises is [`../architecture/guarantees.md`](../architecture/g
 the middle: the mechanics in motion.
 
 Throughout: queue `orders`, key `k1`, worker `w1`. Names are shortened — every one really carries the
-`{w:0}:q:orders` prefix — bucket 0, the single-bucket default. Empty structures are omitted.
+`{p:0}:v1:q:orders` prefix — partition 0 of the fixed sixteen, `v1` the schema version. Empty structures are omitted.
 
 ## Where we start
 
@@ -85,11 +85,12 @@ identities, and the sweep that recovered them.
 story. Nothing else can be holding a key.
 
 **If nothing was claimable**, the script answers with nothing and the caller waits for a readiness token,
-offered when an entry naming that queue arrives on its bucket's `wake` stream — appended by whatever next
+offered when an entry naming that queue arrives on its partition's `wake` stream — appended by whatever next
 makes a key claimable. A token wakes '''one''' consumer, which claims and hands the token on if it found
 work, so a burst drains one consumer at a time instead of waking all of them for one key. That wait costs a
-fiber, not a connection: one listener per instance reads every bucket on one connection, from startup, so a
-queue nobody has asked for yet is heard as promptly as a busy one.
+fiber, not a connection: one listener per instance reads the partitions from startup — on a single server
+that is every one of them on a single connection, on a cluster one connection per slot — so a queue nobody
+has asked for yet is heard as promptly as a busy one.
 
 ---
 

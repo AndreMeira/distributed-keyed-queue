@@ -1,0 +1,75 @@
+# The same deployment as docker-compose.e2e.yml, over a real three-node Valkey cluster instead of one
+# server — the fixture that makes cluster mode a tested claim rather than an assumed one. Its own compose
+# project name and host ports, so it never collides with the standalone stack. Run the whole e2e suite
+# against it with:
+#
+#   DKQ_E2E_STACK=cluster sbt e2e
+#
+# The instances reach the cluster inside the compose network, so the announced node addresses are
+# reachable — which is why this is a compose file and not a Testcontainers fixture: a containerized
+# cluster announces container addresses, and only another container can follow them.
+services:
+  valkey-0: &valkey
+    image: valkey/valkey:8.1-alpine
+    command:
+      - valkey-server
+      - --cluster-enabled
+      - "yes"
+      - --cluster-config-file
+      - nodes.conf
+      - --maxmemory-policy
+      - noeviction
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  valkey-1: *valkey
+  valkey-2: *valkey
+
+  # Forms the cluster once all three nodes answer, and exits; the instances gate on its completion.
+  cluster-init:
+    image: valkey/valkey:8.1-alpine
+    depends_on:
+      valkey-0:
+        condition: service_healthy
+      valkey-1:
+        condition: service_healthy
+      valkey-2:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        valkey-cli --cluster create valkey-0:6379 valkey-1:6379 valkey-2:6379 --cluster-replicas 0 --cluster-yes
+        until valkey-cli -h valkey-0 cluster info | grep -q cluster_state:ok; do sleep 1; done
+
+  dkq-a: &dkq
+    image: distributed-keyed-queue:latest # built by `sbt Docker/publishLocal`
+    ports:
+      - "9111:9000"
+    environment:
+      DKQ_REDIS_URL: redis://valkey-0:6379
+      DKQ_CLUSTER: "true"
+      # Same timing rationale as docker-compose.e2e.yml.
+      DKQ_LEASE_TTL: 5 seconds
+      DKQ_SWEEP_INTERVAL: 2 seconds
+      DKQ_WAKE_BLOCK: 200 millis
+    depends_on:
+      cluster-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/9000'"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  dkq-b:
+    <<: *dkq
+    ports:
+      - "9112:9000"

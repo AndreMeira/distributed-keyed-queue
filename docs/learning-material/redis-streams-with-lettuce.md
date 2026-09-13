@@ -133,14 +133,20 @@ An expired block comes back as an **empty list**, not an exception — the loop 
 This is the same one `BLMOVE` set in this repo before the wake path replaced it. Lettuce's connection-level command timeout is enforced
 client-side, so a `BLOCK 5000` on a connection whose command timeout is 5 s races its own deadline and
 surfaces as `RedisCommandTimeoutException` instead of an empty result. **The connection's command timeout
-must exceed the longest `BLOCK` it will be asked to make** — which is why `Connection.listeningSlack` exists
-for the claiming connections and why a stream reader wants the same treatment, on its own connection.
+must exceed the longest `BLOCK` it will be asked to make** — which is why `Connection.listeningSlack` pads
+the timeout of every listening connection, and why each stream reader is given one of its own.
 
 ### Cluster
 
 `RedisAdvancedClusterCommands` accepts the same calls, but a multi-stream `XREAD` across different slots
 fails with `CROSSSLOT`. Group streams by slot — and remember that keys sharing a hash tag share a slot, so
-`{w:0}:wake` is in the same slot as `{w:0}:q:orders:ready` and can be written by the same Lua script.
+`{p:0}:v1:wake` is in the same slot as `{p:0}:v1:q:orders:ready` and can be written by the same Lua script.
+
+That grouping is what `Connection` does — it is the piece that knows whether the store is a cluster — and
+`WakeListener` runs one fiber per connection it is given, collapsing to a single one on a standalone
+server, where there are no slots. The advice was written here before the code followed it, and the gap cost
+a defect that only a real cluster could expose — see
+[`../architecture/redis-cluster.md`](../architecture/redis-cluster.md).
 
 ### From Lua
 
@@ -165,9 +171,10 @@ was rejected as non-deterministic.
 
 ## Where this is going in this repo
 
-Streams are what dkq's wake path is built on: one `wake` stream **per bucket**, appended to inside the very
-scripts that make a key claimable, and read by one blocking `XREAD` per instance across every bucket at
-once. Two of the notes above turned out to be load-bearing:
+Streams are what dkq's wake path is built on: one `wake` stream **per partition**, appended to inside the
+very scripts that make a key claimable, and read by blocking `XREAD`s — one across every partition at once
+on a single server, and one per slot on a cluster, for the `CROSSSLOT` reason in the section above. Two of
+the notes above turned out to be load-bearing:
 
 - **`COUNT` bounds a reply, not the block** — so the read is issued with `COUNT 1000` and costs nothing in
   latency, while a listener that fell behind catches up in one round trip instead of twenty.
@@ -175,6 +182,6 @@ once. Two of the notes above turned out to be load-bearing:
   `MAXLEN` has moved past it, which is why a reconnecting listener conservatively wakes every consumer it
   has rather than trusting its position.
 
-Why the stream is per bucket rather than per queue or global is
+Why the stream is per partition rather than per queue or global is
 [`../architecture/redis-cluster.md`](../architecture/redis-cluster.md); the reasoning that got there is
 [`../research/bucketed-wake-streams.md`](../research/bucketed-wake-streams.md).

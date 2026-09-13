@@ -1,8 +1,8 @@
 ---
-title: "Redis Cluster — supported in code, unproven in practice"
+title: "Redis Cluster — the layout, the per-slot listener, and the fixture that proves them"
 type: architecture
 status: current
-updated: 2026-09-04
+updated: 2026-09-11
 tags: [redis, cluster, sharding, hash-tag, lettuce, lua]
 ---
 
@@ -14,37 +14,84 @@ Everything downstream is unchanged.
 > **Written, but never run against a cluster.** There is no multi-node Valkey in the test setup, so the
 > whole cluster path — routing, `MOVED` handling, script registration across masters, a blocking `XREAD` on a cluster
 > connection — is covered by reasoning about Lettuce's API and by nothing else. The standalone path is the
-> one the 18 tests exercise. Treat cluster mode as untested until a three-node fixture exists.
+> one the 18 tests exercise. Cluster mode is exercised by the compose fixture below — the standalone e2e
+> suite runs unchanged against a real three-node cluster.
+
+> **The defect this fixture exists to never readmit (found in review, 2026-09-11).** The listener used to
+> read every wake stream in one `XREAD`, and Redis Cluster rejects a multi-key read across slots — so in
+> cluster mode every read failed and the wake system silently degraded into announce-all polling on the
+> retry backoff. It survived three PRs because standalone Redis has no slots: no test that ran could see
+> it. Streams are now grouped **by slot** when the store is a cluster — one reader connection per group,
+> opened at startup, one listener fiber on each, collapsing to a single reader on a server that has no
+> slots — and the claim is tested the only honest way:
+>
+> ```bash
+> DKQ_E2E_STACK=cluster sbt e2e
+> ```
+>
+> runs the whole e2e suite over a real three-node cluster, composed inside the docker network (a
+> containerized cluster announces container addresses, so only another container can follow them).
 
 ## Why the key layout was ready first
 
-Every key belongs to one queue, and carries the hash tag of the **bucket** that queue falls in. `Namespace`
-builds all ten from `prefix = "{w:<bucket>}:q:<queue>"`, with the wake stream tagged but not scoped to
-the queue:
+Every key a queue owns carries the hash tag of the **partition** that queue falls in. `Namespace` builds all
+ten from `prefix = "{p:<partition>}:v1:q:<queue>"`, with the wake stream tagged but not scoped to the queue:
 
 ```
-{w:0}:q:orders:ready      {w:0}:q:orders:fence      {w:0}:q:orders:msgs:<key>
-{w:0}:q:orders:seq        {w:0}:q:orders:attempts   {w:0}:q:orders:payloads:<key>
-{w:0}:q:orders:claimed    {w:0}:q:orders:delayed    {w:0}:q:orders:owned:<key>
-                          {w:0}:wake                ← shared by every queue in bucket 0
+{p:0}:v1:q:orders:ready      {p:0}:v1:q:orders:fence       {p:0}:v1:q:orders:msgs:<key>
+{p:0}:v1:q:orders:seq        {p:0}:v1:q:orders:attempts    {p:0}:v1:q:orders:payloads:<key>
+{p:0}:v1:q:orders:claimed    {p:0}:v1:q:orders:delayed     {p:0}:v1:q:orders:owned:<key>
+                             {p:0}:v1:wake                 ← shared by every queue in partition 0
 ```
 
-`bucket = hash(queue) % DKQ_WAKE_BUCKETS`, fixed for the deployment's life. What each structure is for is
-[`redis-data-structures.md`](redis-data-structures.md); what matters here is only that everything a script
-touches carries the same tag.
+`partition = hash(queue) % 16` — the count is a constant of the code, not a deployment parameter. What each
+structure is for is [`redis-data-structures.md`](redis-data-structures.md); what matters here is only that
+everything a script touches carries the same tag.
 
-A bucket's keys hash to one slot, and **every script touches exactly one queue, whose keys are all in its
-bucket's slot** — which is what makes the Lua legal at all, since a script may only reach keys in a single
-slot. The wake stream is in that slot too, which is the whole reason the tag is the bucket rather than the
+**The `v1` is the schema version, and it sits outside the tag on purpose.** Only what is inside the braces
+is hashed, so the segment moves nothing between slots — and a key's incarnations under two schemas land in
+the *same* slot, which is what would let a migration step read v1 and write v2 in one script
+([`../research/schema-versioned-keys.md`](../research/schema-versioned-keys.md)).
+
+**The lock's keys are one tag, `{dkq:locks}`, and so one slot.** That is what lets each lock script touch
+the leases, the tokens, the fence counter and a waiters list together; partitioning the locks the way queues
+are partitioned is deferred until lock volume on one node is a measured problem rather than an aesthetic one.
+Its wake stream carries a tag of its own, and nothing says which slot that lands in — which is why the
+streams are grouped by *computed* slot rather than by kind or by partition. That grouping lives in
+`Connection`, which is what knows whether the store is a cluster: it opens one connection per group of streams
+that a single command may name, at startup, and the listener runs a fiber on each.
+
+A partition's keys hash to one slot, and **every script touches exactly one queue, whose keys are all in its
+partition's slot** — which is what makes the Lua legal at all, since a script may only reach keys in a single
+slot. The wake stream is in that slot too, which is the whole reason the tag is the partition rather than the
 queue: a stream tagged differently from the keys it announces could not be appended by the script that made
 them claimable, and a separate append is a crash window where work exists and nobody is told.
 
-**The bucket count is a permanent deployment parameter**, like a partition count. Changing it moves queues
-between tags and strands whatever was written under the old one, so it is fixed at first use; changing it
-means drain and restart. At one bucket the whole service is one slot — right for a single node, and no use
-in a cluster. Above one, buckets spread across nodes and queues spread across buckets, which is where the
-sharding actually happens: [`../research/bucketed-wake-streams.md`](../research/bucketed-wake-streams.md)
-has the reasoning and what it cost.
+**The partition count is a constant, chosen once for everyone.** Sixteen, because the count is a ceiling on
+spread but a floor on overhead: the queue's data occupies at most sixteen slots — plus the lock's one, so
+seventeen nodes at the very most — which is far above any realistic cluster for one service, while the cost
+of carrying that ceiling is sixteen mostly-idle streams. On a single server they are one read on one
+connection; on a cluster each read names only its own slot's streams, so the ceiling costs connections
+rather than round trips. It is deliberately not a deployment parameter: a knob nobody would set
+differently is a liability, and a *changeable* count was a standing trap — changing it moves queues between
+tags and strands whatever was written under the old one. Changing the constant is therefore a change to the
+shape of stored data, which is what the schema version below exists to gate.
+[`../research/bucketed-wake-streams.md`](../research/bucketed-wake-streams.md) has the original reasoning
+and what partitioning cost.
+
+**The store records the schema it was written under, and instances refuse to disagree.** At first boot each
+instance records the code's schema version (`dkq:layout:schema`, claimed with `SET NX` so racing first
+boots cannot both write); every later boot compares and **refuses to start on a mismatch**, before anything
+is served — a rolling deploy of incompatible code crash-loops loudly instead of misreading live structures.
+The version is bumped in code whenever an older instance would misread the store: a structure changing
+type, an encoding changing form, the partition constant changing. Gate-only, never migrated: the remedy is a
+ceremony, in this order — **stop every instance**, drain dkq (no queued work, no outstanding receipts or
+holds; delete dkq's keys, or flush the store **only if it is dkq's alone** — an existing shared Redis is a
+supported home, and its other tenants are not dkq's to flush), run the `layout accept` mode once, then
+start instances. Both halves are on the operator: `accept` records over whatever is there — it cannot
+verify the drain, because what a leftover key looks like depends on the schema being replaced, which the
+new code no longer knows — and it cannot see instances, which check their schema at boot and never again. What no store-side marker can cover is client-held state such as
+receipts: a receipt-format change breaks holds the store never sees.
 
 Two consequences are easy to undo by accident:
 
@@ -52,7 +99,7 @@ Two consequences are easy to undo by accident:
   siblings — without declaring them in `KEYS`. Reaching an undeclared key is only safe because the tag
   guarantees the same slot. That is why both take `prefix` as an argument at all, and it is unavoidable in
   `claim.lua`, which does not know which key it holds until it has popped one.
-- **The `wake` stream carries the bucket's tag for the same reason.** A stream tagged differently from the
+- **The `wake` stream carries the partition's tag for the same reason.** A stream tagged differently from the
   keys it announces would be a different slot, so
   the entry could not be appended by the script that made the key claimable — and a separate append is a
   crash window where work exists and nobody is told.
