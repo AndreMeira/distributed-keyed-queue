@@ -46,7 +46,7 @@ if redis.call('HSETNX', payloads, id, payload) == 1 then
 
     -- Only on the transition, and in the same call that made it claimable: a consumer woken by this entry
     -- cannot arrive before the work it announces, and a crash cannot land between the two.
-    redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'queue', queue, 'key', key)
+    redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'kind', 'q', 'name', queue, 'key', key)
   end
 end
 

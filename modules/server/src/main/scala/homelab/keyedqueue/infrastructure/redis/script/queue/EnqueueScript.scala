@@ -1,9 +1,7 @@
 package homelab.keyedqueue.infrastructure.redis.script.queue
 
 
-import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.Message
-import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands
 import homelab.keyedqueue.infrastructure.redis.Connection
@@ -16,7 +14,7 @@ import zio.*
 
 object EnqueueScript:
 
-  type Input  = (ns: QueueKeys, message: Message)
+  type Input  = (keys: QueueKeys, message: Message)
   type Output = Long
 
   /**

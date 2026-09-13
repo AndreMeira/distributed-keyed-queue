@@ -25,7 +25,7 @@ off the latency path entirely.
 
 ## The problem
 
-`WakeListener` issues one `XREAD` across every queue it has been asked to watch. The stream set is fixed
+`ReadinessListener` issues one `XREAD` across every queue it has been asked to watch. The stream set is fixed
 when the read is issued, so a queue watched while a read is in flight is not heard until that read returns —
 either an entry lands on another watched stream, or `block` expires. An instance watching nothing sleeps for
 `block` instead, and a `watch` arriving during the sleep does not shorten it.
@@ -94,7 +94,7 @@ already works — so reading 64 bucket streams is one command on one connection.
   as a plain segment, so keys stay readable and queues stay isolated.
 - **The Lua does not change.** Every script already takes `prefix` as an argument and `wake` as a declared
   key; both simply arrive with different contents.
-- **`WakeListener`** — `watch(queue)` disappears entirely, along with `position` and the growing `watched`
+- **`ReadinessListener`** — `watch(queue)` disappears entirely, along with `position` and the growing `watched`
   map: the streams are known at startup, so every one of them is in every read from the first.
 - **The Lua changes after all**, in one small way. An entry carried `key` — the *message* key — and the
   queue came from the stream name. A shared stream cannot say, so `enqueue.lua`, `settle.lua` and

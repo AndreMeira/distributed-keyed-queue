@@ -17,9 +17,9 @@ runtime — see [Cluster](#one-partition-one-slot).
 
 ## The layout
 
-Everything a queue owns is prefixed `{p:<partition>}:v1:q:<queue>`, where the partition is
+Everything a queue owns is prefixed `{p:<partition>}:v3:q:<queue>`, where the partition is
 `hash(queue) % 16` (the partition count is a constant of the code) and decides which cluster slot the queue
-lives in, and `v1` is the schema version every key carries
+lives in, and `v3` is the schema version every key carries
 ([`../research/schema-versioned-keys.md`](../research/schema-versioned-keys.md)). Six structures belong to
 the queue and three to a key inside it; the seventh, `wake`, belongs to the partition and is shared by every
 queue in it. `{Q}` below is one queue's prefix, `{W}` its partition's (version included in both):
@@ -32,7 +32,7 @@ queue in it. `{Q}` below is one queue's prefix, `{W}` its partition's (version i
 | `{Q}:fence` | hash | key → claim counter | consume, complete, watchdog |
 | `{Q}:attempts` | hash | **message id** → delivery count | consume, complete |
 | `{Q}:delayed` | zset | key → when it may be worked again | complete, watchdog |
-| `{W}:wake` | **stream** | one entry per key made claimable, naming its queue | produce, complete, watchdog |
+| `{W}:wake` | **stream** | one entry per key made claimable: `kind` `q`, the queue's name, the key | produce, complete, watchdog |
 | `{Q}:msgs:<key>` | list | that key's message ids, producer order | produce, complete |
 | `{Q}:payloads:<key>` | hash | message id → the message | produce, consume, complete |
 | `{Q}:owned:<key>` | set | ids the live claim holds and has not settled | consume, complete, watchdog |
@@ -74,7 +74,10 @@ climbs on redelivery, which is what makes a poison message visible.
 **`claimed` and `delayed` are sorted sets** because both are swept by "everything due before now", which is
 `ZRANGEBYSCORE` — the operation they exist to serve.
 
-**`wake` is a stream, and there is one per partition.** A stream rather than pub/sub because a reader that
+**`wake` is a stream, there is one per partition, and both APIs announce on it.** Every entry carries a
+`kind` field — `q` for a queue with work, `l` for a lock that came free — and the listener routes on that
+rather than on which stream it arrived from, so the two sinks stay separate while the partition holds one
+stream, one slot and one blocking connection instead of two. A stream rather than pub/sub because a reader that
 reconnects resumes from the id it holds, where a subscriber would simply have missed whatever arrived while
 it was away — and a missed wake is a consumer asleep beside claimable work. Tagged by partition rather than by
 queue because a script may not touch two cluster slots: sharing the *partition's* hash tag with the keys it
@@ -149,7 +152,7 @@ one script there is no such list and no such moment: **the lease is the only thi
 
 Every name above carries its partition's `{p:<partition>}` hash tag, so a queue's keys — and the wake stream that
 announces them — hash to one cluster slot and a script may touch them all. Only the braces are hashed, so
-the `v1` that follows the tag names the schema without moving anything between slots. `claim.lua` and `sweep.lua`
+the `v3` that follows the tag names the schema without moving anything between slots. `claim.lua` and `sweep.lua`
 build `msgs:<key>`, `payloads:<key>` and `owned:<key>` at runtime from `prefix` rather than receiving them
 in `KEYS` — legal only because the tag guarantees the same slot, and unavoidable for `claim.lua`, which
 does not know which key it has until it pops one. That is why both take `prefix` as an argument.
@@ -159,26 +162,29 @@ would be a different slot, so the append could not share a script with the push 
 Tagging both by partition is what keeps them together.
 
 The consequence is that **a partition lives on one node**: sharding spreads partitions, never one queue and never
-one partition. With sixteen partitions fixed in code, a single node simply holds them all, and a cluster spreads
+one partition. A single server uses one partition and holds everything; a cluster uses sixteen and spreads
 them. See [`redis-cluster.md`](redis-cluster.md).
 
 ## The lock's structures
 
+What moves between them is [`lock-mechanics.md`](lock-mechanics.md).
+
 The lock API shares the store but none of the queue's structures. Everything it owns is prefixed
-`{dkq:locks}:v1` — one hash tag for every lock, so one slot, which is what lets each script touch all of
-them atomically (partitioning the locks is deferred; see [`redis-cluster.md`](redis-cluster.md)). `{L}` below
-is that prefix:
+`{p:<partition>}:v3:l`, where the partition is `hash(lock) % 16` — the queue's tag space, so a lock's keys
+and the stream announcing it hash to one slot and a script may touch them together
+([`redis-cluster.md`](redis-cluster.md)). `{L}` below is one partition's prefix, and the structures it names
+are shared by every lock in that partition, with the lock's name as a member or field:
 
 | key | type | maps | written by |
 |---|---|---|---|
 | `{L}:held` | zset | lock name → lease deadline, unix millis | acquire, grant, try, refresh, release, trim |
 | `{L}:tokens` | hash | lock name → the live holder's fence token | acquire, grant, try, release, trim |
-| `{L}:fence` | string | one counter for every lock | acquire, grant, try |
+| `{L}:fence` | string | one counter for the partition | acquire, grant, try |
 | `{L}:waiting` | zset | lock name → the latest ticket deadline in its waiters list | acquire, grant, abandon, try, trim |
 | `{L}:waiters:<name>` | list | tickets `id:deadline`, arrival order; exists only while someone queues | acquire, grant, abandon, try |
-| `{L}:wake` | stream | one entry per lock freed, naming it | release, trim |
+| `{p:<partition>}:v3:wake` | stream | one entry per lock freed, `kind` `l` and the name | release, trim |
 
-**The fence is one counter for every lock, and `tokens` is why it can be.** Fences need only increase per
+**The fence is one counter per partition, and `tokens` is why it can be.** Fences need only increase per
 lock, which a globally increasing number satisfies a fortiori — while a per-lock counter could never be
 deleted, since the next grant must exceed every fence ever issued for the name. So the counter is the one
 key that outlives holds; `tokens` names the live holder and dies with its hold. The counter also mints

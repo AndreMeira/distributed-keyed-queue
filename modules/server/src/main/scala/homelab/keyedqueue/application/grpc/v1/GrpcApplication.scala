@@ -38,6 +38,7 @@ object GrpcApplication:
   def serve(conf: QueueConfig): ZIO[Any, ApplicationError, Nothing] =
     (ZIO.service[Server] *> ZIO.service[LockCleanup] *> ZIO.never).provide(
       ZLayer.succeed(conf),
+      RedisModule.layout,
       RedisModule.connection,
       RedisModule.scripts,
       RedisModule.stores,

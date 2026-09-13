@@ -4,38 +4,52 @@ import homelab.keyedqueue.domain.types.LockName
 
 
 /**
- * The keys the lock scripts touch: held leases, live holders' tokens, the fence counter, the waiting index
- * and per-lock waiter lists, and the wake stream.
+ * The keys one partition's lock scripts touch: held leases, live holders' tokens, the fence counter, the
+ * waiting index and per-lock waiter lists, and the wake stream.
  *
- * Static but for the waiter lists, unlike the queue's per-key
- * [[QueueKeys]]: locks share one `held` zset, one `tokens` hash,
- * one `fence` counter and one `waiting` index, with the lock's name as a member or field; only `waiters`
- * is a key per lock, and it exists only while someone queues. All carry one hash tag so a script may touch
- * them together, and so every lock lands in one cluster slot. (Partitioning the tag by lock name — as the
- * queue does — is deferred; this is the single-slot form.)
+ * '''A lock's partition follows its name''', as a queue's follows the queue's, so every operation on one
+ * lock reaches the same keys without being told which partition it is in. What the partition buys is what
+ * it buys for the queue: the locks spread across cluster slots instead of every lock in the deployment
+ * living on one node — and the wake stream spreads with them, which it must, because a release appends to
+ * it in the same script that frees the lock, and a script may only touch one slot.
+ *
+ * '''The wake stream is the partition's, not the locks'.''' It is the one [[QueueKeys]] announces on too:
+ * an entry says which kind of thing it names, so sharing a stream costs nothing and saves the slot — and
+ * the connection blocked on it — that a second one would need.
+ *
+ * Unlike [[QueueKeys]], the structures are shared by every lock in the partition rather than being one
+ * lock's own: `held` and `tokens` carry the name as a member or field. Only `waiters` is a key per lock,
+ * and it exists only while someone queues.
+ *
+ * @param tag the hash tag of the partition these keys belong to
  */
-object LockKeys:
+final case class LockKeys(tag: KeyLayout.Tag):
 
-  /** The hash tag every lock key shares. */
-  private val tag: String = "{dkq:locks}"
+  /** The tag every key in this partition shares. */
+  private val prefix: String = s"$tag:${KeyLayout.segment}:l"
 
   /** Held leases, `name -> deadline`. */
-  val held: RedisKey = RedisKey(s"$tag:${KeyLayout.segment}:held")
+  val held: RedisKey = RedisKey(s"$prefix:held")
 
   /** Live holders' fence tokens, `name -> token`; an entry dies with its hold. */
-  val tokens: RedisKey = RedisKey(s"$tag:${KeyLayout.segment}:tokens")
+  val tokens: RedisKey = RedisKey(s"$prefix:tokens")
 
-  /** The fence counter, one for every lock; the only key that outlives a hold. */
-  val fence: RedisKey = RedisKey(s"$tag:${KeyLayout.segment}:fence")
+  /**
+   * The fence counter for this partition; the only key that outlives a hold.
+   *
+   * One counter per partition rather than one for the deployment, which is safe because a fence need only
+   * increase within a single lock, and a lock never changes partition.
+   */
+  val fence: RedisKey = RedisKey(s"$prefix:fence")
 
   /** Which locks have waiters, `name -> the latest ticket deadline` — what the trim prunes dead lists by. */
-  val waiting: RedisKey = RedisKey(s"$tag:${KeyLayout.segment}:waiting")
+  val waiting: RedisKey = RedisKey(s"$prefix:waiting")
 
   /** What a lock's waiters-list key starts with; the name completes it. */
-  val waitersPrefix: String = s"$tag:${KeyLayout.segment}:waiters:"
+  val waitersPrefix: String = s"$prefix:waiters:"
 
   /** The wake stream a release appends to, read by the shared listener. */
-  val wake: RedisKey = RedisKey(s"$tag:${KeyLayout.segment}:wake")
+  val wake: RedisKey = KeyLayout.wakeStreamKey(tag)
 
   /**
    * One lock's waiters list: its tickets, in arrival order. Exists only while someone queues.

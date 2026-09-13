@@ -6,9 +6,9 @@ import zio.*
 
 
 /**
- * A wake for every parked waiter on a name — the lock's counterpart to [[Readiness]].
+ * A wake for every parked waiter on a name — the lock's counterpart to [[QueueReadiness]].
  *
- * '''As a [[Waker]]: a wake is dropped.''' It reaches the mailboxes subscribed at that moment and no
+ * '''A wake is dropped.''' It reaches the mailboxes subscribed at that moment and no
  * others. Safe here only because a waiter subscribes before it enters, so no release falls into a gap.
  *
  * '''Everyone wakes, because only the store knows whose turn it is.''' A fair lock grants by ticket order,
@@ -23,15 +23,7 @@ import zio.*
  *
  * @param waiting lock → the mailboxes of its parked waiters
  */
-final class Broadcast(waiting: Ref[Map[Waker.Name, Set[Queue[Unit]]]]) extends Waker:
-
-  /**
-   * Read a name as a lock's, which is all this sink ever wakes.
-   *
-   * @param raw the name as the entry carried it
-   * @return it, as a lock name
-   */
-  override def name(raw: String): Waker.Name = LockName(raw)
+final class LockReadiness(waiting: Ref[Map[LockName, Set[Queue[Unit]]]]):
 
   /**
    * Wake every waiter parked on this lock.
@@ -42,7 +34,7 @@ final class Broadcast(waiting: Ref[Map[Waker.Name, Set[Queue[Unit]]]]) extends W
    * @param lock what came free
    * @return noop
    */
-  override def ready(lock: Waker.Name): UIO[Unit] =
+  def ready(lock: LockName): UIO[Unit] =
     waiting.get.flatMap: current =>
       val queues = current.getOrElse(lock, Set.empty)
       ZIO.foreachDiscard(queues)(queue => queue.offer(()))
@@ -52,7 +44,7 @@ final class Broadcast(waiting: Ref[Map[Waker.Name, Set[Queue[Unit]]]]) extends W
    *
    * @return noop
    */
-  override def readyAll: UIO[Unit] =
+  def readyAll: UIO[Unit] =
     waiting.get.flatMap: current =>
       ZIO.foreachDiscard(current.keys)(ready)
 
@@ -62,7 +54,7 @@ final class Broadcast(waiting: Ref[Map[Waker.Name, Set[Queue[Unit]]]]) extends W
    * @param lock the lock to be woken for
    * @return the mailbox; wakes land in it until the scope closes
    */
-  def subscribe(lock: Waker.Name): ZIO[Scope, Nothing, Queue[Unit]] =
+  def subscribe(lock: LockName): ZIO[Scope, Nothing, Queue[Unit]] =
     ZIO.acquireRelease {
       Queue.sliding[Unit](1).tap { mailbox =>
         waiting.update(joined(lock, mailbox))
@@ -78,11 +70,11 @@ final class Broadcast(waiting: Ref[Map[Waker.Name, Set[Queue[Unit]]]]) extends W
    * @return the map as it becomes
    */
   private def joined(
-    lock: Waker.Name,
+    lock: LockName,
     mailbox: Queue[Unit],
   )(
-    current: Map[Waker.Name, Set[Queue[Unit]]]
-  ): Map[Waker.Name, Set[Queue[Unit]]] =
+    current: Map[LockName, Set[Queue[Unit]]]
+  ): Map[LockName, Set[Queue[Unit]]] =
     current.updated(lock, current.getOrElse(lock, Set.empty) + mailbox)
 
   /**
@@ -94,21 +86,21 @@ final class Broadcast(waiting: Ref[Map[Waker.Name, Set[Queue[Unit]]]]) extends W
    * @return the map as it becomes
    */
   private def left(
-    lock: Waker.Name,
+    lock: LockName,
     mailbox: Queue[Unit],
   )(
-    current: Map[Waker.Name, Set[Queue[Unit]]]
-  ): Map[Waker.Name, Set[Queue[Unit]]] =
+    current: Map[LockName, Set[Queue[Unit]]]
+  ): Map[LockName, Set[Queue[Unit]]] =
     val remaining = current.getOrElse(lock, Set.empty) - mailbox
     if remaining.isEmpty then current.removed(lock) else current.updated(lock, remaining)
 
 
-object Broadcast:
+object LockReadiness:
 
   /**
-   * An empty broadcast.
+   * An empty readiness.
    *
    * @return one with nobody waiting
    */
-  def make: UIO[Broadcast] =
-    Ref.make(Map.empty[Waker.Name, Set[Queue[Unit]]]).map(Broadcast(_))
+  def make: UIO[LockReadiness] =
+    Ref.make(Map.empty[LockName, Set[Queue[Unit]]]).map(LockReadiness(_))

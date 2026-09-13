@@ -133,7 +133,7 @@ leaves the waiting set, so the fan-out does not compound under load.
 
 The broadcast lasted until the herd it costs became the thing worth removing. What replaced it is a
 **readiness token** — one per queue, in a `Queue.sliding[Unit](1)`, taken by the consumer that acts on it.
-`Readiness.await(queue, patience)(claim)` keeps the shape that matters — the claim runs *inside*, so a
+`QueueReadiness.awaitReady(queue, patience)(claim)` keeps the shape that matters — the claim runs *inside*, so a
 token is never a value a dying fiber can drop — but delivery is point-to-point again: one token wakes one
 consumer, and a consumer that finds work hands the token on, so a burst drains one at a time and the chain
 stops on the first fruitless look.
@@ -177,8 +177,8 @@ finalizer is asked.
 
 ## Where to look in the code
 
-- `Readiness` — the token, and the three recoveries
+- `QueueReadiness` — the token, and the three recoveries
 - `RedisQueueStore.claimWithin` — the loop, which no longer has an ordering to preserve
-- `ReadinessSpec` — the semantics, plus 500 rounds each racing a token against a timeout and an interrupt
+- `QueueReadinessSpec` — the semantics, plus 500 rounds each racing a token against a timeout and an interrupt
 - `docs/research/non-blocking-dequeue.md` — the design this replaced, and why
 - `docs/learning-material/claiming-identity.md` — the `BLMOVE` design's box, and what it cost

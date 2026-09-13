@@ -1,9 +1,8 @@
 package homelab.keyedqueue.infrastructure.redis
 
 
-import homelab.common.error.ApplicationError
-import homelab.keyedqueue.infrastructure.redis.keys.RedisKey
-import io.lettuce.core.cluster.{ RedisClusterClient, SlotHash }
+import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, RedisKey }
+import io.lettuce.core.cluster.RedisClusterClient
 import io.lettuce.core.cluster.api.sync.RedisClusterCommands
 import io.lettuce.core.codec.{ ByteArrayCodec, RedisCodec, StringCodec }
 import io.lettuce.core.{ RedisClient, RedisURI }
@@ -13,20 +12,17 @@ import java.time.Duration as JavaDuration
 
 
 /**
- * Where an effect gets a connection from.
+ * Where an effect gets a connection from: it asks for a [[Connection.Commands]] by type, and this decides
+ * which one it gets. [[sync]] serves everything that answers immediately; [[blocking]] holds one connection
+ * per partition, since a blocking command occupies its connection whole. All are opened at startup, so the
+ * number a deployment holds is fixed before it serves.
  *
- * The connection arrives in the environment as [[Connection.Commands]]: an effect asks for one by type, and
- * this decides which one it gets. [[sync]] is shared by everything that answers immediately; the
- * [[groups]] each hold a connection of their own and the keys one command on it may name — separate
- * because a blocking command occupies its connection whole, and split by slot because Redis Cluster
- * refuses one command spanning slots. All of them are opened at startup, so how many connections a
- * deployment holds is a fact fixed before it serves.
+ * Why the client is synchronous, and what that costs, is measured in `docs/architecture/redis-connections.md`.
  *
- * Why the client is synchronous, and what that costs — Redis executes a script in about four microseconds,
- * a blocking-pool hop costs a third of one, and a waiting consumer holds no thread at all — is measured in
- * `docs/architecture/redis-connections.md`.
+ * @param sync the connection every command that answers at once runs on
+ * @param blocking partition -> the connection reserved for commands that park, one per partition
  */
-final case class Connection(sync: Connection.Commands, groups: Chunk[Connection.Group]):
+final case class Connection(sync: Connection.Commands, blocking: Map[KeyLayout.Partition, Connection.Commands]):
 
   /**
    * Run an effect on the shared connection.
@@ -39,6 +35,27 @@ final case class Connection(sync: Connection.Commands, groups: Chunk[Connection.
    */
   def provide[R, E, A](effect: ZIO[R & Connection.Commands, E, A]): ZIO[R, E, A] =
     effect.provideSomeEnvironment[R](env => env ++ ZEnvironment(sync))
+
+  /**
+   * Run an effect on the connection reserved for a partition — the one a command may occupy by blocking.
+   *
+   * @param partition whose connection to run on
+   * @param effect what to run, needing a connection
+   * @tparam R what it needs besides a connection
+   * @tparam E how it fails
+   * @tparam A what it produces
+   * @return the same effect, its connection supplied; aborts with `PartitionConnectionMissing` when no
+   *         connection was opened for that partition, which is this code wired wrong rather than Redis
+   *         being unreachable
+   */
+  def provideBlocking[R, E, A](
+    partition: KeyLayout.Partition
+  )(
+    effect: ZIO[R & Connection.Commands, E, A]
+  ): ZIO[R, E | RedisFailure, A] =
+    blocking.get(partition) match
+      case Some(connection) => effect.provideSomeEnvironment[R](env => env ++ ZEnvironment(connection))
+      case None             => ZIO.fail(RedisFailure.PartitionConnectionMissing(partition))
 
 
 /**
@@ -72,19 +89,6 @@ object Connection:
     RedisClusterCommands[String, Array[Byte]]
 
   /**
-   * A connection, and the keys that may be named together in one command on it.
-   *
-   * '''The bound is a slot, not a node.''' Redis refuses a multi-key command whose keys span slots even
-   * when those slots live on the same server, so keys are grouped by slot and never by anything coarser —
-   * merging two groups because they share a node would be refused at runtime. A server that has no slots
-   * has one group, holding every key asked for.
-   *
-   * @param commands the connection reserved for these keys
-   * @param keys what one command on it may name
-   */
-  final case class Group(commands: Commands, keys: Chunk[RedisKey])
-
-  /**
    * Ask for the connection in the environment, and run something with it.
    *
    * @param effect what to run with the connection
@@ -108,62 +112,19 @@ object Connection:
 
   /**
    * Every connection the deployment will hold, opened here and closed with the scope: the shared one, and
-   * one per group of `keys` that a single command may name.
-   *
-   * The count is settled at startup rather than left to the caller, so `CLIENT LIST` on a running store
-   * shows what this says it will: one plus the number of groups — one group on a single server, one per
-   * slot on a cluster.
+   * one per partition. `CLIENT LIST` on a running store shows exactly that — one plus one per partition.
    *
    * @param config where Redis is, and the longest wait to honour
-   * @param keys what blocking commands will name; the caller says which, and gets them back grouped
+   * @param layout how many partitions there are, and so how many blocking connections to open
    * @return the connections; aborts with `Unavailable` when one cannot be opened
    */
-  def make(config: Config, keys: Chunk[RedisKey]): ZIO[Scope, RedisFailure, Connection] =
+  def make(config: Config, layout: KeyLayout): ZIO[Scope, RedisFailure, Connection] =
     for
-      client <- client(config)
-      sync   <- open(client, config.maxWait)
-      groups <- ZIO.foreach(grouped(client, keys))(group(client, config.maxWait + listeningSlack))
-    yield Connection(sync, groups)
-
-  /**
-   * One group, with a connection of its own.
-   *
-   * @param client the client to connect with
-   * @param commandTimeout the ceiling for any single command
-   * @param keys what one command on this connection may name
-   * @return the group; aborts with `Unavailable` when the connection cannot be opened
-   */
-  private def group(
-    client: Client,
-    commandTimeout: Duration,
-  )(
-    keys: Chunk[RedisKey]
-  ): ZIO[Scope, RedisFailure, Group] =
-    open(client, commandTimeout).map(commands => Group(commands, keys))
-
-  /**
-   * The keys, grouped by what one command may name together.
-   *
-   * On a cluster that is a slot: a multi-key command across slots is refused, and the hash tags exist
-   * precisely to spread slots. A single server has no slots, so every key shares one group — one
-   * connection, as it always was.
-   *
-   * @param client the client, which says whether slots apply
-   * @param keys every key a blocking command will name
-   * @return the groups, each safe for one command
-   */
-  private def grouped(client: Client, keys: Chunk[RedisKey]): Chunk[Chunk[RedisKey]] =
-    client match
-      case _: RedisClusterClient => Chunk.fromIterable(keys.groupBy(slotOf).values)
-      case _: RedisClient        => Chunk(keys)
-
-  /**
-   * Which slot a key hashes to.
-   *
-   * @param key the key
-   * @return its slot
-   */
-  private def slotOf(key: RedisKey): Int = SlotHash.getSlot(key)
+      client   <- client(config)
+      sync     <- open(client, config.maxWait)
+      timeout   = config.maxWait + listeningSlack
+      blocking <- ZIO.foreach(layout.partitionIds)(partition => open(client, timeout).map(partition -> _))
+    yield Connection(sync, blocking.toMap)
 
   /**
    * The client every connection is opened from — the one place the two backends are chosen between.

@@ -7,7 +7,7 @@ import homelab.keyedqueue.domain.model.Acquisition
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.types.LockName
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.keys.LockKeys
+import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
 import org.testcontainers.containers.GenericContainer
 import zio.*
 import zio.test.*
@@ -17,11 +17,14 @@ import zio.test.*
  * The dedicated lock, against real Valkey.
  *
  * Two things to notice in the harness. There is '''no watchdog''' — crash-recovery is inline reclaim on the
- * next grant, so nothing sweeps. And each instance runs its own [[WakeListener]] over the shared lock wake
- * stream into a [[Broadcast]], so a release on one instance wakes every waiter on another — the
+ * next grant, so nothing sweeps. And each instance runs its own [[ReadinessListener]] over the shared lock wake
+ * stream into a [[LockReadiness]], so a release on one instance wakes every waiter on another — the
  * cross-instance and fairness tests below turn on exactly that, with nothing polling.
  */
 object RedisLockStoreSpec extends ZIOSpecDefault:
+
+  /** The layout these tests read and write under. */
+  private val layout: KeyLayout = KeyLayout.of(cluster = false)
 
   private val ttl = 1.second
 
@@ -55,11 +58,12 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
     for
       connection <- Connection.make(
                       Connection.Config(config.maxWait, config.redisUrl, config.cluster),
-                      Chunk(LockKeys.wake),
+                      layout,
                     )
-      broadcast  <- Broadcast.make
-      store      <- connection.provide(RedisLockStore.make(Monitor.Noop, connection, broadcast))
-      listener   <- WakeListener.make(connection, config.wakeBlock, Map(LockKeys.wake -> broadcast))
+      readiness  <- LockReadiness.make
+      queueReady <- QueueReadiness.make
+      store      <- connection.provide(RedisLockStore.make(Monitor.Noop, connection, readiness, layout))
+      listener   <- ReadinessListener.make(connection, config.wakeBlock, layout, queueReady, readiness)
       _          <- listener.run.forkScoped
     yield store
 

@@ -1,8 +1,8 @@
 package homelab.keyedqueue.infrastructure.redis.script.lock
 
 
-import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.types.*
+import homelab.keyedqueue.infrastructure.redis.keys.LockKeys
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection
 import io.lettuce.core.ScriptOutputType
@@ -15,7 +15,7 @@ import java.time.Instant
 
 object RefreshScript:
 
-  type Input  = (name: LockName, token: Token, ttl: Duration)
+  type Input  = (keys: LockKeys, name: LockName, token: Token, ttl: Duration)
   type Output = (leaseUntil: Instant, renewed: Boolean)
 
   /**

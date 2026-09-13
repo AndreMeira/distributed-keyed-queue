@@ -1,14 +1,13 @@
 package homelab.keyedqueue.infrastructure.redis.script
 
 
-import homelab.keyedqueue.domain.model.{ Claim, Message, Settlement }
+import homelab.keyedqueue.domain.model.Message
 import homelab.keyedqueue.domain.model.Settlement.Verdict
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import zio.{ Chunk, Duration }
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
-import homelab.keyedqueue.infrastructure.redis.keys.LockKeys
 import homelab.keyedqueue.infrastructure.redis.script.lock.*
 import homelab.keyedqueue.infrastructure.redis.script.queue.*
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript.Input.Encoder
@@ -36,9 +35,9 @@ object Codecs {
    */
   given claimInput: LuaScript.Input.Encoder[ClaimScript.Input] = claim =>
     LuaScript.Input(
-      key = Array[String](claim.ns.ready, claim.ns.claimed, claim.ns.fence, claim.ns.attempts),
+      key = Array[String](claim.keys.ready, claim.keys.claimed, claim.keys.fence, claim.keys.attempts),
       args = Array(
-        Encoder.utf8(claim.ns.prefix),
+        Encoder.utf8(claim.keys.prefix),
         Encoder.millis(claim.leaseTtl),
         Encoder.number(claim.maxBatch),
       ),
@@ -51,19 +50,19 @@ object Codecs {
   given enqueueInput: LuaScript.Input.Encoder[EnqueueScript.Input] = enqueue =>
     LuaScript.Input(
       key = Array[String](
-        enqueue.ns.ready,
-        enqueue.ns.claimed,
-        enqueue.ns.delayed,
-        enqueue.ns.msgs(enqueue.message.key),
-        enqueue.ns.payloads(enqueue.message.key),
-        enqueue.ns.wake,
-        enqueue.ns.sequence,
+        enqueue.keys.ready,
+        enqueue.keys.claimed,
+        enqueue.keys.delayed,
+        enqueue.keys.msgs(enqueue.message.key),
+        enqueue.keys.payloads(enqueue.message.key),
+        enqueue.keys.wake,
+        enqueue.keys.sequence,
       ),
       args = Array(
         Encoder.utf8(enqueue.message.key),
         Encoder.utf8(enqueue.message.messageId),
         StoredMessage.toBytes(enqueue.message).toArray,
-        Encoder.utf8(enqueue.ns.queue),
+        Encoder.utf8(enqueue.keys.queue),
       ),
     )
 
@@ -77,16 +76,16 @@ object Codecs {
     val claim = settle.settlement.claimed
     LuaScript.Input(
       key = Array[String](
-        settle.ns.ready,
-        settle.ns.claimed,
-        settle.ns.fence,
-        settle.ns.msgs(claim.key),
-        settle.ns.payloads(claim.key),
-        settle.ns.owned(claim.key),
-        settle.ns.attempts,
-        settle.ns.delayed,
-        settle.ns.wake,
-        settle.ns.sequence,
+        settle.keys.ready,
+        settle.keys.claimed,
+        settle.keys.fence,
+        settle.keys.msgs(claim.key),
+        settle.keys.payloads(claim.key),
+        settle.keys.owned(claim.key),
+        settle.keys.attempts,
+        settle.keys.delayed,
+        settle.keys.wake,
+        settle.keys.sequence,
       ),
       args = (Chunk(
         Encoder.utf8(claim.key),
@@ -111,7 +110,7 @@ object Codecs {
   given renewInput: LuaScript.Input.Encoder[RenewScript.Input] = renew =>
     val pairs = renew.held.flatMap(claim => Chunk(Encoder.utf8(claim.key), Encoder.number(claim.token)))
     LuaScript.Input(
-      key = Array[String](renew.ns.claimed, renew.ns.fence),
+      key = Array[String](renew.keys.claimed, renew.keys.fence),
       args = (Chunk(Encoder.millis(renew.leaseTtl)) ++ pairs).toArray,
     )
 
@@ -119,24 +118,24 @@ object Codecs {
   given sweepInput: LuaScript.Input.Encoder[SweepScript.Input] = sweep =>
     LuaScript.Input(
       key = Array[String](
-        sweep.ns.claimed,
-        sweep.ns.ready,
-        sweep.ns.fence,
-        sweep.ns.delayed,
-        sweep.ns.wake,
-        sweep.ns.sequence,
+        sweep.keys.claimed,
+        sweep.keys.ready,
+        sweep.keys.fence,
+        sweep.keys.delayed,
+        sweep.keys.wake,
+        sweep.keys.sequence,
       ),
       args = Array(
         Encoder.number(sweep.limit),
-        Encoder.utf8(sweep.ns.prefix),
-        Encoder.utf8(sweep.ns.queue),
+        Encoder.utf8(sweep.keys.prefix),
+        Encoder.utf8(sweep.keys.queue),
       ),
     )
 
   /** The lock's name, the lease length, then how long the ticket lives. */
   given lockAcquireInput: LuaScript.Input.Encoder[AcquireScript.Input] = acquire =>
     LuaScript.Input(
-      key = LockKeys.granting(acquire.name),
+      key = acquire.keys.granting(acquire.name),
       args = Array(
         Encoder.utf8(acquire.name),
         Encoder.millis(acquire.ttl),
@@ -147,7 +146,7 @@ object Codecs {
   /** The lock's name, the ticket asking, then the lease length a grant would run for. */
   given lockGrantInput: LuaScript.Input.Encoder[GrantScript.Input] = grant =>
     LuaScript.Input(
-      key = LockKeys.granting(grant.name),
+      key = grant.keys.granting(grant.name),
       args = Array(
         Encoder.utf8(grant.name),
         Encoder.number(grant.ticket),
@@ -158,14 +157,14 @@ object Codecs {
   /** The lock's name, then the lease length. */
   given lockTryInput: LuaScript.Input.Encoder[TryScript.Input] = attempt =>
     LuaScript.Input(
-      key = LockKeys.granting(attempt.name),
+      key = attempt.keys.granting(attempt.name),
       args = Array(Encoder.utf8(attempt.name), Encoder.millis(attempt.ttl)),
     )
 
   /** The lock's name, the token that authorises extending it, then how much longer to grant. */
   given lockRefreshInput: LuaScript.Input.Encoder[RefreshScript.Input] = refresh =>
     LuaScript.Input(
-      key = LockKeys.refresh,
+      key = refresh.keys.refresh,
       args = Array(
         Encoder.utf8(refresh.name),
         Encoder.number(refresh.token),
@@ -176,14 +175,14 @@ object Codecs {
   /** The lock's name, then the token that authorises releasing it. */
   given lockReleaseInput: LuaScript.Input.Encoder[ReleaseScript.Input] = release =>
     LuaScript.Input(
-      key = LockKeys.release,
+      key = release.keys.release,
       args = Array(Encoder.utf8(release.name), Encoder.number(release.token)),
     )
 
   /** The lock's name, then the ticket being withdrawn. */
   given lockAbandonInput: LuaScript.Input.Encoder[AbandonScript.Input] = abandon =>
     LuaScript.Input(
-      key = LockKeys.ticket(abandon.name),
+      key = abandon.keys.ticket(abandon.name),
       args = Array(Encoder.utf8(abandon.name), Encoder.number(abandon.ticket)),
     )
 
@@ -193,12 +192,13 @@ object Codecs {
    * The prefix is an argument and not a key because the names it completes depend on what the trim finds.
    */
   given lockTrimInput: LuaScript.Input.Encoder[TrimScript.Input] = trim =>
+    val keys = trim.keys
     LuaScript.Input(
-      key = LockKeys.trim,
+      key = keys.trim,
       args = Array(
         Encoder.millis(trim.grace),
         Encoder.number(trim.limit),
-        Encoder.utf8(LockKeys.waitersPrefix),
+        Encoder.utf8(keys.waitersPrefix),
       ),
     )
 

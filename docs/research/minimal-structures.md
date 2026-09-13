@@ -69,5 +69,5 @@ also rejected as two structures pretending to be one.
 - The pigeonhole model above, usable wherever DKQ needs explaining.
 - The observation that `sweep.lua`'s double-push guard exists precisely because claimed∩delayed is
   representable — the comment there now has a companion explaining *why* the state exists.
-- The level-triggered backstop under `Readiness` (`simplify-exp-2`), which came out of the same
+- The level-triggered backstop under `QueueReadiness` (`simplify-exp-2`), which came out of the same
   conversation: correctness rests on state, the wake path stays the accelerator.

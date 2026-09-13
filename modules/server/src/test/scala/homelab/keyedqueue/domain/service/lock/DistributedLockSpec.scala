@@ -6,9 +6,9 @@ import homelab.keyedqueue.domain.service.lock.DistributedLock.LockName
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
-import homelab.keyedqueue.infrastructure.redis.{ Connection, Readiness, RedisQueueStore, WakeListener }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, LockReadiness, QueueReadiness, RedisQueueStore, ReadinessListener }
 import homelab.common.monitor.Monitor
-import homelab.keyedqueue.infrastructure.redis.keys.QueueKeys
+import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
 import homelab.keyedqueue.infrastructure.redis.script.QueueScripts
 import org.testcontainers.containers.GenericContainer
 import zio.*
@@ -22,6 +22,9 @@ import zio.test.*
  * independent stores over one Valkey stand in for two instances.
  */
 object DistributedLockSpec extends ZIOSpecDefault:
+
+  /** The layout these tests read and write under. */
+  private val layout: KeyLayout = KeyLayout.of(cluster = false)
 
   private val leaseTtl = 2.seconds
 
@@ -46,13 +49,14 @@ object DistributedLockSpec extends ZIOSpecDefault:
     for
       connection <- Connection.make(
                       Connection.Config(config.maxWait, config.redisUrl, config.cluster),
-                      QueueKeys.wakeStreams.toChunk,
+                      layout,
                     )
       scripts    <- connection.provide(QueueScripts.make)
-      readiness  <- Readiness.make
-      listener   <- WakeListener.make(connection, readiness, config.wakeBlock)
+      readiness  <- QueueReadiness.make
+      lockReady  <- LockReadiness.make
+      listener   <- ReadinessListener.make(connection, config.wakeBlock, layout, readiness, lockReady)
       _          <- listener.run.forkScoped
-      store      <- RedisQueueStore.make(Monitor.Noop, connection, scripts, readiness, config.leaseTtl)
+      store      <- RedisQueueStore.make(Monitor.Noop, connection, scripts, readiness, layout, config.leaseTtl)
     yield store
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("DistributedLock")(

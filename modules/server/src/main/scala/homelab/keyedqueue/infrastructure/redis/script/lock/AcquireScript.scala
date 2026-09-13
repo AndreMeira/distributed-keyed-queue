@@ -1,10 +1,8 @@
 package homelab.keyedqueue.infrastructure.redis.script.lock
 
 
-import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.model.LockClaim
-import homelab.keyedqueue.domain.service.lock.LockStore.Hold
 import homelab.keyedqueue.domain.types.*
+import homelab.keyedqueue.infrastructure.redis.keys.LockKeys
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection
 import io.lettuce.core.ScriptOutputType
@@ -17,7 +15,7 @@ import java.time.Instant
 
 object AcquireScript:
 
-  type Input  = (name: LockName, ttl: Duration, patience: Duration)
+  type Input  = (keys: LockKeys, name: LockName, ttl: Duration, patience: Duration)
   type Output = AcquireScript.Entered
 
   /**

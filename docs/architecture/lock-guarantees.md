@@ -8,6 +8,8 @@ tags: [lock, guarantees, invariants, fencing, fairness, lease, contract, testing
 
 # What the lock guarantees
 
+*How it works is [`lock-mechanics.md`](lock-mechanics.md); the same mechanism as concrete Redis state, call by call, is [`../learning-material/lock-state-walkthrough.md`](../learning-material/lock-state-walkthrough.md).*
+
 The contract of the `KeyedLock` API, in terms a caller can design against and a test can assert. **No
 implementation appears here** — nothing below depends on which store is behind it, and every statement
 should survive a change of substrate. The queue's contract is [`guarantees.md`](guarantees.md); the lock is

@@ -126,7 +126,7 @@ design questions rather than a piece of this one. What is already known about it
 - **Two flavours, with different requirements.** *Consumer-driven* — "I hold warm state for `k`, give me
   `k`" — needs only a request field and a claim script that does `ZREM ready <key>` instead of `ZPOPMIN`.
   *Announcement-driven* — "`k` just became claimable and I worked it last" — needs the key to reach the
-  consumer, and it currently does not: a wake entry carries `queue` and `key`, but `Readiness.ready(queue)`
+  consumer, and it currently does not: a wake entry carries `queue` and `key`, but `QueueReadiness.ready(queue)`
   discards the key, because readiness is per queue and says only that the queue is worth another look.
   Routing a key to a particular waiter would mean a signal per key, or a side channel.
 - **The fallback is a fairness decision**, not a detail: when the named key is not claimable, answering

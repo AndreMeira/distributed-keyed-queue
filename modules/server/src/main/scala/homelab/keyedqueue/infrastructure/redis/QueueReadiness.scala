@@ -13,7 +13,7 @@ import zio.*
  * "there may be something to claim", and the caller does the claiming — which is what keeps the claim in
  * the fiber that will do the work.
  *
- * '''As a [[Waker]]: a wake is kept.''' Offered with nobody waiting, the token stays in the buffer for the
+ * '''A wake is kept.''' Offered with nobody waiting, the token stays in the buffer for the
  * next look — which is what a queue's wake requires, work not having stopped existing.
  *
  * '''One token, one consumer.''' This is the point of the design. A broadcast wakes every consumer parked
@@ -35,15 +35,7 @@ import zio.*
  *
  * @param queues queue → its token buffer, made on first use
  */
-final class Readiness(queues: Ref[Map[Waker.Name, Queue[Unit]]]) extends Waker:
-
-  /**
-   * Read a name as a queue's, which is all this sink ever wakes.
-   *
-   * @param raw the name as the entry carried it
-   * @return it, as a queue name
-   */
-  override def name(raw: String): Waker.Name = QueueName(raw)
+final class QueueReadiness(queues: Ref[Map[QueueName, Queue[Unit]]]):
 
   /**
    * Announce that a queue may have work.
@@ -54,7 +46,7 @@ final class Readiness(queues: Ref[Map[Waker.Name, Queue[Unit]]]) extends Waker:
    * @param queue what became claimable
    * @return noop
    */
-  override def ready(queue: Waker.Name): UIO[Unit] =
+  def ready(queue: QueueName): UIO[Unit] =
     buffer(queue).flatMap(_.offer(())).unit
 
   /**
@@ -67,7 +59,7 @@ final class Readiness(queues: Ref[Map[Waker.Name, Queue[Unit]]]) extends Waker:
    *
    * @return noop
    */
-  override def readyAll: UIO[Unit] =
+  def readyAll: UIO[Unit] =
     queues.get.flatMap(current => ZIO.foreachDiscard(current.keys)(ready))
 
   /**
@@ -85,7 +77,7 @@ final class Readiness(queues: Ref[Map[Waker.Name, Queue[Unit]]]) extends Waker:
    * @tparam A what `claim` produces
    * @return `claim`'s answer, or `None` when nothing became ready in time; aborts with `E` when `claim` does
    */
-  def awaitReady[E, A](queue: Waker.Name, patience: Duration)(claim: IO[E, Option[A]]): IO[E, Option[A]] =
+  def awaitReady[E, A](queue: QueueName, patience: Duration)(claim: IO[E, Option[A]]): IO[E, Option[A]] =
     buffer(queue).flatMap: found =>
       // Uninterruptible except where restored, so a token cannot be taken and then dropped in the gap
       // before its recovery is installed: interruption there would run neither handler.
@@ -121,7 +113,7 @@ final class Readiness(queues: Ref[Map[Waker.Name, Queue[Unit]]]) extends Waker:
    * @param name the queue whose buffer is wanted
    * @return the buffer
    */
-  private def buffer(name: Waker.Name): UIO[Queue[Unit]] =
+  private def buffer(name: QueueName): UIO[Queue[Unit]] =
     for {
       // get or create the token queue
       queue <- queues.get.flatMap: known =>
@@ -137,11 +129,11 @@ final class Readiness(queues: Ref[Map[Waker.Name, Queue[Unit]]]) extends Waker:
     } yield installed
 
 
-object Readiness:
+object QueueReadiness:
 
   /**
    * An empty registry, with no queues yet.
    *
    * @return the readiness
    */
-  def make: UIO[Readiness] = Ref.make(Map.empty[Waker.Name, Queue[Unit]]).map(Readiness(_))
+  def make: UIO[QueueReadiness] = Ref.make(Map.empty[QueueName, Queue[Unit]]).map(QueueReadiness(_))

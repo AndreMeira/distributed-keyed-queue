@@ -8,25 +8,25 @@ tags: [redis, lettuce, connections, threads, zio, latency, measurement]
 
 # Connections and threads
 
-One shared connection plus one per group of wake streams a single command may name — two in all on a
-single server, where there is one group; on a cluster, one per slot. A blocked read occupies its connection
-whole, and a cluster refuses one command spanning slots, so the listener cannot share. All of them are
+One shared connection plus one per partition — two in all on a single server, which uses a single
+partition; seventeen on a cluster, which uses sixteen. A blocked read occupies its connection whole, so the
+listener cannot share. All of them are
 opened by `Connection.make` at startup, so the count is fixed before anything serves. A synchronous client,
 and `ZIO.attemptBlocking` around every call. All of it looks like things to apologise for, and this page is
 the measurement that says they are not.
 
 ## The model
 
-`Connection` holds one shared connection and one per group:
+`Connection` holds one shared connection and one per partition:
 
 - **A shared one** for everything that answers immediately — every claim, settle, heartbeat and sweep is a
   single `EVALSHA`. Lettuce connections are safe to use from many threads and pipeline what they are given,
   so one serves the whole instance.
-- **One per group of wake streams** for the listener's `XREAD … BLOCK`, which parks for as long as it is
-  told. Sharing would put every claim and settle behind that read, and its command timeout is deliberately
-  set above the longest block so Lettuce does not abandon a read that is doing what it was asked to. A group
-  is what one command may name: on a single server that is every wake stream, so one connection; on a
-  cluster it is one slot's worth, since a cluster refuses a command spanning slots.
+- **One per partition** for the listener's `XREAD … BLOCK`, which parks for as long as it is told. Sharing
+  would put every claim and settle behind that read, and its command timeout is deliberately set above the
+  longest block so Lettuce does not abandon a read that is doing what it was asked to. One per partition
+  rather than one for all of them because a partition's keys are a slot of their own on a cluster, and a
+  command may not span slots — so each reads exactly its own partition's wake stream.
 
 Nothing else is pooled, because nothing else waits.
 
@@ -66,7 +66,7 @@ Not CPU. **A parked thread per in-flight Redis call** — the thread waits out t
 doing anything. The question is therefore how many calls are in flight at once, and the answer is bounded by
 concurrency, not by consumers:
 
-- A consumer **waiting** for work holds no thread and no connection. It waits for a token in `Readiness`, and
+- A consumer **waiting** for work holds no thread and no connection. It waits for a token in `QueueReadiness`, and
   is woken by the listener. This is the part that changed: under the old `BLMOVE` design a parked consumer
   held a thread *and* a connection for its whole patience — up to thirty seconds of doing nothing.
 - A consumer **claiming** holds a blocking thread for the duration of one script — microseconds of Redis

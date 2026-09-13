@@ -85,7 +85,7 @@ baton "delivered" a million times.
 
 If lock volume grows enough that sweeping N lock-queues hurts, the graduation is a purpose-built
 `LockStore` — a sibling to `QueueStore`, sharing the substrate machinery (connection split, `LuaScript`,
-`Readiness`, wake, fence, the blocking-in-the-caller's-fiber discipline) but with its own, *simpler*
+`QueueReadiness`, wake, fence, the blocking-in-the-caller's-fiber discipline) but with its own, *simpler*
 operations. A lock is a queue **minus messages, ordering, and backoff**, so the new Lua is smaller than what
 exists:
 
@@ -232,11 +232,11 @@ predecessor watch — the store keeps the order, the instances keep no state.
 
 The ticket design above is implemented — `try`/`acquire`/`grant`/`abandon` scripts, the waiters list and
 `waiting` index, deadline-aware parking, trim deleting dead lists — with one discovery the sketch missed:
-**`Readiness` cannot carry a fair lock's wake.** Its one-token-one-consumer hand-off is the queue's whole
+**`QueueReadiness` cannot carry a fair lock's wake.** Its one-token-one-consumer hand-off is the queue's whole
 point (any woken consumer can claim whatever is ready), but under tickets only the head may proceed — so a
 non-head waiter eats the token, is refused, and the head is never woken. The contention spec caught it as a
-stall. The lock now wakes through a `Broadcast` (every parked waiter's mailbox, subscribed *before* the
-enter so no release slips into the gap), and the listener routes each stream to either shape through one
-small `Waker` face. The cost is as priced: one grant attempt per local waiter per event, each a check the
+stall. The lock now wakes through a `LockReadiness` (every parked waiter's mailbox, subscribed *before* the
+enter so no release slips into the gap), and the listener delivers to one or the other by the kind each
+entry carries. The cost is as priced: one grant attempt per local waiter per event, each a check the
 store answers by ticket order.
 
