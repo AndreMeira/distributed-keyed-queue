@@ -68,9 +68,11 @@ queue: a stream tagged differently from the keys it announces could not be appen
 them claimable, and a separate append is a crash window where work exists and nobody is told.
 
 **The partition count is a constant, chosen once for everyone.** Sixteen, because the count is a ceiling on
-spread but a floor on overhead: at most sixteen cluster nodes ever hold this service's data — far above any
-realistic cluster for one service — while the listener's every read names sixteen streams, which is
-indistinguishable from one. It is deliberately not a deployment parameter: a knob nobody would set
+spread but a floor on overhead: the queue's data occupies at most sixteen slots — plus the lock's one, so
+seventeen nodes at the very most — which is far above any realistic cluster for one service, while the cost
+of carrying that ceiling is sixteen mostly-idle streams. On a single server they are one read on one
+connection; on a cluster each read names only its own slot's streams, so the ceiling costs connections
+rather than round trips. It is deliberately not a deployment parameter: a knob nobody would set
 differently is a liability, and a *changeable* count was a standing trap — changing it moves queues between
 tags and strands whatever was written under the old one. Changing the constant is therefore a change to the
 shape of stored data, which is what the schema version below exists to gate.

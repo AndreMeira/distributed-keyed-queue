@@ -171,9 +171,10 @@ was rejected as non-deterministic.
 
 ## Where this is going in this repo
 
-Streams are what dkq's wake path is built on: one `wake` stream **per partition**, appended to inside the very
-scripts that make a key claimable, and read by one blocking `XREAD` per instance across every partition at
-once. Two of the notes above turned out to be load-bearing:
+Streams are what dkq's wake path is built on: one `wake` stream **per partition**, appended to inside the
+very scripts that make a key claimable, and read by blocking `XREAD`s — one across every partition at once
+on a single server, and one per slot on a cluster, for the `CROSSSLOT` reason in the section above. Two of
+the notes above turned out to be load-bearing:
 
 - **`COUNT` bounds a reply, not the block** — so the read is issued with `COUNT 1000` and costs nothing in
   latency, while a listener that fell behind catches up in one round trip instead of twenty.
