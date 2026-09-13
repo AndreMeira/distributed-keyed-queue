@@ -27,6 +27,9 @@ enum RedisFailure extends ApplicationError.AdapterError:
   /** A script returned something this code does not know how to read — a defect, not a runtime condition. */
   case MalformedReply(reason: String) extends RedisFailure, ApplicationError.ImplementationError
 
+  /**   */
+  case DecodingError(reason: String) extends RedisFailure, ApplicationError.DecodingError
+
   /**
    * What to tell a human. Phrased in terms of the queue rather than of Redis, because a reason can reach a
    * caller as a status description.
@@ -36,3 +39,4 @@ enum RedisFailure extends ApplicationError.AdapterError:
   override def message: String = this match
     case Unavailable(reason)    => s"The queue store is unavailable: $reason"
     case MalformedReply(reason) => s"The queue store replied with something unreadable: $reason"
+    case DecodingError(reason)  => s"Failed to decode Lua script output: $reason"

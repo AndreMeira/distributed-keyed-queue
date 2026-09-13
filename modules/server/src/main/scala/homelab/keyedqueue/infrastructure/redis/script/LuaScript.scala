@@ -1,15 +1,37 @@
 package homelab.keyedqueue.infrastructure.redis.script
 
 
-import homelab.common.error.ApplicationError
-import homelab.keyedqueue.infrastructure.redis.RedisFailure
-import homelab.keyedqueue.infrastructure.redis.Connection
+import homelab.keyedqueue.infrastructure.redis.script.LuaScript.{ Input, Output }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisFailure }
+import io.lettuce.core.ScriptOutputType
 import io.lettuce.core.cluster.api.sync.RedisAdvancedClusterCommands
 import zio.*
 
 import java.nio.charset.StandardCharsets
 import scala.io.Source
 import scala.jdk.CollectionConverters.*
+
+
+case class LuaScript[-In: Input.Encoder, +Out: Output.Decoder](
+  sha: LuaScript.Sha,
+  outputType: ScriptOutputType,
+) {
+  def execute(input: In): ZIO[Connection.Commands, RedisFailure, Out] =
+    for
+      in       = Input.Encoder[In].encode(input)
+      result  <- runScript(in)
+      decoded <- ZIO.fromEither(Output.Decoder[Out].decode(result))
+    yield decoded
+
+  private def runScript(input: LuaScript.Input): ZIO[Connection.Commands, RedisFailure, LuaScript.Output] =
+    Connection.use: redis =>
+      ZIO
+        .attemptBlocking:
+          redis.evalsha[Any](sha, outputType, input.key, input.args*)
+        .map(LuaScript.Output.apply)
+        .mapError(LuaScript.failure)
+
+}
 
 
 /**
@@ -37,6 +59,26 @@ object LuaScript:
      * @return the digest
      */
     def apply(value: String): Sha = value
+
+  case class Input(key: Array[String], args: Array[Array[Byte]])
+
+  object Input:
+    trait Encoder[-A]:
+      def encode(value: A): LuaScript.Input
+
+    object Encoder:
+      def apply[A: Encoder as encoder]: Encoder[A] = encoder
+
+  opaque type Output <: Any = Any
+
+  object Output:
+    def apply(value: Any): Output = value
+
+    trait Decoder[+A]:
+      def decode(input: LuaScript.Output): Either[RedisFailure.DecodingError, A]
+
+    object Decoder:
+      def apply[A: Decoder as decoder]: Decoder[A] = decoder
 
   /**
    * Read a script from `resources/lua` and register it with the server.
@@ -79,8 +121,7 @@ object LuaScript:
     redis match
       case cluster: RedisAdvancedClusterCommands[?, ?] =>
         cluster.upstream().commands().scriptLoad(script).stream().findFirst().orElseThrow()
-      case standalone                                  =>
-        standalone.scriptLoad(script)
+      case standalone                                  => standalone.scriptLoad(script)
 
   /**
    * Read one script off the classpath.
