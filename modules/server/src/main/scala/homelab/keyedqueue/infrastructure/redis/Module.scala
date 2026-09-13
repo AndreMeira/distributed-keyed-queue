@@ -76,8 +76,7 @@ object Module:
         // One listener over both stores' wake streams, routing each to its own readiness — see WakeListener.
         // The queue's partition streams wake `queueReady` (one token, one consumer); the lock's one
         // stream wakes `lockReady` (a broadcast — grants go by ticket, so every waiter must look).
-        routes      = Namespace.wakeStreams.toChunk.map(_ -> queueReady).toMap
-                        + (LockKeys.wake -> lockReady)
+        routes      = Namespace.wakeStreams.toChunk.map(_ -> queueReady).toMap + (LockKeys.wake -> lockReady)
         listener   <- WakeListener.make(connection, config.wakeBlock, routes)
         // Forked here rather than in the composition root because both stores are unusable without it: a
         // waiter that finds nothing parks on a readiness token, and an unrun listener offers none.

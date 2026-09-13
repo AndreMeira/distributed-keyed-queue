@@ -91,8 +91,9 @@ final class WakeListener(
       // Array[StreamOffset[String]], arrays being invariant.
       val offsets = streams.map(stream => StreamOffset.from[String](stream, current(stream))).toArray
       entries(commands, offsets).flatMap: delivered =>
-        val woken = Chunk.fromIterable(delivered.flatMap: entry =>
-          routes.get(RedisKey(entry.getStream)).zip(WakeListener.nameOf(entry)))
+        val woken = Chunk.fromIterable:
+          delivered.flatMap: entry =>
+            routes.get(RedisKey(entry.getStream)).zip(WakeListener.nameOf(entry))
         val ahead = delivered.map(entry => RedisKey(entry.getStream) -> WakeListener.EntryId(entry.getId)).toMap
         positions.update(_.map((stream, id) => stream -> ahead.getOrElse(stream, id))).as(woken)
 
