@@ -29,13 +29,14 @@ object LuaScript:
    */
   opaque type Sha <: String = String
 
-  /**
-   * A digest, trusted.
-   *
-   * @param value what `SCRIPT LOAD` returned
-   * @return the digest
-   */
-  def Sha(value: String): Sha = value
+  object Sha:
+    /**
+     * A digest, trusted.
+     *
+     * @param value what `SCRIPT LOAD` returned
+     * @return the digest
+     */
+    def apply(value: String): Sha = value
 
   /**
    * Read a script from `resources/lua` and register it with the server.
