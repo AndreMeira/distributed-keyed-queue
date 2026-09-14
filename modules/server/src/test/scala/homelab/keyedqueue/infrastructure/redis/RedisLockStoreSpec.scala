@@ -17,7 +17,7 @@ import zio.test.*
  * The dedicated lock, against real Valkey.
  *
  * Two things to notice in the harness. There is '''no watchdog''' — crash-recovery is inline reclaim on the
- * next grant, so nothing sweeps. And each instance runs its own [[ReadinessListener]] over the shared lock wake
+ * next grant, so nothing sweeps. And each instance runs its own [[ReadinessProcessor]] over the shared lock wake
  * stream into a [[LockReadiness]], so a release on one instance wakes every waiter on another — the
  * cross-instance and fairness tests below turn on exactly that, with nothing polling.
  */
@@ -63,7 +63,8 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
       readiness  <- LockReadiness.make
       queueReady <- QueueReadiness.make
       store      <- connection.provide(RedisLockStore.make(Monitor.Noop, connection, readiness, layout))
-      listener   <- ReadinessListener.make(connection, config.wakeBlock, layout, queueReady, readiness)
+      wakes      <- WakeConsumer.make(connection, layout, config.wakeBlock)
+      listener    = ReadinessProcessor(wakes, queueReady, readiness)
       _          <- listener.run.forkScoped
     yield store
 

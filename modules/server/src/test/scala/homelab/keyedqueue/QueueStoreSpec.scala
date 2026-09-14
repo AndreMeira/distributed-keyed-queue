@@ -11,7 +11,7 @@ import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
 import homelab.keyedqueue.infrastructure.redis.script.QueueScripts
-import homelab.keyedqueue.infrastructure.redis.{ Connection, LockReadiness, QueueReadiness, RedisQueueStore, ReadinessListener }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, LockReadiness, QueueReadiness, ReadinessProcessor, RedisQueueStore, WakeConsumer }
 import io.lettuce.core.cluster.api.sync.RedisClusterCommands
 import org.testcontainers.containers.GenericContainer
 import zio.*
@@ -89,7 +89,8 @@ object QueueStoreSpec extends ZIOSpecDefault:
       scripts    <- connection.provide(QueueScripts.make)
       readiness  <- QueueReadiness.make
       lockReady  <- LockReadiness.make
-      listener   <- ReadinessListener.make(connection, config.wakeBlock, layout, readiness, lockReady)
+      wakes      <- WakeConsumer.make(connection, layout, config.wakeBlock)
+      listener    = ReadinessProcessor(wakes, readiness, lockReady)
       _          <- listener.run.forkScoped
       // Unobserved: these tests are about what the store does to Redis, and `Noop` keeps the telemetry
       // wiring out of the assertions without changing a single code path.

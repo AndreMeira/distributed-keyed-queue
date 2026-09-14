@@ -84,7 +84,8 @@ object Module:
         // One listener over the partition wake streams, routing each entry by the kind it carries — see
         // ReadinessListener. Queue entries wake `queueReady` (one token, one consumer); lock entries wake
         // `lockReady` (a broadcast — grants go by ticket, so every waiter must look).
-        listener   <- ReadinessListener.make(connection, config.wakeBlock, layout, queueReady, lockReady)
+        wakes      <- WakeConsumer.make(connection, layout, config.wakeBlock)
+        listener    = ReadinessProcessor(wakes, queueReady, lockReady)
         // Forked here rather than in the composition root because both stores are unusable without it: a
         // waiter that finds nothing parks on a readiness token, and an unrun listener offers none.
         _          <- listener.run.forkScoped

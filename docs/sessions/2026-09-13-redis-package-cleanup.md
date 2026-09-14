@@ -72,7 +72,12 @@ So the cut is:
   when a name changed — the listener port.
 - **the adapters** become script calls and codecs.
 
-### Start here: express the listener as a `Processor`
+### Start here: express the listener as a `Processor` — '''done 2026-09-14'''
+
+Sketched on this branch and green (70/70 unit, 15/15 each e2e stack): `Wake` (`Queue` | `Lock` | `Gap`),
+`WakeConsumer extends Consumer[RedisFailure, Wake]` holding every bit of Redis, and `ReadinessProcessor
+extends Processor[RedisFailure, Wake]` whose whole body is three cases and two sinks — no Lettuce in the
+file. `ReadinessListener` is gone. What follows is the reasoning it was built from.
 
 The first step is a shape, not a dependency. `ReadinessListener` becomes a `Processor` from
 `homelab.common.processing` — `input: Consumer[E, A]` plus `process(value)` — with the Redis specifics
@@ -108,6 +113,11 @@ thing that knows it '''lost its place''', so it should say so as a value, delive
 alongside real entries. The processor then matches — an entry goes to its readiness, a gap means `readyAll`
 on both — and the readinesses stay on the processor side, unknown to the consumer. That is also tidier than
 today, where one `catchAll` conflates "the read failed" with "re-announce everything".
+
+Whether the waiting should invert — the ports going non-blocking and a domain service owning both the
+waiting and its coordination state — is evaluated in
+[`../research/waiting-in-the-domain.md`](../research/waiting-in-the-domain.md), written the same night and
+parked there rather than started.
 
 These two moves are halves of one boundary, not two independent jobs: the listener port is the inbound half,
 the waiting loop is what consumes it. Doing either alone leaves an unused domain type or a substrate-free
