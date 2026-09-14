@@ -58,16 +58,7 @@ final class ReadinessListener(
    * @return never completes; aborts when no connection was opened for that partition
    */
   private def loop(partition: KeyLayout.Partition): IO[RedisFailure, Unit] =
-    connection.provideBlocking(partition)(reading(layout.wakeStream(partition)))
-
-  /**
-   * Read this stream on the connection in the environment, forever.
-   *
-   * @param stream what the `XREAD` names
-   * @return never completes
-   */
-  private def reading(stream: RedisKey): ZIO[Connection.Commands, Nothing, Unit] =
-    poll(stream)
+    poll(partition)
       .flatMap(announce)
       .catchAll: error =>
         // Announce-all is the safe recovery for a missed read — but a reader that lands here every round
@@ -79,16 +70,17 @@ final class ReadinessListener(
   /**
    * One `XREAD` on this stream, resuming from where it was left.
    *
-   * @param stream the stream it reads
+   * @param partition the partition whose wake stream to read, on the connection opened for it
    * @return what the entries announce; one naming no known kind is dropped
    */
-  private def poll(stream: RedisKey): ZIO[Connection.Commands, RedisFailure, Chunk[ReadinessListener.Kind]] =
+  private def poll(partition: KeyLayout.Partition): IO[RedisFailure, Chunk[ReadinessListener.Kind]] =
     positions.get.flatMap: current =>
       // `from[String]` pins what Lettuce is handed: an Array[StreamOffset[RedisKey]] would not be an
       // Array[StreamOffset[String]], arrays being invariant.
-      val from    = current.getOrElse(stream, ReadinessListener.EntryId("0-0"))
-      val offsets = Array(StreamOffset.from[String](stream, from))
-      entries(offsets).flatMap: delivered =>
+      val stream = layout.wakeStream(partition)
+      val from   = current.getOrElse(stream, ReadinessListener.EntryId("0-0"))
+      val offset = StreamOffset.from[String](stream, from)
+      entries(partition, offset).flatMap: delivered =>
         val woken = Chunk.fromIterable(delivered.flatMap(ReadinessListener.wakeOf))
         val ahead = delivered.map(entry => RedisKey(entry.getStream) -> ReadinessListener.EntryId(entry.getId)).toMap
         positions.update(_.map((stream, id) => stream -> ahead.getOrElse(stream, id))).as(woken)
@@ -96,21 +88,23 @@ final class ReadinessListener(
   /**
    * The raw read.
    *
-   * @param offsets what to read, and from where
+   * @param offset what to read, and from where
    * @return the entries that arrived, oldest first; aborts with `Unavailable` when the read fails
    */
   private def entries(
-    offsets: Array[StreamOffset[String]]
-  ): ZIO[Connection.Commands, RedisFailure, List[StreamMessage[String, Array[Byte]]]] =
-    Connection.use: commands =>
-      ZIO
-        .attemptBlocking:
-          val arg = XReadArgs.Builder.block(block.toMillis).count(ReadinessListener.count)
-          commands.xread(arg, offsets*)
-        .mapBoth(
-          LuaScript.failure,
-          reply => Option(reply).map(_.asScala.toList).getOrElse(Nil),
-        )
+    partition: KeyLayout.Partition,
+    offset: StreamOffset[String],
+  ): IO[RedisFailure, List[StreamMessage[String, Array[Byte]]]] =
+    connection.provideBlocking(partition):
+      Connection.use: commands =>
+        ZIO
+          .attemptBlocking:
+            val arg = XReadArgs.Builder.block(block.toMillis).count(ReadinessListener.count)
+            commands.xread(arg, offset)
+          .mapBoth(
+            LuaScript.failure,
+            reply => Option(reply).map(_.asScala.toList).getOrElse(Nil),
+          )
 
   /**
    * Record where each stream this listener will read stands right now.
