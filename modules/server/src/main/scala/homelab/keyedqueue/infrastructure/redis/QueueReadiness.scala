@@ -72,12 +72,12 @@ final class QueueReadiness(queues: Ref[Map[QueueName, Queue[Unit]]]):
    *
    * @param queue the queue to wait on
    * @param patience the longest to wait for a token
-   * @param claim what to do when one arrives; `None` means it looked and found nothing
+   * @param onReady what to do when one arrives; `None` means it looked and found nothing
    * @tparam E what `claim` aborts with
    * @tparam A what `claim` produces
    * @return `claim`'s answer, or `None` when nothing became ready in time; aborts with `E` when `claim` does
    */
-  def awaitReady[E, A](queue: QueueName, patience: Duration)(claim: IO[E, Option[A]]): IO[E, Option[A]] =
+  def awaitReady[E, A](queue: QueueName, patience: Duration)(onReady: IO[E, Option[A]]): IO[E, Option[A]] =
     buffer(queue).flatMap: found =>
       // Uninterruptible except where restored, so a token cannot be taken and then dropped in the gap
       // before its recovery is installed: interruption there would run neither handler.
@@ -90,7 +90,7 @@ final class QueueReadiness(queues: Ref[Map[QueueName, Queue[Unit]]]):
           // Flattened here, where the nesting is created: the outer `Option` says whether the claim ran,
           // the inner what it found, and conflating the two is how a fruitless look ends up handing the
           // token on and consumers spin.
-          result <- restore(claim.when(ready.isDefined).map(_.flatten)).onExit {
+          result <- restore(onReady.when(ready.isDefined).map(_.flatten)).onExit {
                       case Exit.Success(None) => ZIO.unit        // No work, make the next claim wait
                       case _                  => found.offer(()) // Work or failure, do not make it wait
                     }

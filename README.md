@@ -15,10 +15,11 @@ Enqueue(queue, key, message)  ──▶  ┌──────────┐  �
 Plenty of systems give you ordering per partition. Few give you *per-key serial processing with long-lived
 handlers*.
 
-> **Example**: Say you are sending commands to a fleet of machines. 
-Each machine must be given its commands in order and needs to acknowledge each command 
-before the next can be sent — which may take a minute. You want thousands of commands moving across 
-thousands of machines at once, while any one machine is still only ever working on a single command.
+> **Example**: Say you run an assistant. Each conversation must handle its messages in order — a follow-up
+> that overtakes the message it refers to produces nonsense, and two handlers mutating one conversation's
+> state at once corrupts it. A single turn runs for minutes: model calls, tool calls, retries. You have tens
+> of thousands of live conversations and want them all progressing at once, while any one conversation is
+> only ever worked by a single handler.
 
 The usual answers each cost something:
 
@@ -27,10 +28,23 @@ The usual answers each cost something:
 - **Serialise in the consumer.** A lock keyed by the message key, held in process memory. Correct on one
   instance; meaningless across two, which is where the requirement usually came from.
 
-DKQ puts the exclusivity in the queue itself. A consumer **claims a key**, gets a lease and a
-fencing token, and nothing else may work that key until the claim ends or the lease lapses. Restarts,
-deployments and network partitions are all covered by the same mechanism, because the claim lives in the
-store rather than in a process.
+### Extracting the exclusivity to a service
+
+Ordering is not exclusivity: a prefetching or async consumer works two messages for one key at once. So the
+lock moves to a shared store. Then it needs a lease, because holders die; then a fence, because a lease
+cannot stop a stalled holder's write from landing. Then a claims table, then a sweeper, then working around
+whichever timer your transport uses to assume handlers are short, then separate completion tracking because
+the transport's ack and "the work is done" have come apart, then per-key deferral because one slow key
+stalls everything sharing its channel — which breaks the ordering you started with.
+
+Each step follows from the last. The sum is a work-claim protocol living inside your consumer, coupled to
+your domain code, spread across a transport, a lock table and a poll loop — and orthogonal to whatever your
+service is for.
+
+DKQ is that protocol, extracted. It puts the exclusivity in the queue itself: a consumer **claims a key**,
+gets a lease and a fencing token, and nothing else may work that key until the claim ends or the lease
+lapses. Restarts, deployments and network partitions are all covered by the same mechanism, because the
+claim lives in the store rather than in a process.
 
 ## Where it fits
 
@@ -118,10 +132,11 @@ docker compose up -d          # a Valkey to back it
 sbt run                       # the service, on :9000
 ```
 
-The binary has one operational mode besides serving: `sbt "run layout accept"` records the code's schema
-version in the store — needed only when deploying a version whose stored structures changed shape, against
-a drained store with no instances running, since an instance whose schema disagrees with the store's
-refuses to start ([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
+The binary only serves. An instance records the layout it writes under — the schema version and the
+partition count — and **refuses to start** when the store was written under a different one, before anything
+is served. Deploying a version whose stored structures changed shape therefore means stopping every
+instance, draining, deleting the `dkq:layout:schema` key, and starting again: the first instance up records
+the new layout ([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
 
 Settings are HOCON with an environment override for every key
 (`modules/server/src/main/resources/config/queue.conf`):
@@ -143,9 +158,11 @@ Settings are HOCON with an environment override for every key
 
 Every instance is identical and stateless — the queue's state is entirely in Redis — so scaling out is
 running more of them against the same store. Redis Cluster is supported and tested: every key a queue uses
-carries its **partition's** hash tag, so a queue's keys and the stream announcing them live in one slot; the
-partition count is **fixed in code at 16** — nothing to configure and nothing to get permanently wrong — and
-the wake listener reads **per slot group**, one connection each, which on a single server collapses to one.
+carries its **partition's** hash tag, so a queue's keys and the stream announcing them live in one slot. The
+partition count is the deployment's, and it is one of two values — **sixteen on a cluster, one on a single
+server**, which has no slots to spread across. It is not a knob: an operator picks a store, not a count.
+Each partition has one wake stream and one blocking connection reading it, so a single server holds two
+connections and a cluster seventeen.
 The e2e suite runs against a real three-node cluster with
 `DKQ_E2E_STACK=cluster sbt e2e`
 ([`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md)).
@@ -197,6 +214,10 @@ Known gaps:
   mode
 - [`docs/learning-material/redis-state-walkthrough.md`](docs/learning-material/redis-state-walkthrough.md) —
   every request traced through the structures it touches
+- [`docs/architecture/lock-guarantees.md`](docs/architecture/lock-guarantees.md) — the lock's contract, and
+  what it deliberately does not promise
+- [`docs/architecture/lock-mechanics.md`](docs/architecture/lock-mechanics.md) — how the lock works: three
+  states, the script that performs each move, and how a waiter waits
 - [`docs/README.md`](docs/README.md) — the full index
 
 ## Licence
