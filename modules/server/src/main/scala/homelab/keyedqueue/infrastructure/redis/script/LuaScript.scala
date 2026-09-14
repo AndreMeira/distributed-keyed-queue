@@ -44,9 +44,8 @@ case class LuaScript[-In: Input.Encoder, +Out: Output.Decoder](
    */
   def execute(input: In): ZIO[Connection.Commands, RedisFailure, Out] =
     for
-      in       = Input.Encoder[In].encode(input)
-      result  <- runScript(in)
-      decoded <- ZIO.fromEither(Output.Decoder[Out].decode(result))
+      result  <- runScript(input.encoded)
+      decoded <- ZIO.fromEither(result.decoded)
     yield decoded
 
   /**
@@ -124,6 +123,13 @@ object LuaScript:
        */
       def encode(value: A): LuaScript.Input
 
+      /**
+       * [[encode]], written on the value — what the one call site reads as `input.encoded`.
+       *
+       * @return the keys and arguments to call with
+       */
+      extension (value: A) def encoded: Input = encode(value)
+
     /** The encoders, and the conventions every script's arguments share. */
     object Encoder:
 
@@ -196,6 +202,13 @@ object LuaScript:
        * @return its meaning, or `DecodingError` saying what was expected instead
        */
       def decode(input: LuaScript.Output): Decoder.Result[A]
+
+      /**
+       * [[decode]], written on the reply — what the one call site reads as `result.decoded`.
+       *
+       * @return its meaning, or `DecodingError` saying what was expected instead
+       */
+      extension (input: LuaScript.Output) def decoded: Decoder.Result[A] = decode(input)
 
     /**
      * Reading a reply into what it means.
@@ -285,7 +298,7 @@ object LuaScript:
        * @return the decoder
        */
       def text: Decoder[String] =
-        bytes.map(chunk => LuaScript.text(chunk.toArray))
+        bytes.map(chunk => String(chunk.toArray, StandardCharsets.UTF_8))
 
       /**
        * An array reply, with its elements still untyped.
@@ -485,6 +498,16 @@ object LuaScript:
           .map(Sha.apply)
 
   /**
+   * Wrap what Lettuce threw.
+   *
+   * Everything the substrate throws is transient by nature: the lease is the backstop.
+   *
+   * @param error what the call threw
+   * @return it as an `Unavailable`
+   */
+  def failure(error: Throwable): RedisFailure = RedisFailure.Unavailable(error.getMessage)
+
+  /**
    * Register a script on every node that might be asked to run it.
    *
    * `RedisAdvancedClusterCommands` overrides the cluster-wide script commands — `SCRIPT FLUSH`, `SCRIPT
@@ -516,25 +539,3 @@ object LuaScript:
     ZIO
       .attempt(Source.fromResource(path).mkString)
       .mapError(error => RedisFailure.MalformedReply(s"$path is missing: ${error.getMessage}"))
-
-  /**
-   * Decode a bulk string.
-   *
-   * Total, and so not a [[Output.Decoder]]: the codec types values as `Array[Byte]`, so wherever the bytes are
-   * already in hand there is nothing left that can fail. [[Output.Decoder.text]] is the version for a reply element
-   * that might not be bytes at all.
-   *
-   * @param value the bytes a script returned
-   * @return them as text
-   */
-  def text(value: Array[Byte]): String = String(value, StandardCharsets.UTF_8)
-
-  /**
-   * Wrap what Lettuce threw.
-   *
-   * Everything the substrate throws is transient by nature: the lease is the backstop.
-   *
-   * @param error what the call threw
-   * @return it as an `Unavailable`
-   */
-  def failure(error: Throwable): RedisFailure = RedisFailure.Unavailable(error.getMessage)

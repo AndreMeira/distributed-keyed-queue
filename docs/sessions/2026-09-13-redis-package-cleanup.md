@@ -50,11 +50,36 @@ So: the two readinesses move to domain level (they use ZIO effects, so `domain/s
 substrate-agnostic" — and sketched a `PgReadinessListener` driving the same readiness. Making the seam real
 is what turns a second substrate into one new adapter.
 
+## Numbers, and how they were taken
+
+The `ThroughputSpec` sweep after the refactor, against an image built from `HEAD`, with the September
+baseline from [`../research/throughput-first-numbers.md`](../research/throughput-first-numbers.md) beside it:
+
+| keys | consumers | msg/s (2026-09-13) | msg/s (2026-09-05) |
+|-----:|----------:|-------------------:|-------------------:|
+| 8    | 8         | 1,212              | 1,552 |
+| 16   | 16        | 1,633              | 1,896 |
+| 64   | 8         | 1,724              | 2,048 |
+| 64   | 16        | 2,462              | 3,160 |
+| 64   | 32        | 3,453              | 4,339 |
+
+**The refactor did not cost this.** Two further sweeps on an older image landed in the same band (8×8:
+1,071 and 1,062 — *below* the refactored build), so three sweeps across two code versions agree. What
+differs from September is the machine: load average 4–8 all evening, and `dkq-jaeger` holding 3.6 GB of the
+box's 7.65 GB while the sweep ran. Settling the comparison needs a quiet box, telemetry down.
+
+The curve — the only thing this indicator is for — is unchanged. Consumers bind, not keys: 8→32 consumers
+at 64 keys buys **+113%**, against +112% in September.
+
 ## Also open
 
 - **`listener.run` is forked with a bare `forkScoped`** in `Module`, and it can now fail (a partition with
   no connection). A dead listener is silent, which is what its own doc says must never happen; `.orDie`
   would at least make it a reported defect.
+- **`sbt e2e/test` does not build the image; `sbt e2e` does.** `end-to-end-testing.md` says so, and this
+  session ignored it for hours — every "e2e green" before the final run was taken against a five-hour-old
+  image and verified nothing about the day's changes. The closing runs (15/15 standalone, 15/15 cluster)
+  used the alias and are the ones that count.
 - **A reproducible build trap.** `sbt "protocol/clean" "protocolZioGrpc/clean" "protocol/compile"
   "protocolZioGrpc/compile"` in one invocation fails with 263 errors — generated sources referring to
   generated types. The same commands in separate invocations succeed. This cost several confusing test runs

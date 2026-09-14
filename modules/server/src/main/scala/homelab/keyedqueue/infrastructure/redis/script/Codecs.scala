@@ -35,7 +35,12 @@ object Codecs {
    */
   given claimInput: LuaScript.Input.Encoder[ClaimScript.Input] = claim =>
     LuaScript.Input(
-      key = Array[String](claim.keys.ready, claim.keys.claimed, claim.keys.fence, claim.keys.attempts),
+      key = Array[String](
+        claim.keys.ready,
+        claim.keys.claimed,
+        claim.keys.fence,
+        claim.keys.attempts,
+      ),
       args = Array(
         Encoder.utf8(claim.keys.prefix),
         Encoder.millis(claim.leaseTtl),
@@ -107,12 +112,17 @@ object Codecs {
    * The token travels with each key because a beat must not renew a claim the caller no longer owns: the
    * script checks it against the fence and reports the key as lost instead.
    */
-  given renewInput: LuaScript.Input.Encoder[RenewScript.Input] = renew =>
-    val pairs = renew.held.flatMap(claim => Chunk(Encoder.utf8(claim.key), Encoder.number(claim.token)))
+  given renewInput: LuaScript.Input.Encoder[RenewScript.Input] = renew => {
+    val pairs = renew.held.flatMap: claim =>
+      Chunk(
+        Encoder.utf8(claim.key),
+        Encoder.number(claim.token),
+      )
     LuaScript.Input(
       key = Array[String](renew.keys.claimed, renew.keys.fence),
       args = (Chunk(Encoder.millis(renew.leaseTtl)) ++ pairs).toArray,
     )
+  }
 
   /** What the two sweeps read and repair, then the batch bound and the names the script rebuilds keys from. */
   given sweepInput: LuaScript.Input.Encoder[SweepScript.Input] = sweep =>
