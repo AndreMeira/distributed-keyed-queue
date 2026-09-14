@@ -57,7 +57,7 @@ object DequeueResponse:
   /**
    * Transform a Grant into a DequeueResponse, which is the shape the API returns it in.
    *
-   * @param claimed the batch the store granted
+   * @param grant the batch the store granted
    * @return it as a response, its messages in the order they were handed over
    */
   def fromGrant(grant: Grant): DequeueResponse.NonEmpty =
