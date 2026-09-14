@@ -246,3 +246,17 @@ object KeyLayout:
    * @return the layout
    */
   def of(cluster: Boolean): KeyLayout = KeyLayout(if cluster then partitions else 1)
+
+  /**
+   * The layout of a cluster deployment: every partition, spread across slots.
+   *
+   * @return the layout
+   */
+  def cluster: KeyLayout = KeyLayout(partitions)
+
+  /**
+   * The layout of a single server: one partition, there being no slots to spread across.
+   *
+   * @return the layout
+   */
+  def single: KeyLayout = KeyLayout(1)

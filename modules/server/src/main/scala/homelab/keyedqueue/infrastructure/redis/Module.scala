@@ -49,7 +49,7 @@ object Module:
    */
   val layout: ZLayer[QueueConfig, Nothing, KeyLayout] = ZLayer:
     for config <- ZIO.service[QueueConfig]
-    yield KeyLayout.of(config.cluster)
+    yield if config.cluster then KeyLayout.cluster else KeyLayout.single
 
   /**
    * The scripts, registered at startup so a missing or unparseable one fails here rather than on the first

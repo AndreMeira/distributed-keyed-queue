@@ -50,6 +50,69 @@ So: the two readinesses move to domain level (they use ZIO effects, so `domain/s
 substrate-agnostic" — and sketched a `PgReadinessListener` driving the same readiness. Making the seam real
 is what turns a second substrate into one new adapter.
 
+### The move is bigger than it looks, and that is the point
+
+Moving the two files compiles, and would still be wrong. **Every reference to the readinesses today is in
+`infrastructure/redis/`** — both stores, the listener, the module. Move them alone and nothing in `domain/`
+mentions them: they would be citizens nobody there talks to, and a reader of the domain package would
+rightly ask what they are doing in it. No formal dependency on infrastructure, but a conceptual one.
+
+**The readinesses belong in the domain only if the waiting moves with them** — and the waiting is already
+domain logic sitting in an adapter. Eleven of `RedisLockStore`'s sixteen methods never touch a script:
+`queued`, `awaitTurn`, `nextEventIn`, `untilRecheck`, `atLeastFloor`, `remainingTime`, `hold`. Hold a
+ticket, park until the next known event or until the patience runs out, withdraw on any exit that is not a
+grant — none of it is Redis, all of it is the lock's contract. `RedisQueueStore`'s `claimWithin` →
+`attemptClaim` → `awaitReady` loop is the same shape.
+
+So the cut is:
+
+- **domain owns waiting** — attempt, park on a readiness, retry until patience. That is what uses the
+  readinesses, and it is the thing whose contract mentions patience in the first place.
+- **the ports shrink** to what only a substrate can answer: attempt one claim or one grant, and tell me
+  when a name changed — the listener port.
+- **the adapters** become script calls and codecs.
+
+### Start here: express the listener as a `Processor`
+
+The first step is a shape, not a dependency. `ReadinessListener` becomes a `Processor` from
+`homelab.common.processing` — `input: Consumer[E, A]` plus `process(value)` — with the Redis specifics
+isolated behind the `Consumer` contract:
+
+```
+Consumer[RedisFailure, StreamMessage]   <- toolkit contract
+  \- dkq's own tail implementation       <- the XREAD, the offsets, the per-partition connections
+Processor                                <- decode kind + name, match, deliver
+  \- QueueReadiness / LockReadiness       <- unchanged
+```
+
+**Nothing new is needed to do it.** `Consumer` and `Processor` are in `homelab-common`, which dkq already
+depends on at 0.0.3 — the classes are in the cached jar. The consumer implementation stays dkq's own for
+now; whether it is ever replaced by the toolkit's `StreamTailConsumer`/`ClusterStreamTail` is a later swap
+behind the same contract, and not a prerequisite. Those two live in `incubator`, which is
+`publish / skip := true`, so adopting them would mean promoting them first — a separate decision, and one
+this codebase's version would inform rather than wait on.
+
+What that buys immediately: everything substrate-specific ends up behind one `consume` method, and the
+processor half is the ~20 lines that decode an entry and call a readiness — with no Lettuce in it, and so
+nothing left holding it in `infrastructure/`.
+
+**The one thing to design rather than port.** This listener catches a read failure, calls `readyAll` on both
+sinks — a level-triggered backstop, since `XREAD` does not report entries trimmed while it was away — then
+backs off and never dies. `Processor.run` aborts on the first failure and expects a graph to restart it. So
+the announce-everything step has to be expressed inside `process`, or in a wrapper around the loop; it is
+dkq semantics that no generic consumer supplies, and it is the property most easily lost in the move.
+
+The consumer can own the failure — retry and back off behind `consume`, so nothing reaches the processor —
+and that is what makes the change incremental. But it must not swallow it silently: the consumer is the only
+thing that knows it '''lost its place''', so it should say so as a value, delivering a *gap* element
+alongside real entries. The processor then matches — an entry goes to its readiness, a gap means `readyAll`
+on both — and the readinesses stay on the processor side, unknown to the consumer. That is also tidier than
+today, where one `catchAll` conflates "the read failed" with "re-announce everything".
+
+These two moves are halves of one boundary, not two independent jobs: the listener port is the inbound half,
+the waiting loop is what consumes it. Doing either alone leaves an unused domain type or a substrate-free
+listener with nothing on the domain side to hand to.
+
 ## Numbers, and how they were taken
 
 The `ThroughputSpec` sweep after the refactor, against an image built from `HEAD`, with the September
