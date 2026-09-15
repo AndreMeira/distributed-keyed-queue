@@ -179,5 +179,5 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
           leftover <- inside.get
         yield assertTrue(!broken, leftover == 0)
       },
-    ) @@ SpecHelper.Aspect.common @@ RedisSpecSupport.Aspect.init
+    ) @@ RedisSpecSupport.Aspect.init @@ SpecHelper.Aspect.common
   }.provideSomeShared[Scope](RedisSpecSupport.config(30.seconds) >+> RedisSpecSupport.layer)
