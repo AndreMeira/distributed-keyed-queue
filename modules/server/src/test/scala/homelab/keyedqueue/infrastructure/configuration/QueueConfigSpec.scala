@@ -1,4 +1,4 @@
-package homelab.keyedqueue
+package homelab.keyedqueue.infrastructure.configuration
 
 
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
