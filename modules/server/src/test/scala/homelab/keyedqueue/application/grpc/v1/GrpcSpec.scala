@@ -4,7 +4,7 @@ package homelab.keyedqueue.application.grpc.v1
 import com.google.protobuf.duration.Duration as ProtoDuration
 import homelab.keyedqueue.SpecHelper
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.RedisSpecSupport
+import homelab.keyedqueue.infrastructure.redis.RedisSpecSupportOld
 import homelab.keyedqueue.v1.*
 import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLockClient
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
@@ -26,7 +26,7 @@ object GrpcSpec extends ZIOSpecDefault:
 
   /** A Valkey container, the service on a port, and both clients pointed at it — one server, two APIs. */
   private val running: ZLayer[Any, Any, KeyedQueueClient & KeyedLockClient] =
-    RedisSpecSupport.substrate(port = port) >>> ZLayer.scopedEnvironment:
+    RedisSpecSupportOld.substrate(port = port) >>> ZLayer.scopedEnvironment:
       for
         config <- ZIO.service[QueueConfig]
         _      <- GrpcApplication.serve(config).forkScoped
