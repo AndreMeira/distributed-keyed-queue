@@ -8,7 +8,7 @@ import homelab.keyedqueue.domain.service.usecase.v1.SyncUseCases
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import io.grpc.ServerBuilder
 import scalapb.zio_grpc.{ Server, ServerLayer, ServiceList }
-import zio.ZLayer
+import zio.{ URIO, ZIO, ZLayer }
 
 
 /**
@@ -18,6 +18,31 @@ import zio.ZLayer
  * protocol adapter that reached past them could hide a decision where a second adapter would not find it.
  */
 object Module:
+
+  /** The running server, which [[init]] holds open. */
+  type Provided = Server
+
+  /** The use cases it serves, what it measures against, and the port it listens on. */
+  type Required = SyncUseCases & SyncLockUseCases & Monitor & QueueConfig
+
+  /**
+   * Hold the server open until interrupted.
+   *
+   * '''Asking for the [[Server]] is not decoration.''' A layer graph builds only what the effect requires
+   * and `ZIO.never` requires nothing, so without this the whole stack would be constructed lazily — which
+   * is to say never — and the process would sit there serving no one.
+   *
+   * @return never completes
+   */
+  def init: URIO[Server, Nothing] = ZIO.service[Server] *> ZIO.never
+
+  /**
+   * The services and the server they are registered with, as one layer.
+   *
+   * @return the layer
+   */
+  lazy val layer: ZLayer[Required, ApplicationError, Provided] =
+    (service ++ lockService) >>> server
 
   /**
    * The service, over the synchronous use cases.

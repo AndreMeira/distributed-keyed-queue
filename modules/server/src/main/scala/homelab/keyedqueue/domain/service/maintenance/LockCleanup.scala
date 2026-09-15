@@ -80,16 +80,3 @@ object LockCleanup:
    * @param limit the most holds one pass removes
    */
   final case class Config(interval: Duration, grace: Duration, limit: Int)
-
-  /**
-   * Start the hygiene loop for the life of the scope.
-   *
-   * @param store where the holds live
-   * @param config the interval, the grace, and the per-pass limit
-   * @return the loop, already running
-   */
-  def make(store: LockStore, config: Config): ZIO[Scope, Nothing, LockCleanup] =
-    for
-      cleanup <- ZIO.succeed(LockCleanup(store, config))
-      _       <- cleanup.run.forkScoped
-    yield cleanup

@@ -145,6 +145,13 @@ again, in order, with `attempt` incremented.
 **R3. Recovery does not depend on the consumer coming back.** No consumer identity has to be re-established
 for its work to be reclaimed.
 
+**R4. A wake is an accelerator, and losing one costs latency rather than work.** Instances learn that a key
+became claimable by reading a stream; a read that fails resumes from the id it already held, so entries are
+delayed rather than lost. The exception nothing detects is a stream trimmed while a reader was away — more
+than a thousand wakes on one partition during an outage. A consumer that misses the wake finds the work on
+its next `Dequeue`, so the exposure is bounded by how long a caller waits before asking again, at most
+`max_wait`. Nothing is lost, and no key is left claimed.
+
 ---
 
 ## What is *not* guaranteed

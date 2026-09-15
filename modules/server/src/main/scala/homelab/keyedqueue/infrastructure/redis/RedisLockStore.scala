@@ -331,23 +331,3 @@ final class RedisLockStore(
     Clock.instant.map: now =>
       val left = patience.minus(Duration.fromInterval(asked, now))
       Option.when(left.toMillis > 0)(left)
-
-
-object RedisLockStore:
-
-  /**
-   * Load the lock scripts and hand back the store.
-   *
-   * @param monitor what each call on the substrate is traced against
-   * @param connection where its connection comes from
-   * @param readiness where waiters' wakes land
-   * @param layout which keys each lock's scripts touch
-   * @return the store; aborts with `RedisFailure` when a script is missing or rejected
-   */
-  def make(
-    monitor: Monitor,
-    connection: Connection,
-    readiness: LockReadiness,
-    layout: KeyLayout,
-  ): ZIO[Connection.Commands, RedisFailure, RedisLockStore] =
-    LockScripts.make.map(RedisLockStore(monitor, connection, _, readiness, layout))

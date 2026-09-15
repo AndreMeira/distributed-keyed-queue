@@ -14,6 +14,20 @@ import zio.ZLayer
  */
 object Module:
 
+  /** Every slice of the configuration the modules downstream read. */
+  type Provided = QueueInputValidation.Config & LockInputValidation.Config & Watchdog.Config & LockCleanup.Config
+
+  /** The configuration itself, which the composition root supplies. */
+  type Required = QueueConfig
+
+  /**
+   * Every slice, as one layer.
+   *
+   * @return the layer
+   */
+  lazy val layer: ZLayer[Required, Nothing, Provided] =
+    validation ++ lockValidation ++ watchdog ++ lockCleanup
+
   /**
    * The slice of it the parse is allowed to know.
    *

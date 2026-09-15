@@ -20,7 +20,7 @@ object Main extends ZIOAppDefault:
    *
    * @return never completes successfully; aborts with whatever prevented startup
    */
-  override def run: ZIO[ZIOAppArgs, ApplicationError, Unit] =
+  override def run: ZIO[Scope & ZIOAppArgs, ApplicationError, Unit] =
     for
       conf <- QueueConfig.load
       _    <- GrpcApplication.serve(conf)
