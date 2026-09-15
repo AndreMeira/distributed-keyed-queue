@@ -13,7 +13,7 @@ import zio.test.*
  * the moment it is announced, so a token that vanishes is a queue going quiet with messages sitting in it.
  * Every path that could swallow one puts one back, and the tests below drive each of those paths.
  */
-object ReadinessSpec extends ZIOSpecDefault:
+object QueueReadinessSpec extends ZIOSpecDefault:
 
   private val queue = QueueName("orders")
 

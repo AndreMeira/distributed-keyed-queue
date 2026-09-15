@@ -1,6 +1,7 @@
 package homelab.keyedqueue.domain.service.usecase.v1
 
 
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.persistence.QueueStore
@@ -17,6 +18,11 @@ import zio.ZLayer
  * parse, which is what enforces them. No adapter appears here, which is the property worth keeping.
  */
 object Module:
+  type Provided = SyncUseCases & SyncLockUseCases
+  type Required = QueueStore & Watchdog & QueueInputValidation & LockStore & LockInputValidation
+
+  lazy val layer: ZLayer[Required, ApplicationError, Provided] =
+    useCases ++ lockUseCases
 
   /**
    * The four use cases, as one dependency for whatever adapter serves them.

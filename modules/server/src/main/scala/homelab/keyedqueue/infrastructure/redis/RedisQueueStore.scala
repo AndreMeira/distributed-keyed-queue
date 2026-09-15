@@ -6,7 +6,6 @@ import homelab.keyedqueue.domain.model.{ Claim, Demand, Grant, Settlement, Submi
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.domain.types.*
-import homelab.keyedqueue.infrastructure.redis.RedisQueueStore.make
 import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, QueueKeys }
 import homelab.keyedqueue.infrastructure.redis.script.QueueScripts
 import homelab.keyedqueue.infrastructure.redis.script.queue.{ ClaimScript, RenewScript }
@@ -207,30 +206,3 @@ final class RedisQueueStore(
     monitor.trace("RedisQueueStore.sweep"):
       connection.provide:
         scripts.sweep.execute(layout.queue(queue), limit)
-
-
-object RedisQueueStore:
-
-  /**
-   * The store.
-   *
-   * Nothing is started here any more: the store holds no registrations to renew, and the streams it waits
-   * on is run by whoever owns the listener.
-   *
-   * @param monitor what each call on the substrate is traced against
-   * @param connection where its connection comes from
-   * @param scripts the loaded digests
-   * @param readiness where a caller waits for a queue to have something worth looking at
-   * @param layout which keys each queue's scripts touch
-   * @param leaseTtl how long a claim survives without a heartbeat
-   * @return the store
-   */
-  def make(
-    monitor: Monitor,
-    connection: Connection,
-    scripts: QueueScripts,
-    readiness: QueueReadiness,
-    layout: KeyLayout,
-    leaseTtl: Duration,
-  ): UIO[RedisQueueStore] =
-    ZIO.succeed(RedisQueueStore(monitor, connection, scripts, readiness, layout, leaseTtl))

@@ -8,6 +8,7 @@ import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.types.LockName
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
+import homelab.keyedqueue.infrastructure.redis.script.LockScripts
 import org.testcontainers.containers.GenericContainer
 import zio.*
 import zio.test.*
@@ -62,9 +63,13 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
                     )
       readiness  <- LockReadiness.make
       queueReady <- QueueReadiness.make
-      store      <- connection.provide(RedisLockStore.make(Monitor.Noop, connection, readiness, layout))
-      listener   <- ReadinessListener.make(connection, config.wakeBlock, layout, queueReady, readiness)
-      _          <- listener.run.forkScoped
+      scripts    <- connection.provide(LockScripts.make)
+      store       = RedisLockStore(Monitor.Noop, connection, scripts, readiness, layout)
+      wakes      <- WakeConsumer.make(connection, layout, config.wakeBlock)
+      _          <- wakes.reachable
+      _          <- wakes.positioned
+      _          <- wakes.start.forkScoped
+      _          <- ReadinessProcessor(wakes, queueReady, readiness).run.forkScoped
     yield store
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("RedisLockStore")(

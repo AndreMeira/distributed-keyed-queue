@@ -9,15 +9,42 @@ import zio.*
 /** Wiring for maintenance. */
 object Module:
 
+  /** Both repair loops, built and ready for [[init]] to start. */
+  type Provided = Watchdog & LockCleanup
+
+  /** The stores they repair, and the intervals they run on. */
+  type Required = QueueStore & Watchdog.Config & LockStore & LockCleanup.Config
+
   /**
-   * The repair loop, running for the life of the scope.
+   * Start both repair loops, for the life of the caller's scope.
    *
-   * Scoped rather than plain, because building the watchdog forks the loop: a layer that handed one back
-   * without starting it would give every caller something that looks like it is repairing and is not.
+   * '''The layers below build; this starts.''' A loop is not something a caller holds, so forking one as a
+   * side effect of producing a value would hand out something that looks like it is repairing without
+   * anyone having asked it to.
+   *
+   * @return noop once both loops are running
+   */
+  def init: ZIO[Watchdog & LockCleanup & Scope, Nothing, Unit] =
+    for
+      watchdog <- ZIO.service[Watchdog]
+      cleanup  <- ZIO.service[LockCleanup]
+      _        <- watchdog.run.forkScoped
+      _        <- cleanup.run.forkScoped
+    yield ()
+
+  /**
+   * Both loops, as one layer.
    *
    * @return the layer
    */
-  val watchdog: ZLayer[QueueStore & Watchdog.Config, Nothing, Watchdog] = ZLayer.scoped:
+  lazy val layer: ZLayer[Required, Nothing, Provided] = watchdog ++ lockCleanup
+
+  /**
+   * The watchdog, built but not running.
+   *
+   * @return the layer
+   */
+  val watchdog: ZLayer[QueueStore & Watchdog.Config, Nothing, Watchdog] = ZLayer:
     for
       store    <- ZIO.service[QueueStore]
       config   <- ZIO.service[Watchdog.Config]
@@ -25,15 +52,12 @@ object Module:
     yield watchdog
 
   /**
-   * The lock hygiene loop, running for the life of the scope.
-   *
-   * Scoped for the same reason as the watchdog: building it forks the loop.
+   * The lock hygiene loop, built but not running.
    *
    * @return the layer
    */
-  val lockCleanup: ZLayer[LockStore & LockCleanup.Config, Nothing, LockCleanup] = ZLayer.scoped:
+  val lockCleanup: ZLayer[LockStore & LockCleanup.Config, Nothing, LockCleanup] = ZLayer:
     for
-      store   <- ZIO.service[LockStore]
-      config  <- ZIO.service[LockCleanup.Config]
-      cleanup <- LockCleanup.make(store, config)
-    yield cleanup
+      store  <- ZIO.service[LockStore]
+      config <- ZIO.service[LockCleanup.Config]
+    yield LockCleanup(store, config)

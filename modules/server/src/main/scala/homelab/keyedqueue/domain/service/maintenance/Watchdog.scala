@@ -113,15 +113,14 @@ object Watchdog:
   final case class Config(sweepInterval: Duration, sweepLimit: Int)
 
   /**
-   * Start the repair loop for the life of the scope.
+   * A watchdog over this store, not yet repairing.
+   *
+   * Building one allocates what it remembers and nothing else; starting the loop is [[Watchdog.run]], which
+   * whoever owns the lifetime forks — see the maintenance module's `init`.
    *
    * @param store where the work to repair lives
    * @param config the interval and the per-pass limit
    * @return the watchdog, so callers can tell it which queues exist
    */
-  def make(store: QueueStore, config: Config): ZIO[Scope, Nothing, Watchdog] =
-    for
-      queues  <- Ref.make(Set.empty[QueueName])
-      watchdog = Watchdog(store, config, queues)
-      _       <- watchdog.run.forkScoped
-    yield watchdog
+  def make(store: QueueStore, config: Config): UIO[Watchdog] =
+    Ref.make(Set.empty[QueueName]).map(Watchdog(store, config, _))

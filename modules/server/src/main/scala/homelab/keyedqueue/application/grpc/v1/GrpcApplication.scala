@@ -3,7 +3,6 @@ package homelab.keyedqueue.application.grpc.v1
 
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.application.grpc.v1.Module as GrpcModule
-import homelab.keyedqueue.domain.service.maintenance.LockCleanup
 import homelab.keyedqueue.domain.service.maintenance.Module as MaintenanceModule
 import homelab.keyedqueue.domain.service.usecase.v1.Module as UseCaseModule
 import homelab.keyedqueue.domain.service.validation.Module as ValidationModule
@@ -11,7 +10,6 @@ import homelab.keyedqueue.infrastructure.configuration.Module as ConfigurationMo
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.infrastructure.tracing.Module as TracingModule
 import homelab.keyedqueue.infrastructure.redis.Module as RedisModule
-import scalapb.zio_grpc.Server
 import zio.*
 
 
@@ -28,32 +26,25 @@ object GrpcApplication:
   /**
    * Serve until interrupted.
    *
-   * Asking for the [[Server]] is not decoration: a layer graph builds only what the effect requires, and
-   * `ZIO.never` requires nothing — so without this the whole stack would be constructed lazily, which is to
-   * say never, and the process would sit there serving no one.
+   * Each module's `init` does the work its layers deliberately do not: checking the store's layout, starting
+   * the readers and the repair loops, and finally holding the server open. They run in that order because
+   * each depends on the one before it having happened.
    *
    * @param conf where Redis is, what to listen on, and the sizes every module reads its own slice of
    * @return never completes successfully; aborts when the substrate or the server cannot be set up
    */
-  def serve(conf: QueueConfig): ZIO[Any, ApplicationError, Nothing] =
-    (ZIO.service[Server] *> ZIO.service[LockCleanup] *> ZIO.never).provide(
+  def serve(conf: QueueConfig): ZIO[Scope, ApplicationError, Nothing] =
+    (
+      RedisModule.init
+        *> MaintenanceModule.init
+        *> GrpcModule.init
+    ).provideSome[Scope](
       ZLayer.succeed(conf),
-      RedisModule.layout,
-      RedisModule.connection,
-      RedisModule.scripts,
-      RedisModule.stores,
-      MaintenanceModule.watchdog,
-      MaintenanceModule.lockCleanup,
-      ConfigurationModule.lockCleanup,
-      ConfigurationModule.validation,
-      ConfigurationModule.watchdog,
-      ValidationModule.input,
-      UseCaseModule.useCases,
-      ConfigurationModule.lockValidation,
-      ValidationModule.lockInput,
-      UseCaseModule.lockUseCases,
-      GrpcModule.service,
-      GrpcModule.lockService,
-      GrpcModule.server,
-      TracingModule.monitor,
+      TracingModule.layer,
+      ConfigurationModule.layer,
+      ValidationModule.layer,
+      RedisModule.layer,
+      MaintenanceModule.layer,
+      UseCaseModule.layer,
+      GrpcModule.layer,
     )

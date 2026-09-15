@@ -22,6 +22,19 @@ import zio.*
  * by design — so `OtelMonitor` settles it and offers no way to get it wrong.
  */
 object Module:
+
+  /** What everything measurable is traced against. */
+  type Provided = Monitor
+
+  /** Nothing: the agent is attached to the process, not passed to it. */
+  type Required = Any
+
+  /**
+   * The monitor, as one layer.
+   *
+   * @return the layer
+   */
+  lazy val layer: ZLayer[Required, ApplicationError.AdapterError, Provided] = monitor
   case class OtelLoadError(cause: Throwable) extends ApplicationError.AdapterError:
     override def message: String = s"OpenTelemetry SDK could not be loaded: ${cause.getMessage}"
 

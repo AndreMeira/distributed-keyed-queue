@@ -6,6 +6,19 @@ import zio.ZLayer
 /** Wiring for the validation concern. */
 object Module:
 
+  /** The two parses, one per API. */
+  type Provided = QueueInputValidation & LockInputValidation
+
+  /** What each parse is bounded by. */
+  type Required = QueueInputValidation.Config & LockInputValidation.Config
+
+  /**
+   * Both parses, as one layer.
+   *
+   * @return the layer
+   */
+  lazy val layer: ZLayer[Required, Nothing, Provided] = input ++ lockInput
+
   /**
    * The parse, and the limits it holds callers to.
    *

@@ -136,4 +136,5 @@ object QueueReadiness:
    *
    * @return the readiness
    */
-  def make: UIO[QueueReadiness] = Ref.make(Map.empty[QueueName, Queue[Unit]]).map(QueueReadiness(_))
+  def make: UIO[QueueReadiness] =
+    Ref.make(Map.empty[QueueName, Queue[Unit]]).map(QueueReadiness(_))
