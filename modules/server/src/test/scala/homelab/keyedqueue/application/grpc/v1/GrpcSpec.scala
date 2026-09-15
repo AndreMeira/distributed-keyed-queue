@@ -1,14 +1,13 @@
-package homelab.keyedqueue
+package homelab.keyedqueue.application.grpc.v1
 
 
 import com.google.protobuf.duration.Duration as ProtoDuration
-import homelab.keyedqueue.application.grpc.v1.GrpcApplication
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
+import homelab.keyedqueue.infrastructure.redis.RedisSpecSupport
 import homelab.keyedqueue.v1.*
 import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLockClient
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
 import io.grpc.{ ManagedChannelBuilder, Status, StatusException }
-import org.testcontainers.containers.GenericContainer
 import scalapb.zio_grpc.ZManagedChannel
 import zio.*
 import zio.test.*
@@ -26,39 +25,17 @@ object GrpcSpec extends ZIOSpecDefault:
 
   /** A Valkey container, the service on a port, and both clients pointed at it — one server, two APIs. */
   private val running: ZLayer[Any, Any, KeyedQueueClient & KeyedLockClient] =
-    ZLayer.scopedEnvironment:
+    RedisSpecSupport.substrate(port = port) >>> ZLayer.scopedEnvironment:
       for
-        container <- ZIO.acquireRelease(
-                       ZIO.attemptBlocking:
-                         val _                            = java.lang.System.setProperty("api.version", "1.40")
-                         val started: GenericContainer[?] = GenericContainer("valkey/valkey:8.1-alpine")
-                         started.setExposedPorts(java.util.List.of(Integer.valueOf(6379)))
-                         started.start()
-                         started
-                     )(container => ZIO.attemptBlocking(container.stop()).ignore)
-        url        = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-        config     = QueueConfig(
-                       url,
-                       cluster = false,
-                       port,
-                       30.seconds,
-                       1.second,
-                       100,
-                       120.seconds,
-                       10.minutes,
-                       10.minutes,
-                       200.millis,
-                       5.seconds,
-                       maxBatchLimit = 32,
-                     )
-        _         <- GrpcApplication.serve(config).forkScoped
-        _         <- ZIO.sleep(1.second) // let the server bind before the client dials
-        queue     <- KeyedQueueClient.scoped(
-                       ZManagedChannel(ManagedChannelBuilder.forAddress("localhost", port).usePlaintext())
-                     )
-        lock      <- KeyedLockClient.scoped(
-                       ZManagedChannel(ManagedChannelBuilder.forAddress("localhost", port).usePlaintext())
-                     )
+        config <- ZIO.service[QueueConfig]
+        _      <- GrpcApplication.serve(config).forkScoped
+        _      <- ZIO.sleep(1.second) // let the server bind before the client dials
+        queue  <- KeyedQueueClient.scoped(
+                    ZManagedChannel(ManagedChannelBuilder.forAddress("localhost", port).usePlaintext())
+                  )
+        lock   <- KeyedLockClient.scoped(
+                    ZManagedChannel(ManagedChannelBuilder.forAddress("localhost", port).usePlaintext())
+                  )
       yield ZEnvironment[KeyedQueueClient](queue) ++ ZEnvironment[KeyedLockClient](lock)
 
   private def message(key: String, body: String): Message =
@@ -199,4 +176,4 @@ object GrpcSpec extends ZIOSpecDefault:
         status.flatMap(reported => Option(reported.getDescription)).exists(_.contains("a message key is required")),
       )
     },
-  ).provideShared(running) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(3.minutes)
+  ).provideShared(running) @@ RedisSpecSupport.againstValkey

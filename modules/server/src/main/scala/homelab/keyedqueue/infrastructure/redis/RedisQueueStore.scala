@@ -18,8 +18,8 @@ import java.time.Instant
  * The queue over Redis.
  *
  * '''Nothing here blocks in Redis.''' Every operation is a script that answers at once, so they all share
- * one connection. The only command in the process that parks is the listener's `XREAD`, and that belongs to
- * [[ReadinessListener]], on a connection of its own.
+ * one connection. The only command in the process that parks is the wake path's `XREAD`, and that belongs to
+ * [[WakeConsumer]], on connections of its own.
  *
  * '''Every operation is one script.''' The interleavings between reading a key's state and acting on it are
  * exactly the bugs this design exists to avoid, so nothing here is a sequence of commands — see

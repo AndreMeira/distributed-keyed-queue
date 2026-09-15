@@ -1,9 +1,8 @@
-package homelab.keyedqueue.infrastructure.redis
+package homelab.keyedqueue.infrastructure.redis.keys
 
 
 import homelab.keyedqueue.infrastructure.configuration.{ Misconfigured, QueueConfig }
-import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
-import org.testcontainers.containers.GenericContainer
+import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisSpecSupport }
 import zio.*
 import zio.test.*
 
@@ -13,29 +12,10 @@ import zio.test.*
  *
  * The three paths that matter: a first boot records and proceeds, a matching boot proceeds, and a
  * mismatched boot refuses with both versions in the message — before anything could be served against
- * structures the code would misread. `accept` is the deliberate override, gated on the store being
- * drained.
+ * structures the code would misread. Deleting the marker is the whole remedy an operator has, and the
+ * second test drives it.
  */
 object KeyLayoutSpec extends ZIOSpecDefault:
-
-  /** A Valkey container for the suite, and the config to reach it. */
-  private val substrate: ZLayer[Any, Any, QueueConfig] =
-    ZLayer.scoped:
-      for
-        container <- ZIO.acquireRelease(
-                       ZIO.attemptBlocking:
-                         val _                            = java.lang.System.setProperty("api.version", "1.40")
-                         val started: GenericContainer[?] = GenericContainer("valkey/valkey:8.1-alpine")
-                         started.setExposedPorts(java.util.List.of(Integer.valueOf(6379)))
-                         started.start()
-                         started
-                     )(container => ZIO.attemptBlocking(container.stop()).ignore)
-        url        = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-      yield config(url)
-
-  /** The config to reach the suite's store. */
-  private def config(url: String): QueueConfig =
-    QueueConfig(url, cluster = false, 0, 30.seconds, 1.second, 100, 120.seconds, 10.minutes, 10.minutes, 200.millis, 5.seconds, 32)
 
   /**
    * Run a layout effect the way boot does: on a fresh connection to the suite's store.
@@ -44,17 +24,8 @@ object KeyLayoutSpec extends ZIOSpecDefault:
    * @param effect what to run against the store
    * @return what the effect returns
    */
-  private def boot[A](
-    configured: QueueConfig
-  )(
-    effect: ZIO[Connection.Commands, Any, A]
-  ): ZIO[Scope, Any, A] =
-    Connection
-      .make(
-        Connection.Config(configured.maxWait, configured.redisUrl, configured.cluster),
-        KeyLayout.of(cluster = false),
-      )
-      .flatMap(_.provide(effect))
+  private def boot[A](configured: QueueConfig)(effect: ZIO[Connection.Commands, Any, A]): ZIO[Scope, Any, A] =
+    RedisSpecSupport.connection(configured).flatMap(_.provide(effect))
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("KeyLayout")(
     test("a first boot records the layout, and a matching boot passes ever after") {
@@ -86,4 +57,4 @@ object KeyLayoutSpec extends ZIOSpecDefault:
         restored.isSuccess,
       )
     },
-  ).provideSomeShared[Scope](substrate) @@ TestAspect.sequential @@ TestAspect.timeout(3.minutes)
+  ).provideSomeShared[Scope](RedisSpecSupport.substrate()) @@ RedisSpecSupport.againstValkey

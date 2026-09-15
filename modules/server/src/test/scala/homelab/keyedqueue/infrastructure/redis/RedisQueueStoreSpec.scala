@@ -1,8 +1,7 @@
-package homelab.keyedqueue
+package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.error.ApplicationError
-import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.model.{ Claim, Grant, Demand, Message, Settlement, Submission }
 import homelab.keyedqueue.domain.model.Message.Encoding
 import homelab.keyedqueue.domain.model.Settlement.Verdict
@@ -10,10 +9,7 @@ import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
-import homelab.keyedqueue.infrastructure.redis.script.QueueScripts
-import homelab.keyedqueue.infrastructure.redis.{ Connection, LockReadiness, QueueReadiness, ReadinessProcessor, RedisQueueStore, WakeConsumer }
 import io.lettuce.core.cluster.api.sync.RedisClusterCommands
-import org.testcontainers.containers.GenericContainer
 import zio.*
 import zio.test.*
 
@@ -25,79 +21,24 @@ import zio.test.*
  * a holder dies, and a failure that retries rather than disappears. They talk to the port, not to Redis, so
  * a second substrate has to pass them unchanged.
  */
-object QueueStoreSpec extends ZIOSpecDefault:
-
-  /** The layout these tests read and write under. */
-  private val layout: KeyLayout = KeyLayout.of(cluster = false)
+object RedisQueueStoreSpec extends ZIOSpecDefault:
 
   private val leaseTtl = 2.seconds
 
-  /** These tests run one partition, so the tag every key carries is this one's. */
+  /** The layout these tests read and write under. */
+  private val layout: KeyLayout = RedisSpecSupport.layout
 
-  /** A Valkey container for the suite, and two stores over it — a worker's, and a sweeper's. */
+  /** A Valkey container for the suite, and two instances over it — a worker's store, and a sweeper's. */
   private val substrate: ZLayer[Any, Any, (QueueStore, QueueStore, RedisClusterCommands[String, Array[Byte]])] =
-    ZLayer.scoped:
+    RedisSpecSupport.substrate(leaseTtl) >>> ZLayer.scoped:
       for
-        container       <- ZIO.acquireRelease(
-                             ZIO.attemptBlocking:
-                               // Docker Engine 29 rejects the API version docker-java negotiates by default with
-                               // an HTTP 400; pinning it is what the toolkit's Testcontainers specs do too.
-                               val _                            = java.lang.System.setProperty("api.version", "1.40")
-                               // GenericContainer is self-referentially generic (SELF extends GenericContainer),
-                               // which Scala infers as Nothing — hence the explicit wildcard and no chaining.
-                               val started: GenericContainer[?] = GenericContainer("valkey/valkey:8.1-alpine")
-                               started.setExposedPorts(java.util.List.of(Integer.valueOf(6379)))
-                               started.start()
-                               started
-                           )(container => ZIO.attemptBlocking(container.stop()).ignore)
-        url              = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-        config           = QueueConfig(
-                             url,
-                             cluster = false,
-                             0,
-                             leaseTtl,
-                             1.second,
-                             100,
-                             120.seconds,
-                             10.minutes,
-                             10.minutes,
-                             200.millis,
-                             5.seconds,
-                             maxBatchLimit = 32,
-                           )
-        (first, pooled) <- store(config)
-        (second, _)     <- store(config)
-        // To assert on what the adapter wrote. Borrowed from a store's own pool rather than opened here:
-        // a hand-rolled connection would need its own copy of the codec, and a copy that drifted would
-        // make these assertions read bytes differently from the code they are checking.
-        inspect         <- pooled.provide(ZIO.service[Connection.Commands])
-      yield (first: QueueStore, second: QueueStore, inspect)
-
-  /**
-   * A store with its own client and connections, as the service builds one — so the two stores here are
-   * two instances, not two halves of one.
-   *
-   * @param config where Redis is, and the sizes to build with
-   * @return the store, and the pool behind it for tests that need to look at Redis directly
-   */
-  private def store(config: QueueConfig): ZIO[Scope, ApplicationError, (QueueStore, Connection)] =
-    for
-      connection <- Connection.make(
-                      Connection.Config(config.maxWait, config.redisUrl, config.cluster),
-                      layout,
-                    )
-      scripts    <- connection.provide(QueueScripts.make)
-      readiness  <- QueueReadiness.make
-      lockReady  <- LockReadiness.make
-      wakes      <- WakeConsumer.make(connection, layout, config.wakeBlock)
-      _          <- wakes.reachable
-      _          <- wakes.positioned
-      _          <- wakes.start.forkScoped
-      _          <- ReadinessProcessor(wakes, readiness, lockReady).run.forkScoped
-      // Unobserved: these tests are about what the store does to Redis, and `Noop` keeps the telemetry
-      // wiring out of the assertions without changing a single code path.
-      store       = RedisQueueStore(Monitor.Noop, connection, scripts, readiness, layout, config.leaseTtl)
-    yield (store, connection)
+        config  <- ZIO.service[QueueConfig]
+        worker  <- RedisSpecSupport.instance(config)
+        sweeper <- RedisSpecSupport.instance(config)
+        // To assert on what the adapter wrote, through the instance's own pool — so these assertions read
+        // bytes with the same codec as the code they are checking.
+        inspect <- worker.get[Connection].provide(ZIO.service[Connection.Commands])
+      yield (worker.get[QueueStore], sweeper.get[QueueStore], inspect)
 
   /** A message whose cargo is `body`: these tests care about order and ownership, not about content. */
   private def message(key: MessageKey, body: String): Message =
@@ -373,4 +314,4 @@ object QueueStoreSpec extends ZIOSpecDefault:
         until.toEpochMilli > 0L,
       )
     },
-  ).provideShared(substrate) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(3.minutes)
+  ).provideShared(substrate) @@ RedisSpecSupport.againstValkey

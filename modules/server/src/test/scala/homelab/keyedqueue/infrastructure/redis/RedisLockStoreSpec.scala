@@ -2,14 +2,10 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.error.ApplicationError
-import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.model.Acquisition
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.types.LockName
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
-import homelab.keyedqueue.infrastructure.redis.script.LockScripts
-import org.testcontainers.containers.GenericContainer
 import zio.*
 import zio.test.*
 
@@ -18,14 +14,11 @@ import zio.test.*
  * The dedicated lock, against real Valkey.
  *
  * Two things to notice in the harness. There is '''no watchdog''' — crash-recovery is inline reclaim on the
- * next grant, so nothing sweeps. And each instance runs its own [[ReadinessListener]] over the shared lock wake
- * stream into a [[LockReadiness]], so a release on one instance wakes every waiter on another — the
+ * next grant, so nothing sweeps. And each instance runs its own wake path over the shared lock stream into
+ * its own [[LockReadiness]], so a release on one instance wakes every waiter on another — the
  * cross-instance and fairness tests below turn on exactly that, with nothing polling.
  */
 object RedisLockStoreSpec extends ZIOSpecDefault:
-
-  /** The layout these tests read and write under. */
-  private val layout: KeyLayout = KeyLayout.of(cluster = false)
 
   private val ttl = 1.second
 
@@ -33,44 +26,16 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
   private def acq(name: String, ttl: Duration, patience: Duration = Duration.Zero): Acquisition =
     Acquisition(LockName(name), ttl, patience)
 
-  /** A Valkey container for the suite, and the config to build lock instances over it. */
-  private val substrate: ZLayer[Any, Any, QueueConfig] =
-    ZLayer.scoped:
-      for
-        container <- ZIO.acquireRelease(
-                       ZIO.attemptBlocking:
-                         val _                            = java.lang.System.setProperty("api.version", "1.40")
-                         val started: GenericContainer[?] = GenericContainer("valkey/valkey:8.1-alpine")
-                         started.setExposedPorts(java.util.List.of(Integer.valueOf(6379)))
-                         started.start()
-                         started
-                     )(container => ZIO.attemptBlocking(container.stop()).ignore)
-        url        = s"redis://${container.getHost}:${container.getMappedPort(6379)}"
-      yield QueueConfig(url, cluster = false, 0, 30.seconds, 1.second, 100, 120.seconds, 10.minutes, 10.minutes, 200.millis, 5.seconds, 32)
-
   /**
-   * One lock instance: its own connection, readiness, store, and a listener over the shared lock wake
-   * stream — a stand-in for one pod. Two of these over one container are two independent instances.
+   * One lock instance, a stand-in for one pod: its own connection, readiness and store, with a reader over
+   * the shared lock wake stream. Two of these over one container are two independent instances, so a
+   * release on one wakes the waiters on the other.
    *
    * @param config where Redis is
-   * @return the store; its listener forked for the caller's scope
+   * @return the store; its reader forked into the caller's scope
    */
   private def instance(config: QueueConfig): ZIO[Scope, ApplicationError, LockStore] =
-    for
-      connection <- Connection.make(
-                      Connection.Config(config.maxWait, config.redisUrl, config.cluster),
-                      layout,
-                    )
-      readiness  <- LockReadiness.make
-      queueReady <- QueueReadiness.make
-      scripts    <- connection.provide(LockScripts.make)
-      store       = RedisLockStore(Monitor.Noop, connection, scripts, readiness, layout)
-      wakes      <- WakeConsumer.make(connection, layout, config.wakeBlock)
-      _          <- wakes.reachable
-      _          <- wakes.positioned
-      _          <- wakes.start.forkScoped
-      _          <- ReadinessProcessor(wakes, queueReady, readiness).run.forkScoped
-    yield store
+    RedisSpecSupport.instance(config).map(_.get[LockStore])
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("RedisLockStore")(
     test("a free lock is taken; the same lock held is refused") {
@@ -226,4 +191,4 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
         leftover <- inside.get
       yield assertTrue(!broken, leftover == 0)
     },
-  ).provideSomeShared[Scope](substrate) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(3.minutes)
+  ).provideSomeShared[Scope](RedisSpecSupport.substrate()) @@ RedisSpecSupport.againstValkey
