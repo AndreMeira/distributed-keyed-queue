@@ -7,8 +7,8 @@ import homelab.keyedqueue.domain.service.usecase.v1.SyncLockUseCases
 import homelab.keyedqueue.domain.service.usecase.v1.SyncUseCases
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import io.grpc.ServerBuilder
-import scalapb.zio_grpc.{ Server, ServerLayer, ServiceList }
-import zio.{ URIO, ZIO, ZLayer }
+import scalapb.zio_grpc.{ ScopedServer, ServiceList }
+import zio.{ Scope, ZIO, ZLayer }
 
 
 /**
@@ -19,30 +19,36 @@ import zio.{ URIO, ZIO, ZLayer }
  */
 object Module:
 
-  /** The running server, which [[init]] holds open. */
-  type Provided = Server
+  /** The two services, which [[init]] registers with the server it binds. */
+  type Provided = QueueService & LockService
 
-  /** The use cases it serves, what it measures against, and the port it listens on. */
-  type Required = SyncUseCases & SyncLockUseCases & Monitor & QueueConfig
+  /** The use cases they serve, and what they measure against. */
+  type Required = SyncUseCases & SyncLockUseCases & Monitor
 
   /**
-   * Hold the server open until interrupted.
+   * Bind the port and serve the two services until interrupted.
    *
-   * '''Asking for the [[Server]] is not decoration.''' A layer graph builds only what the effect requires
-   * and `ZIO.never` requires nothing, so without this the whole stack would be constructed lazily — which
-   * is to say never — and the process would sit there serving no one.
+   * Binding is explicit: the port opens when this runs.
+   * The port is released when the scope closes.
    *
-   * @return never completes
+   * @return never completes; aborts with `StartupFailed` when the port cannot be bound
    */
-  def init: URIO[Server, Nothing] = ZIO.service[Server] *> ZIO.never
+  def init: ZIO[QueueService & LockService & QueueConfig & Scope, ApplicationError, Nothing] =
+    ZIO.serviceWithZIO[QueueConfig] { config =>
+      ScopedServer
+        .fromServiceList(
+          ServerBuilder.forPort(config.port),
+          ServiceList.addFromEnvironment[QueueService].addFromEnvironment[LockService],
+        )
+        .mapError(error => StartupFailed(s"the gRPC server did not start: ${error.getMessage}"))
+    } *> ZIO.never
 
   /**
-   * The services and the server they are registered with, as one layer.
+   * Both services, as one layer.
    *
    * @return the layer
    */
-  lazy val layer: ZLayer[Required, ApplicationError, Provided] =
-    (service ++ lockService) >>> server
+  lazy val layer: ZLayer[Required, Nothing, Provided] = service ++ lockService
 
   /**
    * The service, over the synchronous use cases.
@@ -61,22 +67,3 @@ object Module:
   val lockService: ZLayer[SyncLockUseCases & Monitor, Nothing, LockService] =
     ZLayer.fromFunction: (monitor: Monitor, useCases: SyncLockUseCases) =>
       LockService(monitor, useCases)
-
-  /**
-   * The server, started when the layer is built and shut down when the scope closes.
-   *
-   * Its failure is narrowed to `ApplicationError` so the whole graph fails with one type: a port already taken is
-   * the same kind of event as a Redis that will not answer — the process cannot start, and nothing about it
-   * is worth retrying in place.
-   *
-   * @return the layer
-   */
-  val server: ZLayer[QueueService & LockService & QueueConfig, ApplicationError, Server] =
-    ZLayer
-      .service[QueueConfig]
-      .flatMap: environment =>
-        ServerLayer.fromServiceList(
-          ServerBuilder.forPort(environment.get[QueueConfig].port),
-          ServiceList.addFromEnvironment[QueueService].addFromEnvironment[LockService],
-        )
-      .mapError(error => StartupFailed(s"the gRPC server did not start: ${error.getMessage}"))

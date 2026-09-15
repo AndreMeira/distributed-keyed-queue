@@ -22,11 +22,8 @@ import zio.*
 object Module:
 
   /**
-   * The ports, and the pieces [[init]] works on.
-   *
-   * '''Wider than the ports on purpose.''' Verifying the layout and starting the wake path are done by
-   * `init` against the very instances the stores hold, so the connection, the layout and the two
-   * readinesses have to be reachable from the composition root rather than hidden inside this module.
+   * The ports, and the pieces [[init]] acts on: the connection it verifies over, the layout it checks, and
+   * the two readinesses the wake path feeds.
    */
   type Provided = QueueStore & LockStore & Connection & KeyLayout & QueueReadiness & LockReadiness
 
@@ -34,14 +31,10 @@ object Module:
   type Required = QueueConfig & Monitor
 
   /**
-   * Everything this adapter has to do before it can serve, and nothing it can hold.
+   * Check the store's layout and start the wake path, for the life of the caller's scope.
    *
-   * '''The layers below build values; this does the work.''' Checking the store's layout, and starting the
-   * readers that keep the readinesses fed, are effects with an order and a moment — not things a layer
-   * should perform as a side effect of being asked for a value.
-   *
-   * The readers are forked into the caller's scope rather than a layer's, so they live exactly as long as
-   * the effect that started them.
+   * Until this has run, the readinesses are never woken: a consumer parked on one waits out its patience,
+   * and a lock waiter its recheck.
    *
    * @return noop once the layout is verified and the wake path is running; aborts with `Misconfigured` when
    *         the store was written under a different layout, and with `RedisFailure` when it cannot be read

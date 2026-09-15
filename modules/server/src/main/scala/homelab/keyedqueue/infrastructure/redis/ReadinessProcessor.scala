@@ -10,10 +10,8 @@ import zio.*
 /**
  * Where a wake goes: the queue's readiness, the lock's, or both when the reader reports a gap.
  *
- * '''Nothing here knows what a stream is, or which substrate produced one.''' A [[Wake]] already says which
- * kind of thing it names, at the type that kind implies, so this is a match and two sinks — and the error
- * it admits is any adapter's, not Redis's. That is what makes it the half of the wake path that belongs to
- * the domain rather than to the adapter.
+ * A [[Wake]] says which kind of thing it names, at the type that kind implies, so delivery is a match over
+ * three cases and two sinks. Nothing here names a stream or a substrate.
  *
  * @param input where wakes come from
  * @param queueReady where queue wakes go

@@ -18,9 +18,7 @@ object Module:
   /**
    * Start both repair loops, for the life of the caller's scope.
    *
-   * '''The layers below build; this starts.''' A loop is not something a caller holds, so forking one as a
-   * side effect of producing a value would hand out something that looks like it is repairing without
-   * anyone having asked it to.
+   * Until this has run, nothing reclaims an abandoned claim or removes a lock hold left by a dead holder.
    *
    * @return noop once both loops are running
    */

@@ -26,9 +26,8 @@ object GrpcApplication:
   /**
    * Serve until interrupted.
    *
-   * Each module's `init` does the work its layers deliberately do not: checking the store's layout, starting
-   * the readers and the repair loops, and finally holding the server open. They run in that order because
-   * each depends on the one before it having happened.
+   * The three `init`s run in order: the store's layout is verified and the wake path started, then the
+   * repair loops, then the server — which never returns, so it is last.
    *
    * @param conf where Redis is, what to listen on, and the sizes every module reads its own slice of
    * @return never completes successfully; aborts when the substrate or the server cannot be set up
