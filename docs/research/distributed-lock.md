@@ -2,7 +2,7 @@
 title: "A distributed lock on DKQ — as a client of itself, and when to graduate off that"
 type: research
 status: draft
-updated: 2026-09-11
+updated: 2026-09-15
 tags: [distributed-lock, fencing, lease, self-client, baton, substrate, architecture, fairness, tickets]
 ---
 
@@ -14,9 +14,10 @@ token is the thing naive locks (Redlock, famously) get wrong; DKQ has it built i
 capability — it is a matter of *packaging*. There are two ways, and the more elegant one is the idea in the
 brain-dump: **make DKQ a client of itself.**
 
-Draft; a design study, now backed by two working sketches on the `lock-sketch` branch — the
-self-client (`DistributedLock`) and the dedicated store (`RedisLockStore`) — each with a spec passing
-against real Valkey. The mechanism claims below are checked against the Lua.
+Draft; a design study. Both designs were built as working sketches — the self-client (`DistributedLock`)
+and the dedicated store (`RedisLockStore`) — each with a spec passing against real Valkey. The dedicated
+store is what ships; the self-client sketch was removed on 2026-09-15 (addendum at the end). The mechanism
+claims below are checked against the Lua.
 
 ## The self-client design: a lock is a queue with one immortal message
 
@@ -240,3 +241,17 @@ enter so no release slips into the gap), and the listener delivers to one or the
 entry carries. The cost is as priced: one grant attempt per local waiter per event, each a check the
 store answers by ticket order.
 
+
+## Addendum (2026-09-15): the self-client sketch is removed
+
+`DistributedLock` — the executable form of the design above — is deleted, along with its spec.
+
+*Which, and when* recommended starting with the self-client and graduating later. What happened instead is
+that the dedicated store was built the next day and shipped, and the sketch stayed where it was: nothing in
+the service ever referenced it, and its only caller was its own spec. What it carried by the end was a
+second vocabulary for the same idea — its companion held a `LockName` of its own, shadowing the domain's
+inside the file — and a second answer to "how does a caller take a lock".
+
+The design keeps its value as the record above: a lock **is** a keyed queue with one immortal message, it
+needs no server code, and it rides the `QueueStore` port onto any substrate. If sweep cost or a substrate
+change ever reopens the question, this is where the reasoning starts.
