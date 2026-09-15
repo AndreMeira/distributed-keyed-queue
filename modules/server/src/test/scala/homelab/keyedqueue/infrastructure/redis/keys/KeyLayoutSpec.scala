@@ -2,6 +2,7 @@ package homelab.keyedqueue.infrastructure.redis.keys
 
 
 import homelab.keyedqueue.SpecHelper
+import homelab.keyedqueue.SpecHelper.Helper
 import homelab.keyedqueue.infrastructure.configuration.{Misconfigured, QueueConfig}
 import homelab.keyedqueue.infrastructure.redis.{Connection, RedisSpecSupport}
 import zio.*
@@ -18,22 +19,13 @@ import zio.test.*
  */
 object KeyLayoutSpec extends ZIOSpecDefault:
 
-  /**
-   * Run a layout effect the way boot does: on the suite's connection.
-   *
-   * @param effect what to run against the store
-   * @return what the effect returns
-   */
-  private def boot[A](effect: ZIO[Connection.Commands, Any, A]): ZIO[Connection, Any, A] =
-    ZIO.serviceWithZIO[Connection](_.provide(effect))
-
   def spec: Spec[TestEnvironment & Scope, Any] = {
     suite("KeyLayout")(
       test("a first boot records the layout, and a matching boot passes ever after") {
         for
           conf  <- ZIO.service[QueueConfig]
-          _     <- boot(KeyLayout.of(conf.cluster).verify)
-          again <- boot(KeyLayout.of(conf.cluster).verify).exit
+          _     <- Helper.boot(KeyLayout.of(conf.cluster).verify)
+          again <- Helper.boot(KeyLayout.of(conf.cluster).verify).exit
         yield assertTrue(again.isSuccess)
       },
       test("a layout the code does not expect refuses the boot, and deleting the marker clears it") {
@@ -46,10 +38,10 @@ object KeyLayoutSpec extends ZIOSpecDefault:
           ZIO.attemptBlocking(redis.del("dkq:layout:schema")).unit
         for
           conf     <- ZIO.service[QueueConfig]
-          _        <- boot(predecessor)
-          refused  <- boot(KeyLayout.of(conf.cluster).verify).exit
-          _        <- boot(drained)
-          restored <- boot(KeyLayout.of(conf.cluster).verify).exit
+          _        <- Helper.boot(predecessor)
+          refused  <- Helper.boot(KeyLayout.of(conf.cluster).verify).exit
+          _        <- Helper.boot(drained)
+          restored <- Helper.boot(KeyLayout.of(conf.cluster).verify).exit
         yield assertTrue(
           refused.causeOption.flatMap(_.failureOption).exists {
             case Misconfigured(reason) => reason.contains("schema") && reason.contains("999")

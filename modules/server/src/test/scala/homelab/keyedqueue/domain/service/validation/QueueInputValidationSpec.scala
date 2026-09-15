@@ -2,6 +2,7 @@ package homelab.keyedqueue.domain.service.validation
 
 
 import homelab.common.orFail
+import homelab.keyedqueue.SpecHelper.Helper
 import homelab.common.error.ValidationError
 import homelab.keyedqueue.domain.error.InvalidInput
 import homelab.keyedqueue.domain.model.{ Claim, Demand, Message, Renewal, Settlement, Submission }
@@ -30,10 +31,6 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
   /** The claim a settle names, and the receipt a consumer would have been handed for it. */
   private val claim   = Claim(QueueName("jobs"), MessageKey("k1"), Token(1))
   private val receipt = claim.reference
-
-  /** A message as it arrives, with whatever key the test is about; nothing else here is under test. */
-  private def message(key: String, messageId: String = "m1"): EnqueueRequest.Message =
-    EnqueueRequest.Message(key, messageId, payloadType = "test.Text/v1", Encoding.Json, None, Chunk.empty)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueInputValidation")(
     test("a settle naming an empty id, or the same id twice, is refused") {
@@ -108,13 +105,13 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
       assertTrue(validation.parse(request).toEither.map(_.retryAfter) == Right(Some(5.seconds)))
     },
     test("a message without an id is refused: it is what the store addresses it by") {
-      val parsed = validation.parse(EnqueueRequest("jobs", message("k1", messageId = "")))
+      val parsed = validation.parse(EnqueueRequest("jobs", Helper.requestMessage("k1", messageId = "")))
       assertTrue(parsed.toEither == Left(NonEmptyChunk(InvalidInput.EmptyMessageId)))
     },
     test("a well-formed enqueue is parsed into what the store takes") {
       // As with settle: what comes back carries a QueueName, a MessageKey and a MessageId, none of which
       // the request can express — so the use case has nothing unchecked left to reach for.
-      val parsed = validation.parse(EnqueueRequest("jobs", message("k1")))
+      val parsed = validation.parse(EnqueueRequest("jobs", Helper.requestMessage("k1")))
       assertTrue(
         parsed.toEither == Right(
           Submission(
@@ -125,14 +122,14 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
       )
     },
     test("a request with nothing wrong passes") {
-      val enqueue = validation.parse(EnqueueRequest("jobs", message("k1")))
+      val enqueue = validation.parse(EnqueueRequest("jobs", Helper.requestMessage("k1")))
       val dequeue = validation.parse(DequeueRequest("jobs", 1.second, maxBatch = 1))
       assertTrue(enqueue.toEither.isRight, dequeue.toEither.isRight)
     },
     test("two problems in one request are both reported") {
       // The whole reason validation is not a pair of ifs: a caller that got one error, fixed it and got the
       // next would need two round trips to learn what a single answer can tell it.
-      for failure <- validation.parse(EnqueueRequest("", message(""))).orFail.flip
+      for failure <- validation.parse(EnqueueRequest("", Helper.requestMessage(""))).orFail.flip
       yield assertTrue(
         failure == ValidationError(NonEmptyChunk(InvalidInput.EmptyQueueName, InvalidInput.EmptyMessageKey)),
         // Both problems reach the caller. Asserted by containment rather than as one joined string: how
@@ -144,8 +141,8 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
     },
     test("one problem is reported alone") {
       for
-        noQueue <- validation.parse(EnqueueRequest("", message("k1"))).orFail.flip
-        noKey   <- validation.parse(EnqueueRequest("jobs", message(""))).orFail.flip
+        noQueue <- validation.parse(EnqueueRequest("", Helper.requestMessage("k1"))).orFail.flip
+        noKey   <- validation.parse(EnqueueRequest("jobs", Helper.requestMessage(""))).orFail.flip
       yield assertTrue(
         noQueue == ValidationError(NonEmptyChunk(InvalidInput.EmptyQueueName)),
         noKey == ValidationError(NonEmptyChunk(InvalidInput.EmptyMessageKey)),

@@ -5,9 +5,12 @@ import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.{ Acquisition, Claim, Demand, Grant, Message, Settlement }
 import homelab.keyedqueue.domain.model.Message.Encoding
 import homelab.keyedqueue.domain.model.Settlement.Verdict
+import homelab.keyedqueue.domain.request.v1.EnqueueRequest
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
+import homelab.keyedqueue.infrastructure.redis.Connection
+import homelab.keyedqueue.v1
 import org.testcontainers.containers.GenericContainer
 import zio.*
 import zio.test.{ TestAspect, TestAspectPoly }
@@ -126,6 +129,43 @@ object SpecHelper {
      */
     def nack(store: QueueStore)(batch: Grant): ZIO[Any, ApplicationError, Boolean] =
       store.settle(settlement(batch.claim, batch.messages.map(_.id -> Verdict.Failed)))
+
+    /** A message as it arrives over the wire, with whatever key the test is about. */
+    def wireMessage(key: String, body: String): v1.Message =
+      v1.Message(
+        key = key,
+        messageId = s"$key-$body",
+        payloadType = "test.Message/v1",
+        encoding = v1.Encoding.ENCODING_JSON,
+        payload = com.google.protobuf.ByteString.copyFromUtf8(body),
+      )
+
+    /** One message's outcome, by id. */
+    def done(id: String): v1.MessageOutcome = v1.MessageOutcome(id, v1.Outcome.OUTCOME_DONE)
+
+    /** Settle every message a claim handed over, with the same verdict. */
+    def settle(reply: v1.DequeueResponse, outcome: v1.Outcome): v1.SettleRequest =
+      v1.SettleRequest(reply.receipt, outcomes = claimed(reply).map(d => v1.MessageOutcome(d.messageId, outcome)))
+
+    /** Everything a claim handed over, head first — the shape a consumer actually iterates. */
+    def claimed(reply: v1.DequeueResponse): Seq[v1.Delivery] = reply.head.toSeq ++ reply.tail
+
+    /** What a claim is carrying, as text, in the order it was handed over. */
+    def bodies(reply: v1.DequeueResponse): Seq[String] =
+      claimed(reply).flatMap(_.message).map(_.payload.toStringUtf8)
+
+    /** A message as a request carries it, before anything has checked it. */
+    def requestMessage(key: String, messageId: String = "m1"): EnqueueRequest.Message =
+      EnqueueRequest.Message(key, messageId, payloadType = "test.Text/v1", Encoding.Json, None, Chunk.empty)
+
+    /**
+     * Run a layout effect the way boot does: on the suite's connection.
+     *
+     * @param effect what to run against the store
+     * @return what the effect returns
+     */
+    def boot[A](effect: ZIO[Connection.Commands, Any, A]): ZIO[Connection, Any, A] =
+      ZIO.serviceWithZIO[Connection](_.provide(effect))
   }
 
   object Failure {
