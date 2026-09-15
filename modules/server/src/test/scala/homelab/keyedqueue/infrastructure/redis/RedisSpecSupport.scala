@@ -23,16 +23,6 @@ object RedisSpecSupport:
   val layout: KeyLayout = KeyLayout.single
 
   /**
-   * The conditions a suite that shares one container runs under.
-   *
-   * Real time because the substrate's leases and blocking reads answer to a clock no test controls,
-   * one test at a time because they all reach the same store, and a ceiling so a suite that parks is
-   * reported rather than waited on.
-   */
-  val againstValkey: TestAspectAtLeastR[Live] =
-    TestAspect.withLiveClock >>> TestAspect.sequential >>> TestAspect.timeout(3.minutes)
-
-  /**
    * A Valkey for the suite, and the configuration that reaches it.
    *
    * @param leaseTtl how long a claim is held before it can be reclaimed

@@ -2,7 +2,8 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.model.{ Claim, Grant, Demand, Message, Settlement, Submission }
+import homelab.keyedqueue.SpecHelper
+import homelab.keyedqueue.domain.model.{ Claim, Demand, Grant, Message, Settlement, Submission }
 import homelab.keyedqueue.domain.model.Message.Encoding
 import homelab.keyedqueue.domain.model.Settlement.Verdict
 import homelab.keyedqueue.domain.service.persistence.QueueStore
@@ -314,4 +315,4 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
         until.toEpochMilli > 0L,
       )
     },
-  ).provideShared(substrate) @@ RedisSpecSupport.againstValkey
+  ).provideShared(substrate) @@ SpecHelper.Aspect.common

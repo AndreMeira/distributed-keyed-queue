@@ -1,8 +1,9 @@
 package homelab.keyedqueue.infrastructure.redis.keys
 
 
-import homelab.keyedqueue.infrastructure.configuration.{ Misconfigured, QueueConfig }
-import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisSpecSupport }
+import homelab.keyedqueue.SpecHelper
+import homelab.keyedqueue.infrastructure.configuration.{Misconfigured, QueueConfig}
+import homelab.keyedqueue.infrastructure.redis.{Connection, RedisSpecSupport}
 import zio.*
 import zio.test.*
 
@@ -57,4 +58,4 @@ object KeyLayoutSpec extends ZIOSpecDefault:
         restored.isSuccess,
       )
     },
-  ).provideSomeShared[Scope](RedisSpecSupport.substrate()) @@ RedisSpecSupport.againstValkey
+  ).provideSomeShared[Scope](RedisSpecSupport.substrate()) @@ SpecHelper.Aspect.common

@@ -2,12 +2,13 @@ package homelab.keyedqueue.application.grpc.v1
 
 
 import com.google.protobuf.duration.Duration as ProtoDuration
+import homelab.keyedqueue.SpecHelper
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.infrastructure.redis.RedisSpecSupport
 import homelab.keyedqueue.v1.*
 import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLockClient
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
-import io.grpc.{ ManagedChannelBuilder, Status, StatusException }
+import io.grpc.{ManagedChannelBuilder, Status, StatusException}
 import scalapb.zio_grpc.ZManagedChannel
 import zio.*
 import zio.test.*
@@ -176,4 +177,4 @@ object GrpcSpec extends ZIOSpecDefault:
         status.flatMap(reported => Option(reported.getDescription)).exists(_.contains("a message key is required")),
       )
     },
-  ).provideShared(running) @@ RedisSpecSupport.againstValkey
+  ).provideShared(running) @@ SpecHelper.Aspect.common

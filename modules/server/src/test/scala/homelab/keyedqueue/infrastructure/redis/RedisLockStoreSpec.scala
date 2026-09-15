@@ -2,6 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.error.ApplicationError
+import homelab.keyedqueue.SpecHelper
 import homelab.keyedqueue.domain.model.Acquisition
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.types.LockName
@@ -191,4 +192,4 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
         leftover <- inside.get
       yield assertTrue(!broken, leftover == 0)
     },
-  ).provideSomeShared[Scope](RedisSpecSupport.substrate()) @@ RedisSpecSupport.againstValkey
+  ).provideSomeShared[Scope](RedisSpecSupport.substrate()) @@ SpecHelper.Aspect.common

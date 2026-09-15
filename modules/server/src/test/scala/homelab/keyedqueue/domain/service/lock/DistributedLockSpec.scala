@@ -1,6 +1,7 @@
 package homelab.keyedqueue.domain.service.lock
 
 
+import homelab.keyedqueue.SpecHelper
 import homelab.keyedqueue.domain.service.lock.DistributedLock.LockName
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
@@ -101,4 +102,4 @@ object DistributedLockSpec extends ZIOSpecDefault:
         taken   <- lock.acquire(name, leaseTtl + 3.seconds)
       yield assertTrue(blocked.isEmpty, taken.isDefined)
     },
-  ).provideShared(substrate) @@ RedisSpecSupport.againstValkey
+  ).provideShared(substrate) @@ SpecHelper.Aspect.common
