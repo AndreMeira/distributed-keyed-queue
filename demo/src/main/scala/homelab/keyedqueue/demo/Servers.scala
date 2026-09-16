@@ -1,6 +1,5 @@
 package homelab.keyedqueue.demo
 
-
 import zio.*
 
 
@@ -53,11 +52,9 @@ object Servers:
    * @return the addresses, in the order given, never empty
    */
   val addresses: UIO[Chunk[String]] =
-    System
-      .env("DKQ_ADDRESS")
-      .orDie
-      .map:
-        case None       => Chunk("localhost:9000")
-        case Some(text) =>
-          val named = Chunk.fromArray(text.split(",")).map(_.trim).filter(_.nonEmpty)
-          if named.isEmpty then Chunk("localhost:9000") else named
+    System.env("DKQ_ADDRESS").orDie.map {
+      case None       => Chunk("localhost:9000")
+      case Some(text) =>
+        val named = Chunk.fromArray(text.split(",")).map(_.trim).filter(_.nonEmpty)
+        if named.isEmpty then Chunk("localhost:9000") else named
+    }
