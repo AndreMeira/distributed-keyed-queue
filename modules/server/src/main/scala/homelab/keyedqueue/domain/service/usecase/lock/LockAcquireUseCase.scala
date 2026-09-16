@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.service.usecase.lock
 
 
-import homelab.common.error.{ ApplicationError, ValidationError }
+import homelab.common.error.ApplicationError
 import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.orFail
 import homelab.keyedqueue.domain.model.Acquisition
@@ -62,33 +62,10 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
         asked   <- Clock.instant
         mailbox <- readiness.subscribe(acquisition.name)
         waiter   = Waiter(acquisition, asked, mailbox)
-        held    <- loop(State.Entering(acquisition.patience)):
+        held    <- State.loop(State.Entering(acquisition.patience)):
                      case State.Entering(within)          => entering(waiter, within)
                      case State.Queued(ticket, recheckAt) => queued(waiter, ticket, recheckAt)
       yield held
-
-  /**
-   * Run the machine until a step answers.
-   *
-   * A step is interruptible — a waiter parks inside one — and the space between two steps is not, so a
-   * step's own handlers are what decide the fate of anything that step holds. See `homelab-toolkit-zio`'s
-   * `docs/research/scoped-loop.md`.
-   *
-   * @param state where the machine is
-   * @param run one transition
-   * @return the hold, or `None` when the machine gave up; aborts with an `AdapterError` when the store fails
-   */
-  private def loop(
-    state: State.Entering | State.Queued
-  )(
-    run: State.Entering | State.Queued => IO[AdapterError, State]
-  ): IO[AdapterError, Option[LockStore.Hold]] =
-    ZIO.uninterruptibleMask: restore =>
-      restore(run(state)).flatMap:
-        case State.Granted(hold)  => ZIO.succeed(Some(hold))
-        case State.GivenUp        => ZIO.succeed(None)
-        case next: State.Queued   => restore(loop(next)(run))
-        case next: State.Entering => restore(loop(next)(run))
 
   /**
    * Ask for the lock: it is granted, or this caller takes a place in the queue.
@@ -149,8 +126,7 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
     left: Duration,
   ): IO[AdapterError, (Instant, LockStore.Asked)] =
     for
-      parking <- Clock.instant
-      timeout  = window(parking, recheckAt, left)
+      timeout <- Clock.instant.map(window(_, recheckAt, left))
       _       <- waiter.mailbox.take.timeout(timeout).unless(timeout.isZero)
       asking  <- Clock.instant
       answer  <- store.grant(waiter.acquisition, ticket)
@@ -240,3 +216,27 @@ object LockAcquireUseCase:
 
     /** The patience ran out. */
     case GivenUp
+
+  private object State:
+    /**
+     * Run the machine until a step answers.
+     *
+     * A step is interruptible — a waiter parks inside one — and the space between two steps is not, so a
+     * step's own handlers are what decide the fate of anything that step holds. See `homelab-toolkit-zio`'s
+     * `docs/research/scoped-loop.md`.
+     *
+     * @param state where the machine is
+     * @param run   one transition
+     * @return the hold, or `None` when the machine gave up; aborts with an `AdapterError` when the store fails
+     */
+    def loop(
+      state: State.Entering | State.Queued
+    )(
+      run: State.Entering | State.Queued => IO[AdapterError, State]
+    ): IO[AdapterError, Option[LockStore.Hold]] =
+      ZIO.uninterruptibleMask: restore =>
+        restore(run(state)).flatMap:
+          case State.Granted(hold)  => ZIO.succeed(Some(hold))
+          case State.GivenUp        => ZIO.succeed(None)
+          case next: State.Queued   => restore(loop(next)(run))
+          case next: State.Entering => restore(loop(next)(run))
