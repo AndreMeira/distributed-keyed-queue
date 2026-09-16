@@ -34,9 +34,8 @@ Below the handler, the stores **trace but do not measure**: everything that reac
 span, and nothing records a hit or a latency series. The RPC above already counts and times the operation a
 caller asked for, so a second metric per store method would double the series for something the span
 already answers — and the question these spans exist for is "where did that call's time go", which is a
-trace question. Pure helpers are left alone: a span around clock arithmetic is noise. The one private
-method that is traced is `RedisQueueStore.attempt`, because it repeats — a claim that loses the race
-retries, and the span count is what shows the redundant attempts.
+trace question. Pure helpers are left alone: a span around clock arithmetic is noise. `RedisQueueStore.attemptClaim` is traced because it repeats — a claim that loses the race retries, and the
+span count is what shows the redundant attempts.
 
 The toolkit records three shared instruments, tagged with `operation`:
 

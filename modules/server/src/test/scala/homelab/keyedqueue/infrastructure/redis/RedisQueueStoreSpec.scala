@@ -30,6 +30,16 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
 
   def spec: Spec[TestEnvironment & Scope, Any] = {
     suite("QueueStore over Redis")(
+      test("attemptClaim answers at once, whatever patience the demand carries") {
+        // The non-waiting half of the port: 30 seconds of patience buys nothing here, because waiting is
+        // the readiness's job and an attempt only reports what was true when it asked.
+        for
+          worker          <- ZIO.service[QueueStore]
+          queue            = QueueName("attempt")
+          outcome         <- worker.attemptClaim(Demand(queue, 30.seconds, 1)).timed
+          (elapsed, found) = outcome
+        yield assertTrue(found.isEmpty, elapsed < 1.second)
+      },
       test("a key's messages are delivered oldest first") {
         for
           worker <- ZIO.service[QueueStore]

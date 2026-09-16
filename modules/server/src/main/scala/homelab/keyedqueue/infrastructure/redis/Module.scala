@@ -26,8 +26,7 @@ object Module:
    * the two readinesses the wake path feeds.
    * Everything this module openly provides
    */
-  type Provided = QueueStore & LockStore & Connection & KeyLayout & WakeConsumer &
-    Consumer.Batched[ApplicationError.AdapterError, Wake]
+  type Provided = QueueStore & LockStore & Connection & KeyLayout & WakeConsumer & Consumer.Batched[ApplicationError.AdapterError, Wake]
 
   /**
    * Everything this module needs.

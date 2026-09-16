@@ -33,6 +33,19 @@ trait QueueStore:
   def enqueue(submission: Submission): IO[ApplicationError.AdapterError, Long]
 
   /**
+   * Claim whatever is claimable now, and answer at once.
+   *
+   * The demand's patience is not consulted: an empty answer means nothing was claimable at the moment it
+   * was asked, not that there is nothing coming. Waiting for a queue to become worth another look is
+   * [[homelab.keyedqueue.domain.service.readiness.QueueReadiness]]'s, not a store's.
+   *
+   * @param demand the queue to claim from, and the most to take
+   * @return the claim, or `None` when nothing was claimable; aborts with an `AdapterError` when the store
+   *         fails
+   */
+  def attemptClaim(demand: Demand): IO[ApplicationError.AdapterError, Option[Grant]]
+
+  /**
    * Wait for a key to become claimable, then take the oldest of its messages the demand allows for.
    *
    * Blocks the calling fiber, and with it a connection, which is why the blocking pool's size — not the

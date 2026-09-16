@@ -92,7 +92,7 @@ final class RedisQueueStore(
       case Some(patienceLeft) =>
         readiness
           .awaitReady(demand.queue, patienceLeft):
-            attemptClaim(keys, demand)
+            claimOn(keys, demand)
           .flatMap:
             case granted @ Some(_) => ZIO.succeed(granted)
             case None              => claimWithin(keys, demand, asked)
@@ -105,7 +105,17 @@ final class RedisQueueStore(
    * @param demand how much to take
    * @return the claim, or `None` when nothing was claimable; aborts with `RedisFailure` when the store fails
    */
-  private def attemptClaim(keys: QueueKeys, demand: Demand): IO[RedisFailure, Option[Grant]] =
+  override def attemptClaim(demand: Demand): IO[RedisFailure, Option[Grant]] =
+    claimOn(layout.queue(demand.queue), demand)
+
+  /**
+   * One claim call against the store, on keys already derived.
+   *
+   * @param keys the queue's keys
+   * @param demand the queue to claim from, and the most to take
+   * @return the claim, or `None` when nothing was claimable; aborts with `RedisFailure` when the store fails
+   */
+  private def claimOn(keys: QueueKeys, demand: Demand): IO[RedisFailure, Option[Grant]] =
     monitor.trace("RedisQueueStore.attemptClaim"):
       connection.provide:
         scripts.claim.execute(keys, leaseTtl, demand.batch).map(_.map(granted(keys)))
