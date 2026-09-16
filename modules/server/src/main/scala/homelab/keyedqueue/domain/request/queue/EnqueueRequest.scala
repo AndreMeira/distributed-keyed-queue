@@ -1,5 +1,4 @@
-package homelab.keyedqueue.domain.request.v1
-
+package homelab.keyedqueue.domain.request.queue
 
 import homelab.keyedqueue.domain.model.Message.Encoding
 import homelab.keyedqueue.domain.types.{ MessageId, MessageKey }

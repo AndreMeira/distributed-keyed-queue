@@ -3,7 +3,7 @@ package homelab.keyedqueue.application.grpc.v1
 
 import homelab.common.error.{ ApplicationError, ValidationError }
 import homelab.common.monitor.Monitor
-import homelab.keyedqueue.domain.service.usecase.v1.SyncLockUseCases
+import homelab.keyedqueue.domain.service.usecase.lock.LockUseCases
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Inbound.toDomain
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Outbound.toProto
 import homelab.keyedqueue.v1
@@ -27,7 +27,7 @@ import zio.IO
  * @param monitor what each RPC is counted and timed against
  * @param useCases the lock's operations
  */
-final class LockService(monitor: Monitor, useCases: SyncLockUseCases) extends ZioKeyedLockService.KeyedLock:
+final class LockService(monitor: Monitor, useCases: LockUseCases) extends ZioKeyedLockService.KeyedLock:
 
   /**
    * Take the named lock, blocking up to `max_wait`.

@@ -3,7 +3,7 @@ package homelab.keyedqueue.application.grpc.v1
 
 import homelab.common.error.{ ApplicationError, ValidationError }
 import homelab.common.monitor.Monitor
-import homelab.keyedqueue.domain.service.usecase.v1.*
+import homelab.keyedqueue.domain.service.usecase.queue.*
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Inbound.*
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Outbound.*
 import homelab.keyedqueue.v1
@@ -32,7 +32,7 @@ import zio.*
  */
 final class QueueService(
   monitor: Monitor,
-  useCases: SyncUseCases,
+  useCases: QueueUseCases,
 ) extends ZioKeyedQueueService.KeyedQueue:
 
   /**

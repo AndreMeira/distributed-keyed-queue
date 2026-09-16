@@ -3,8 +3,8 @@ package homelab.keyedqueue.application.grpc.v1
 
 import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
-import homelab.keyedqueue.domain.service.usecase.v1.SyncLockUseCases
-import homelab.keyedqueue.domain.service.usecase.v1.SyncUseCases
+import homelab.keyedqueue.domain.service.usecase.lock.LockUseCases
+import homelab.keyedqueue.domain.service.usecase.queue.QueueUseCases
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import io.grpc.ServerBuilder
 import scalapb.zio_grpc.{ ScopedServer, ServiceList }
@@ -23,7 +23,7 @@ object Module:
   type Provided = QueueService & LockService
 
   /** The use cases they serve, and what they measure against. */
-  type Required = SyncUseCases & SyncLockUseCases & Monitor
+  type Required = QueueUseCases & LockUseCases & Monitor
 
   /**
    * Bind the port and serve the two services until interrupted.
@@ -55,8 +55,8 @@ object Module:
    *
    * @return the layer
    */
-  val service: ZLayer[SyncUseCases & Monitor, Nothing, QueueService] =
-    ZLayer.fromFunction: (monitor: Monitor, useCases: SyncUseCases) =>
+  val service: ZLayer[QueueUseCases & Monitor, Nothing, QueueService] =
+    ZLayer.fromFunction: (monitor: Monitor, useCases: QueueUseCases) =>
       QueueService(monitor, useCases)
 
   /**
@@ -64,6 +64,6 @@ object Module:
    *
    * @return the layer
    */
-  val lockService: ZLayer[SyncLockUseCases & Monitor, Nothing, LockService] =
-    ZLayer.fromFunction: (monitor: Monitor, useCases: SyncLockUseCases) =>
+  val lockService: ZLayer[LockUseCases & Monitor, Nothing, LockService] =
+    ZLayer.fromFunction: (monitor: Monitor, useCases: LockUseCases) =>
       LockService(monitor, useCases)

@@ -1,4 +1,4 @@
-package homelab.keyedqueue.domain.response.v1
+package homelab.keyedqueue.domain.response.queue
 
 /**
  * A message was accepted.

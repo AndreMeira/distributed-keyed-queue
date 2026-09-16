@@ -5,7 +5,7 @@ import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.{ Acquisition, Claim, Demand, Grant, Message, Settlement }
 import homelab.keyedqueue.domain.model.Message.Encoding
 import homelab.keyedqueue.domain.model.Settlement.Verdict
-import homelab.keyedqueue.domain.request.v1.EnqueueRequest
+import homelab.keyedqueue.domain.request.queue.EnqueueRequest
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig

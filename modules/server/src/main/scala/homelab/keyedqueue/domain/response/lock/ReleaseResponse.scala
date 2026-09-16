@@ -1,4 +1,4 @@
-package homelab.keyedqueue.domain.response.queue
+package homelab.keyedqueue.domain.response.lock
 
 /**
  * The outcome of a release. `false` is an ordinary result — the hold had already been revoked — not an

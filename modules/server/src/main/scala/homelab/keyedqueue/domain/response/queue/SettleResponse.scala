@@ -1,4 +1,4 @@
-package homelab.keyedqueue.domain.response.v1
+package homelab.keyedqueue.domain.response.queue
 
 /**
  * The outcome of a settle. `Stale` is an ordinary result of an at-least-once queue, not an error: a caller

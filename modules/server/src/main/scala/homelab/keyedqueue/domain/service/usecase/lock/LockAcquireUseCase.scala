@@ -1,10 +1,9 @@
-package homelab.keyedqueue.domain.service.usecase.queue
+package homelab.keyedqueue.domain.service.usecase.lock
 
-
-import homelab.common.orFail
 import homelab.common.error.{ ApplicationError, ValidationError }
+import homelab.common.orFail
 import homelab.keyedqueue.domain.request.lock.AcquireRequest
-import homelab.keyedqueue.domain.response.v1.AcquireResponse
+import homelab.keyedqueue.domain.response.lock.AcquireResponse
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.validation.LockInputValidation
 import zio.IO

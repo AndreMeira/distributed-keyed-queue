@@ -1,4 +1,4 @@
-package homelab.keyedqueue.domain.response.queue
+package homelab.keyedqueue.domain.response.lock
 
 import java.time.Instant
 

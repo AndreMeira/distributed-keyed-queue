@@ -1,12 +1,13 @@
-package homelab.keyedqueue.domain.service.usecase.queue
+package homelab.keyedqueue.domain.service.usecase
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.lock.LockStore
+import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.domain.service.usecase.lock.{LockAcquireUseCase, LockRefreshUseCase, LockReleaseUseCase, SyncLockUseCases}
-import homelab.keyedqueue.domain.service.validation.{LockInputValidation, QueueInputValidation}
+import homelab.keyedqueue.domain.service.usecase.lock.*
+import homelab.keyedqueue.domain.service.usecase.queue.*
+import homelab.keyedqueue.domain.service.validation.{ LockInputValidation, QueueInputValidation }
 import zio.ZLayer
 
 
@@ -19,7 +20,7 @@ import zio.ZLayer
  * parse, which is what enforces them. No adapter appears here, which is the property worth keeping.
  */
 object Module:
-  type Provided = SyncUseCases & SyncLockUseCases
+  type Provided = QueueUseCases & LockUseCases
   type Required = QueueStore & Watchdog & QueueInputValidation & LockStore & LockInputValidation
 
   lazy val layer: ZLayer[Required, ApplicationError, Provided] =
@@ -30,9 +31,9 @@ object Module:
    *
    * @return the layer
    */
-  val useCases: ZLayer[QueueStore & Watchdog & QueueInputValidation, Nothing, SyncUseCases] =
+  val useCases: ZLayer[QueueStore & Watchdog & QueueInputValidation, Nothing, QueueUseCases] =
     ZLayer.fromFunction: (store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation) =>
-      SyncUseCases(
+      QueueUseCases(
         enqueue = EnqueueUseCase(store, watchdog, validation),
         dequeue = DequeueUseCase(store, watchdog, validation),
         settle = SettleUseCase(store, validation),
@@ -44,9 +45,9 @@ object Module:
    *
    * @return the layer
    */
-  val lockUseCases: ZLayer[LockStore & LockInputValidation, Nothing, SyncLockUseCases] =
+  val lockUseCases: ZLayer[LockStore & LockInputValidation, Nothing, LockUseCases] =
     ZLayer.fromFunction: (store: LockStore, validation: LockInputValidation) =>
-      SyncLockUseCases(
+      LockUseCases(
         acquire = LockAcquireUseCase(store, validation),
         release = LockReleaseUseCase(store, validation),
         refresh = LockRefreshUseCase(store, validation),

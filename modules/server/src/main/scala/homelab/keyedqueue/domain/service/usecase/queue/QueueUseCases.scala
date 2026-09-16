@@ -13,7 +13,7 @@ package homelab.keyedqueue.domain.service.usecase.queue
  * @param settle reports what a consumer did with it
  * @param heartbeat renews what a consumer still holds
  */
-final case class SyncUseCases(
+final case class QueueUseCases(
   enqueue: EnqueueUseCase,
   dequeue: DequeueUseCase,
   settle: SettleUseCase,

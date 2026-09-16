@@ -1,4 +1,4 @@
-package homelab.keyedqueue.domain.request.v1
+package homelab.keyedqueue.domain.request.lock
 
 import zio.Duration
 

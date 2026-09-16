@@ -4,7 +4,7 @@ package homelab.keyedqueue.application.grpc.v1
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.application.grpc.v1.Module as GrpcModule
 import homelab.keyedqueue.domain.service.maintenance.Module as MaintenanceModule
-import homelab.keyedqueue.domain.service.usecase.v1.Module as UseCaseModule
+import homelab.keyedqueue.domain.service.usecase.Module as UseCaseModule
 import homelab.keyedqueue.domain.service.validation.Module as ValidationModule
 import homelab.keyedqueue.infrastructure.configuration.Module as ConfigurationModule
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
