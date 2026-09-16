@@ -27,7 +27,7 @@ import java.time.Instant
  * answer can change — the lease's end when the lock is held, the head ticket's deadline when queued behind
  * it — and the waiter parks on its [[LockReadiness]] mailbox for at most that long. The wake is
  * cross-instance: release and trim append to a wake stream in the same script that frees the lock, and the
- * shared [[ReadinessListener]] delivers it to every instance's readiness; every local waiter wakes and asks,
+ * shared wake path — [[WakeConsumer]] into [[ReadinessProcessor]] — delivers it to every instance's readiness; every local waiter wakes and asks,
  * only the head ticket can win, so the woken crowd is a check, not a race. The mailbox is subscribed
  * before the enter, so no release can slip into the gap between asking and parking.
  *

@@ -34,16 +34,17 @@ object GrpcApplication:
    */
   def serve(conf: QueueConfig): ZIO[Scope, ApplicationError, Nothing] =
     (
-      RedisModule.init
+      ZIO.unit
+        *> RedisModule.init
         *> MaintenanceModule.init
         *> GrpcModule.init
     ).provideSome[Scope](
-      ZLayer.succeed(conf),
+      GrpcModule.layer,
+      UseCaseModule.layer,
+      ValidationModule.layer,
+      MaintenanceModule.layer,
+      RedisModule.layer,
       TracingModule.layer,
       ConfigurationModule.layer,
-      ValidationModule.layer,
-      RedisModule.layer,
-      MaintenanceModule.layer,
-      UseCaseModule.layer,
-      GrpcModule.layer,
+      ZLayer.succeed(conf),
     )

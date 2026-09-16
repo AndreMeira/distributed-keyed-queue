@@ -9,29 +9,12 @@ import zio.*
  * One readiness token per queue: offered when a key becomes claimable, taken by the consumer that acts on
  * it.
  *
- * A coordination primitive, not a queue: it carries no work and knows nothing about Redis. A token means
- * "there may be something to claim", and the caller does the claiming — which is what keeps the claim in
- * the fiber that will do the work.
+ * A coordination primitive, not a queue — it carries no work and knows nothing about Redis. A token says
+ * "there may be something to claim" and the caller does the claiming, so the claim stays in the fiber that
+ * will do the work. A token offered with nobody waiting is kept for the next look, and a token is a hint
+ * that may be wrong rather than a promise: every path that could swallow one puts one back.
  *
- * '''A wake is kept.''' Offered with nobody waiting, the token stays in the buffer for the
- * next look — which is what a queue's wake requires, work not having stopped existing.
- *
- * '''One token, one consumer.''' This is the point of the design. A broadcast wakes every consumer parked
- * on a queue so that one of them can win a claim and the rest waste a round trip; taking a token wakes
- * exactly one. What replaces the broadcast is the hand-on in [[awaitReady]]: a consumer that finds work offers
- * the token onwards, so a burst drains one consumer at a time and stops on the first fruitless look.
- *
- * '''A token is a hint that may be wrong, never a promise that may be lost.''' Every path that could
- * swallow a token puts one back — the patience elapsing, the effect failing, the caller being interrupted.
- * Those recoveries are unconditional, because a `Queue` cannot report whether *this* taker received the
- * element, so it is not knowable whether there is anything to put back. That is safe only because the
- * buffer holds one token: a spurious offer costs one wasted look and cannot accumulate, while a lost token
- * costs a queue going quiet with work sitting in it. The design leans on that asymmetry throughout.
- *
- * '''Order does not matter here, and that is a real simplification.''' The buffer remembers, so a token
- * offered while a consumer is mid-claim waits for its next take. A promise-based signal had to be
- * subscribed to *before* looking or the wake was lost — a constraint that was load-bearing, untestable and
- * easy to break.
+ * See `docs/architecture/readiness-and-wake.md`.
  *
  * @param queues queue → its token buffer, made on first use
  */
@@ -65,10 +48,9 @@ final class QueueReadiness(queues: Ref[Map[QueueName, Queue[Unit]]]):
   /**
    * Wait for this queue's token for at most `patience`, and run `claim` when one arrives.
    *
-   * The claim runs *inside* rather than the token being handed back to the caller, and that is what makes
-   * the handover safe: a token cannot be held as a value by a fiber that then dies with it.
-   *
-   * Answers what `claim` answered, or `None` when the patience elapsed without a token.
+   * The claim runs inside the wait: a token is never handed back to the caller, so it cannot be held as a
+   * value by a fiber that dies with it. A look that finds work hands the token onward; a look that finds
+   * nothing keeps it, which is what ends the chain.
    *
    * @param queue the queue to wait on
    * @param patience the longest to wait for a token
@@ -101,14 +83,11 @@ final class QueueReadiness(queues: Ref[Map[QueueName, Queue[Unit]]]):
   /**
    * A queue's token buffer, made on first use.
    *
-   * '''Read first, and allocate only on a miss.''' The map is written once per queue name and read on
-   * every claim, so the common path is a single `Ref.get` with no allocation and no lock. The re-check
-   * inside `modify` is what makes that safe: two callers racing on a new name both build a buffer, one
-   * wins the update and the other takes the winner's, discarding its own.
+   * Read first, allocate only on a miss: the map is written once per name and read on every claim, so the
+   * common path is a single `Ref.get`. Two callers racing on a new name both build a buffer; one wins the
+   * update and the other takes the winner's, discarding its own.
    *
-   * '''A new buffer starts with a token.''' A queue nobody has announced still deserves one look — after a
-   * restart the wake stream is positioned at its end, so work already sitting in `ready` would otherwise
-   * never be announced and a consumer would wait out its patience beside it.
+   * A new buffer starts with a token, so a queue nobody has announced still gets one look.
    *
    * @param name the queue whose buffer is wanted
    * @return the buffer
