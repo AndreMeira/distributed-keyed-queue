@@ -15,16 +15,13 @@ import scala.jdk.CollectionConverters.*
  * The wake streams, as a [[Consumer.Batched]] of [[Wake]]s: everything about Redis that the wake path needs,
  * behind one `consume`.
  *
- * '''One reader per partition, one consumer for all of them.''' A blocking `XREAD` holds its connection for
- * the whole wait and may not span slots, so the reads are genuinely separate; they feed a queue that
- * `consume` drains, which is what lets a caller see one intake however the streams are spread.
+ * One reader per partition — a blocking `XREAD` holds its connection for the whole wait and may not span
+ * slots — feeding one queue that `consume` drains, so a caller sees a single intake however the streams are
+ * spread. A batch is what had accumulated rather than what one read returned, and repeated names within it
+ * collapse. A read that fails does not reach the caller: the reader logs it, backs off, and carries on from
+ * the id it already holds.
  *
- * '''A batch is what had accumulated, not what one read returned.''' Draining coalesces a burst into a
- * single delivery, and repeated names within it collapse: a wake says a name may have something, not how
- * many times.
- *
- * A read that fails does not reach the caller — the reader logs it, backs off, and carries on from the id it
- * already holds.
+ * See `docs/architecture/readiness-and-wake.md`.
  *
  * @param connection the blocking connections the streams are read on
  * @param layout which partitions there are, and the stream each one announces on
@@ -90,10 +87,10 @@ final class WakeConsumer(
   /**
    * What a failed read leaves behind: a line in the log, and a pause before trying again.
    *
-   * '''No gap is reported.''' This stream replays — the next read resumes from the id this one holds, so a
-   * failure delays entries rather than losing them. What it cannot see is a trim while it was away, which
-   * costs latency (a waiter sleeps until its recheck or its patience) and never work. A reader that lands
-   * here every round has degraded into interval polling, which the log line is here to make visible.
+   * No gap is reported: the stream replays, so the next read resumes from the id this one holds and a
+   * failure delays entries rather than losing them. A trim while the reader was away costs latency — a
+   * waiter sleeps until its recheck or its patience — and never work. A reader that lands here every round
+   * has degraded into interval polling, which the log line makes visible.
    *
    * @param error why the read failed
    * @return noop
@@ -218,9 +215,8 @@ object WakeConsumer:
   /**
    * A consumer over every partition's wake stream, each positioned at its end, already reading.
    *
-   * '''"From now" is resolved here, to a concrete id.''' Storing the `$` that means "the end of the stream"
-   * would be a bug: it is re-evaluated by each read, so anything appended between two reads would be
-   * stepped over.
+   * "From now" is resolved here to a concrete id, so every read resumes from a fixed point and nothing
+   * appended between two reads is stepped over.
    *
    * @param connection the blocking connections to read on, and the shared one that resolves the positions
    * @param layout which partitions there are, and the stream each one announces on

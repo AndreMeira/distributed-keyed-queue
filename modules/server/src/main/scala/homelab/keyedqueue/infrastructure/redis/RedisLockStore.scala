@@ -17,19 +17,18 @@ import java.time.Instant
 /**
  * The lock over Redis: fair by ticket, no sweep.
  *
- * '''Order lives in the store.''' A blocking acquire that cannot be granted at once takes a tail ticket in
- * the lock's waiters list, and grants follow ticket order among tickets still within their patience — so
- * the instances keep no waiter state, and a newcomer cannot barge past the queue ([[tryAcquire]] refuses
- * when live tickets exist). A dead holder is reclaimed inline by the next grant, a dead waiter is pruned at
- * its own deadline; neither needs a background pass.
+ * Order lives in the store: a blocking acquire that cannot be granted at once takes a tail ticket in the
+ * lock's waiters list, and grants follow ticket order among tickets still within their patience. The
+ * instances keep no waiter state, and a newcomer cannot barge past the queue — [[tryAcquire]] refuses while
+ * live tickets exist. A dead holder is reclaimed inline by the next grant and a dead waiter is pruned at its
+ * own deadline, so nothing sweeps.
  *
- * '''Waiters park until a known event, not on a poll.''' Every refusal names the delay after which the
- * answer can change — the lease's end when the lock is held, the head ticket's deadline when queued behind
- * it — and the waiter parks on its [[LockReadiness]] mailbox for at most that long. The wake is
- * cross-instance: release and trim append to a wake stream in the same script that frees the lock, and the
- * shared wake path — [[WakeConsumer]] into [[ReadinessProcessor]] — delivers it to every instance's readiness; every local waiter wakes and asks,
- * only the head ticket can win, so the woken crowd is a check, not a race. The mailbox is subscribed
- * before the enter, so no release can slip into the gap between asking and parking.
+ * A waiter parks until a named event rather than polling: every refusal states the delay after which the
+ * answer can change, and the waiter parks on its [[LockReadiness]] mailbox for at most that long. Release
+ * and trim append to the wake stream in the same script that frees the lock, so every instance's waiters
+ * wake and ask, and only the head ticket can win.
+ *
+ * See `docs/architecture/lock-mechanics.md` and `docs/architecture/readiness-and-wake.md`.
  *
  * @param monitor what each call on the substrate is traced against
  * @param connection where its connection comes from
@@ -68,8 +67,8 @@ final class RedisLockStore(
   /**
    * Enter for the lock, and wait out the turns until it is this caller's or the patience is spent.
    *
-   * The mailbox is subscribed '''before''' entering, so a release cannot fall into the gap between asking
-   * and parking. What comes back is either the lock or a ticket; the ticket's wait is [[queued]].
+   * The mailbox is subscribed before entering, so a release cannot fall into the gap between asking and
+   * parking. What comes back is either the lock or a ticket; the ticket's wait is [[queued]].
    *
    * @param acquisition the lock to take, how long to hold it, and how long to wait
    * @return the hold, or `None` when the patience elapsed first
@@ -251,7 +250,7 @@ final class RedisLockStore(
             case GrantScript.Asked.Gone                  => reenter(acquisition, asked, ticket, recheckAt)
 
   /**
-   * Enter again after the queue lost the ticket — with what is '''left''' of the patience, not all of it.
+   * Enter again after the queue lost the ticket, with what is left of the patience.
    *
    * The fresh ticket's deadline must state the caller's real bound: a full-patience ticket would hold a
    * place, and delay everyone reading the head's deadline, long after this caller has given up.

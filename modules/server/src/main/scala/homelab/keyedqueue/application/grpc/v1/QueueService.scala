@@ -19,20 +19,13 @@ import zio.*
  * There is no logic here on purpose. A handler that did more than translate would be a decision living in
  * the protocol adapter, where a second adapter — or a test — could not reach it.
  *
- * '''What is an error here, and what is a result.''' A dequeue that found nothing and a settle whose claim
- * was revoked are ordinary outcomes of an at-least-once queue, so they are fields in the response, where a
- * caller has to look at them. Only genuine faults become a `Status`, and the mapping lives in one place
- * rather than in each handler.
+ * A dequeue that found nothing and a settle whose claim was revoked are ordinary outcomes of an
+ * at-least-once queue, so they are fields in the response where a caller has to look at them. Only genuine
+ * faults become a `Status`, and that mapping lives in [[status]] rather than in each handler.
  *
- * '''One dependency, not four.''' The set of use cases is the API — the same four calls the proto
- * declares — so it travels as one value rather than as four constructor parameters that must be listed in
- * the same order everywhere they are wired. Adding a fifth operation is then an edit to [[SyncUseCases]]
- * and a handler here, and nothing in between.
- *
- * '''Every RPC is measured, and this is the right place for it.''' A handler is the whole of one call —
- * decode, use case, encode — so a span here times what the caller experienced, and the four names are the
- * four operations the API has. Naming them after the RPC rather than the use case is deliberate: it is the
- * surface a caller talks to, and a second adapter would measure its own.
+ * Every RPC is measured here, under the name of the RPC: a handler is the whole of one call — decode, use
+ * case, encode — so what is timed is what the caller experienced. See
+ * `docs/architecture/observability.md`.
  *
  * @param monitor what each RPC is counted and timed against
  * @param useCases the operations this surface exposes, one per RPC
@@ -127,11 +120,10 @@ final class QueueService(
   /**
    * Map a failure to a gRPC status.
    *
-   * '''By category, not by identity.''' The toolkit's marker traits already say what a failure means — the
-   * caller sent something wrong, the trouble will pass, or it is ours to fix — and those are exactly the
-   * three answers gRPC has room for. Matching on markers rather than on an enum of concrete errors means a
-   * new adapter, or a new failure inside this one, is classified correctly without anyone remembering to
-   * come back here, and the default is the safe one.
+   * By category, not by identity: the toolkit's marker traits say what a failure means — the caller sent
+   * something wrong, the trouble will pass, or it is ours to fix — and those are the three answers gRPC has
+   * room for. A new failure is therefore classified by the markers it carries, and the default is the safe
+   * one.
    *
    * A `ValidationError` describes *every* problem the request had, because `INVALID_ARGUMENT` is the
    * caller's cue to change something and one round trip per mistake is a poor way to learn what to change.

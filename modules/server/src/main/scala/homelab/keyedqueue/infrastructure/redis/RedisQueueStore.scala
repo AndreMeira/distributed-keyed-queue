@@ -17,26 +17,18 @@ import java.time.Instant
 /**
  * The queue over Redis.
  *
- * '''Nothing here blocks in Redis.''' Every operation is a script that answers at once, so they all share
- * one connection. The only command in the process that parks is the wake path's `XREAD`, and that belongs to
- * [[WakeConsumer]], on connections of its own.
+ * Nothing here blocks in Redis: every operation is one script that answers at once, so they all share a
+ * single connection. The only command in the process that parks is the wake path's `XREAD`, on connections
+ * of its own — see [[WakeConsumer]].
  *
- * '''Every operation is one script.''' The interleavings between reading a key's state and acting on it are
- * exactly the bugs this design exists to avoid, so nothing here is a sequence of commands — see
- * `docs/research/redis-keyed-queue.md`.
+ * A claim is granted in one call, so a key is either queued or claimed and the lease is the only thing that
+ * expires: no connection announces itself, and nothing has to be kept alive on its behalf.
  *
- * '''There is nothing to keep alive.''' A claim is granted in one call, so a key is either queued or
- * claimed and the lease is the only thing that expires. No connection announces itself, and no registration
- * has to be renewed on its behalf.
+ * Everything that reaches the substrate opens a span, and none of it records a metric — the RPC above
+ * already counts and times what a caller asked for. `attempt` is traced although it is private, because it
+ * is the one that repeats: its span count shows the redundant attempts a lost race pays for.
  *
- * '''Traced, not measured.''' Everything that reaches the substrate opens a span; none of it records a
- * hit or a latency series. The RPC above already counts and times the operation a caller asked for, so a
- * second metric per store method would double the series for something the span already answers — and the
- * question these are here for is "where did that call's time go", which is a trace question. The pure
- * helpers are left alone: a span around clock arithmetic is noise.
- *
- * `attempt` is traced although it is private, because it is the one that repeats: a claim that loses the
- * race retries, and the span count is what shows the redundant attempts the design pays in.
+ * See `docs/architecture/redis-connections.md` and `docs/research/redis-keyed-queue.md`.
  *
  * @param monitor what each call on the substrate is traced against
  * @param connection where its connection comes from
@@ -71,12 +63,9 @@ final class RedisQueueStore(
   /**
    * One `claim` call, and — when it finds nothing — a wait for the queue to be worth another look.
    *
-   * '''The claim is a single script, so nothing blocks in Redis.''' A key is either in `ready` or claimed;
-   * there is no instant in which it is neither, which is why this adapter has no holding list, no
-   * per-connection identity and no recovery for one.
-   *
-   * '''Patience is a deadline.''' A caller woken by an entry another instance won keeps waiting with what
-   * is left of it, rather than starting again — so a race it loses costs it a round trip, not a full wait.
+   * The claim is a single script: a key is either in `ready` or claimed, never neither, so this adapter
+   * keeps no holding list and needs no recovery for one. Patience is a deadline, so a caller woken by an
+   * entry another instance won waits out what is left of it and a lost race costs one round trip.
    *
    * @param demand the queue to claim from, how long to wait, and the most to take
    * @return the claim, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
@@ -175,8 +164,8 @@ final class RedisQueueStore(
         scripts.settle.execute(layout.queue(settlement.claimed.queue), settlement)
 
   /**
-   * One `renew` call '''per queue''', because claims are namespaced by queue while a caller's receipts
-   * are not: a consumer holding work in three queues costs three round trips here.
+   * One `renew` call per queue, because claims are namespaced by queue while a caller's receipts are not:
+   * a consumer holding work in three queues costs three round trips here.
    *
    * No worker entry is written, because there are none: a consumer is known by its receipts, and its
    * claims are found by fence token.

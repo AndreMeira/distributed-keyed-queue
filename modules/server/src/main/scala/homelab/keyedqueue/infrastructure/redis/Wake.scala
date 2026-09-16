@@ -6,10 +6,9 @@ import homelab.keyedqueue.domain.types.{ LockName, QueueName }
 /**
  * What a reader of the wake streams hands on: a name that became ready, or the news that it lost its place.
  *
- * '''A gap is a value, not a failure.''' `XREAD` does not report entries trimmed while a reader was away,
- * so a reader that fell off its position knows only that anything may have been missed — and that is
- * something to act on, not something to abort with. Only the reader can notice it; only its consumer knows
- * what to do about it.
+ * A gap is a value rather than a failure. `XREAD` does not report entries trimmed while a reader was away,
+ * so a reader that fell off its position knows only that anything may have been missed — which its consumer
+ * can act on.
  */
 enum Wake:
 
@@ -42,9 +41,8 @@ object Wake:
   /**
    * The wake an entry's two fields state.
    *
-   * '''The tokens are part of the schema.''' `q` and `l` are what the Lua writes into stored entries, so a
-   * change to either is a change an older instance would misread, and `KeyLayout.schemaVersion` goes with
-   * it.
+   * `q` and `l` are what the Lua writes into stored entries, so the tokens are part of the stored schema:
+   * changing either means bumping `KeyLayout.schemaVersion` with it.
    *
    * @param kind the entry's `kind` field
    * @param name the entry's `name` field

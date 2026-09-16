@@ -8,18 +8,12 @@ import zio.*
 /**
  * A wake for every parked waiter on a name — the lock's counterpart to [[QueueReadiness]].
  *
- * '''A wake is dropped.''' It reaches the mailboxes subscribed at that moment and no
- * others. Safe here only because a waiter subscribes before it enters, so no release falls into a gap.
+ * A wake reaches the mailboxes subscribed at that moment and no others, so a waiter subscribes before it
+ * enters. It reaches all of them, because grants go by ticket order and only the store knows whose turn it
+ * is: every woken waiter asks, and only the head can win. A mailbox coalesces — two wakes while parked read
+ * as one, which is sound because a waiter acts on what it finds rather than on the count.
  *
- * '''Everyone wakes, because only the store knows whose turn it is.''' A fair lock grants by ticket order,
- * so waking one arbitrary waiter would as likely wake the wrong one — and the token it consumed would never
- * reach the head. Waking all costs one grant attempt per local waiter per event, and buys the property the
- * tickets exist for: the head cannot be starved by its neighbours.
- *
- * '''Subscribe first, then look.''' A subscription is a mailbox: wakes land in it from the moment it is
- * added, including while its owner is mid-look, so there is no gap in which a release can slip by unseen.
- * The mailbox coalesces — two wakes while parked read as one, which is sound because a waiter acts on what
- * it finds, not on the count.
+ * See `docs/architecture/readiness-and-wake.md`.
  *
  * @param waiting lock → the mailboxes of its parked waiters
  */
