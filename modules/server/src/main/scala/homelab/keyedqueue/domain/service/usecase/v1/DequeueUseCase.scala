@@ -15,10 +15,8 @@ import zio.{ Chunk, Duration, IO, NonEmptyChunk, duration2DurationOps }
 /**
  * Wait for work on a queue, and hand it to the caller with the lease that comes with it.
  *
- * '''The claim happens in the caller's own fiber.''' A background loop claiming into a buffer would separate
- * the claim from the claimant, which is what creates work claimed for a caller that has since gone — the
- * failure the toolkit's `PollConsumer` spent a design cycle on. Here the fiber that waits is the fiber that
- * receives.
+ * The claim happens in the caller's own fiber: the fiber that waits is the fiber that receives, so no work
+ * is ever claimed for a caller that has since gone.
  *
  * @param store where the queue lives
  * @param watchdog told about the queue, so its abandoned work is repaired

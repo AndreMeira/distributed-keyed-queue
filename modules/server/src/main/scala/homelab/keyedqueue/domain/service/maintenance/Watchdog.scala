@@ -13,7 +13,7 @@ import zio.*
  * Runs on every instance without coordination: the sweep is idempotent, so there is no leader election and
  * no single instance whose death stops repair.
  *
- * '''It only sweeps queues it has seen.''' A queue this instance has served is remembered for the life of
+ * It sweeps only the queues it has seen: a queue this instance has served is remembered for the life of
  * the process, so its keys keep being swept after the traffic stops.
  *
  * @param store where the work to repair lives
@@ -25,7 +25,7 @@ final class Watchdog(store: QueueStore, config: Watchdog.Config, queues: Ref[Set
   /**
    * Note that this queue is being served, so it is repaired from now on.
    *
-   * Idempotent, and cheap enough to call on every request. Remembered '''in memory''': a restarted instance
+   * Idempotent, and cheap enough to call on every request. Remembered in memory, so a restarted instance
    * sweeps only the queues it has served since booting.
    *
    * @param queue the queue just served

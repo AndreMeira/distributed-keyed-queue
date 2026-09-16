@@ -20,10 +20,9 @@ import zio.IO
  * ordinary answer (`released`/`renewed = false`), and only a bad request or a broken store becomes a
  * `Status`.
  *
- * '''The fence is returned, on purpose.''' `Acquire` hands back the numeric token as well as the opaque
- * receipt: the receipt is for releasing and refreshing, the fence is for stamping writes to the protected
- * resource so a stale holder's writes are rejected downstream (docs/research/distributed-lock.md). This is
- * the lock's public contract, unlike the queue where the fence stays internal.
+ * `Acquire` hands back the numeric fence as well as the opaque receipt: the receipt releases and refreshes,
+ * and the fence stamps writes to the protected resource so a stale holder's writes are rejected downstream.
+ * See `docs/architecture/lock-guarantees.md`.
  *
  * @param monitor what each RPC is counted and timed against
  * @param useCases the lock's operations

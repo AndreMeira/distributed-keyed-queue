@@ -10,8 +10,8 @@ import java.time.Instant
 /**
  * What a granted claim hands over: a batch of one key's messages, and the claim that owns them.
  *
- * '''One claim, many messages.''' Exclusivity is held on the key, so everything here is under the same
- * token and the same lease. The consumer settles each message as it finishes with it, and the claim ends
+ * One claim, many messages: exclusivity is held on the key, so everything here is under the same token
+ * and the same lease. The consumer settles each message as it finishes with it, and the claim ends
  * when nothing is left owed.
  *
  * The messages are in producer order and keep their place while owned, so a nack puts nothing back and a

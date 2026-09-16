@@ -39,10 +39,8 @@ final class HeartbeatUseCase(store: QueueStore):
   /**
    * Sort what a consumer says it holds into what this service issued and what it did not.
    *
-   * '''Total, and deliberately so.''' The parses in `QueueInputValidation` can refuse; this one cannot. A
-   * heartbeat
-   * carries many receipts, and one it cannot read says nothing about the others — refusing the call would
-   * cost the consumer renewals that were good, to tell it something it learns anyway from the answer,
+   * Total: this parse cannot refuse. A heartbeat carries many receipts, and one it cannot read says nothing
+   * about the others — so an unreadable receipt is reported as lost in the answer,
    * where the unreadable ones come back among what it has lost.
    *
    * The return type says it: `Renewal`, not `Validated[Renewal]`. A signature that promised failure it

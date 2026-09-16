@@ -6,21 +6,11 @@ import homelab.keyedqueue.domain.types.*
 /**
  * Every Redis key one queue owns, derived from its name and the partition it falls in.
  *
- * '''The hash tag is the partition, not the queue.''' A Lua script may only touch keys in one cluster slot,
- * and the scripts build some of their key names at runtime from `prefix`, so everything a script touches
- * has to hash together — including the stream that announces them. Tagging by partition puts a queue's keys and the
- * stream that announces them in one slot, exactly as tagging by queue did, while letting many queues share
- * one wake stream.
+ * The hash tag is the partition's, and the schema version follows it — `{p:3}:v3:q:jobs:ready`. So every
+ * key a script touches hashes into one slot, including the wake stream the partition shares between its
+ * queues, and a schema's leftovers stay findable by pattern.
  *
- * '''Every key carries the schema version''' — `{p:3}:v1:q:jobs:ready` — after the tag, deliberately: a
- * key's incarnations under different schemas share a slot, so a future migration step can move state
- * between versions atomically in one script. The version makes any schema's leftovers findable by pattern
- * without knowing its shapes (`docs/research/schema-versioned-keys.md`).
- *
- * '''Why share a wake stream at all.''' A listener's `XREAD` names the streams it was issued with, so a
- * per-queue stream means the set of streams grows as queues are served, and a queue added while a read is
- * in flight goes unheard until that read returns. A fixed set of partitions is heard from the first read
- * onwards, which takes the block off the latency path entirely.
+ * See `docs/architecture/redis-cluster.md` and `docs/research/schema-versioned-keys.md`.
  *
  * @param tag the hash tag of the partition these keys fall in
  * @param queue the queue these keys belong to
@@ -38,11 +28,8 @@ final case class QueueKeys(tag: KeyLayout.Tag, queue: QueueName):
   /**
    * The counter that scores [[ready]]: one number per key that becomes claimable, ever increasing.
    *
-   * '''Arrival order, not a clock.''' A timestamp would be the obvious score and is wrong here — at even
-   * moderate rates many keys become claimable inside the same millisecond, and `ZPOPMIN` breaks a tie by
-   * member name, so cross-key ordering would quietly become alphabetical. Measured on this codebase, 200
-   * keys enqueued back to back produced 133 distinct millisecond scores. A counter has no ties by
-   * construction, and it makes every writer agree on what "older" means without agreeing on a clock.
+   * Arrival order, not a clock: the counter has no ties by construction, and every writer agrees on what
+   * "older" means without agreeing on a clock. See `docs/architecture/redis-data-structures.md`.
    */
   val sequence: RedisKey = RedisKey(s"$prefix:seq")
 

@@ -15,9 +15,8 @@ import java.nio.charset.StandardCharsets
  * How one deployment divides its keys: which partition a name falls in, and the keys that follow from it.
  *
  * A partition decides a name's hash tag and so its slot, owns exactly one wake stream, and is what a
- * blocking read is opened for. '''Which partition a name falls in must not depend on the deployment''':
- * it is written into every key, so an instance computing it differently would look for keys in a partition
- * they were never written to.
+ * blocking read is opened for. Which partition a name falls in is written into every key, so every
+ * instance of a deployment must compute it the same way — which is what [[verify]] holds them to.
  *
  * @param partitions how many partitions this deployment is divided into
  */
@@ -33,9 +32,9 @@ final case class KeyLayout(partitions: Int):
   /**
    * This layout as the marker stores it: the schema version, and the partition count.
    *
-   * '''The count is in it because it is no longer the same everywhere.''' A cluster spreads across
-   * [[KeyLayout.partitions]] of them and a single server uses one, so two instances disagreeing about which
-   * they are would write the same names into different tags — and a version alone could not tell.
+   * The count is part of the stamp because it varies by deployment: a cluster spreads across
+   * [[KeyLayout.partitions]] of them and a single server uses one, and a version alone could not tell two
+   * such instances apart.
    *
    * @return the stamp
    */
@@ -171,8 +170,8 @@ object KeyLayout:
 
   /**
    * The shape of everything this code stores: the structures, and the encodings written into them.
-   * '''Bump it on any change an older instance would misread''' — a structure changing type, a field
-   * changing meaning, an encoding changing form. A review discipline, not something the code can detect.
+   * Bump it on any change that alters what is stored — a structure changing type, a field changing
+   * meaning, an encoding changing form. A review discipline, not something the code can detect.
    *
    * Gate-only: a mismatch is refused, never migrated, and it does not cover client-held state
    * (`docs/architecture/redis-cluster.md`, `docs/research/schema-versioned-keys.md`).
@@ -238,9 +237,8 @@ object KeyLayout:
   /**
    * The layout of a deployment, which decides how many partitions it wants.
    *
-   * '''A single server uses one.''' Partitions exist to spread keys across cluster slots, and a server with
-   * no slots has nothing to spread across — so the sixteen would buy nothing and cost a blocking connection
-   * each. A cluster takes [[partitions]].
+   * A single server uses one partition: they exist to spread keys across cluster slots, and a server has
+   * none to spread across. A cluster takes [[partitions]].
    *
    * @param cluster whether the store is a Redis Cluster
    * @return the layout

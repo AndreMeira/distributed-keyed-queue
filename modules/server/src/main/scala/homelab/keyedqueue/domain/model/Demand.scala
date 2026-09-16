@@ -8,10 +8,8 @@ import zio.Duration
 /**
  * A caller's demand for work: where from, how long it will wait, and how much it will take.
  *
- * '''The trusted counterpart of `DequeueRequest`, and bounded by construction.''' The request says
- * what a caller asked for; this says what the service agreed to, with both numbers already inside the
- * limits it enforces. Obtainable only from the parse, so the store cannot be handed an hour-long wait or a
- * batch of ten thousand.
+ * What the service agreed to serve, with both numbers already inside the limits it enforces. Obtainable
+ * only from the parse, so the store cannot be handed an hour-long wait or a batch of ten thousand.
  *
  * The fields are named for what they mean here rather than for what the caller called them: `maxWait`
  * became `patience` and `maxBatch` became `batch`, because a maximum is what you ask for and this is what

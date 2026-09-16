@@ -22,9 +22,8 @@ final class SettleUseCase(store: QueueStore, validation: QueueInputValidation):
   /**
    * Apply the outcomes, if the claim is still the caller's.
    *
-   * '''Nothing is decided here.''' Reading the receipt is a parse, so it belongs with the other parses —
-   * `Settlement` is obtainable only from [[QueueInputValidation.parse]], and this use case has no way to
-   * reach past it into the untrusted request. What is left is one call and the reading of its answer.
+   * Nothing is decided here: `Settlement` is obtainable only from [[QueueInputValidation.parse]], so what
+   * is left is one call and the reading of its answer.
    *
    * Two failures a caller might confuse are kept apart. A string that was never a receipt is refused as
    * a `ValidationError`: nothing issued it, and no retry makes it valid. A receipt whose claim has since been

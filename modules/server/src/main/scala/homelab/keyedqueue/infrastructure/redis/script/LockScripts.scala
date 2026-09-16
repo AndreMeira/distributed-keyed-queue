@@ -12,7 +12,7 @@ import zio.*
 /**
  * The lock scripts, loaded once and held as the calls they can make — the lock's [[QueueScripts]].
  *
- * '''Static keys, shared by every lock.''' Unlike the queue, whose keys are per-key and built from a
+ * Static keys, shared by every lock: unlike the queue, whose keys are per-key and built from a
  * [[QueueKeys]], all locks live in shared structures with the lock's name as a member or field — see
  * [[homelab.keyedqueue.infrastructure.redis.script.Keys]] — which keeps them in one cluster slot.
  *

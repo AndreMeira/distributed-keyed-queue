@@ -16,13 +16,9 @@ import zio.*
  * connection needs no reconnect logic here: a Redis restart takes the connection with it, and the process
  * re-registers when it reconnects.
  *
- * '''It holds the five, and nothing else.''' Each script registers itself and carries its own digest, so
- * this is a place to reach them from rather than a layer they are called through.
- *
- * '''It hands out calls, not digests.''' A digest on its own is a string the caller must then pair with the
- * right keys and the right arguments, in the right order, from memory. Each script below already carries
- * its own digest and owns its own positions, so an adapter writes `scripts.enqueue.run(…)` with the
- * operation's real parameters and never touches a position again.
+ * It holds the five and nothing else: each script registers itself, carries its own digest and owns its
+ * own argument positions, so an adapter writes `scripts.enqueue.run(…)` with the operation's real
+ * parameters and never handles a digest or a position.
  *
  * @param enqueue appends a message and makes its key claimable
  * @param claim takes the next claimable key and hands over a batch of its messages

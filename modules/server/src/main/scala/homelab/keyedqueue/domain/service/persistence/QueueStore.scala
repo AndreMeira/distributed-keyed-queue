@@ -17,9 +17,8 @@ import java.time.Instant
  * what lets a second implementation exist without the layer above noticing: a Postgres variant would do with
  * `SKIP LOCKED` and a `claimed_until` column what this one does with a script and a deadline set.
  *
- * '''It speaks in messages, and cargo stays opaque.''' How a message is serialised is this port's business,
- * not its caller's — the same way key layout is. What the store never does is look *inside* a message: only
- * its key is structural, because ordering is defined by it, and the payload is cargo it moves unread.
+ * It speaks in messages, and cargo stays opaque: only a message's key is structural, because ordering is
+ * defined by it. The payload is moved unread.
  */
 trait QueueStore:
 

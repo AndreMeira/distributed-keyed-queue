@@ -10,13 +10,9 @@ import zio.{ Duration, NonEmptyChunk }
  * What a consumer reports back about the messages it took: which claim, what became of which, and whether
  * the key should wait before anyone works it again.
  *
- * '''One type rather than three arguments.''' The three only mean anything together — outcomes name
- * messages that belong to *this* claim, and the backoff applies to the key *that claim holds* — so a
- * signature that took them separately could be called with three unrelated values.
- *
- * '''Non-empty by construction.''' A settle that names nothing is a round trip that decides nothing: the
- * claim stays exactly as owed as it was. Making it unrepresentable here is what lets the store treat every
- * settle as an event that moves something.
+ * The three parts only mean anything together: the outcomes name messages belonging to this claim, and the
+ * backoff applies to the key that claim holds. Non-empty by construction, so every settle the store sees
+ * moves something.
  *
  * @param claimed the claim being settled against, and the token that authorises it
  * @param outcomes what became of each message named. A claim may be settled piece by piece: what is not

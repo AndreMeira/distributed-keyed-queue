@@ -18,11 +18,9 @@ import java.time.Instant
  * token, but a lock carries no messages, no order and no backoff, so it needs far less. See
  * `docs/research/distributed-lock.md`.
  *
- * '''Says nothing about Redis.''' As with the queue, the port is what lets a second substrate exist.
- *
- * '''Reclaim is inline; `trim` is hygiene, not liveness.''' A dead holder whose lock someone wants is
- * reclaimed by their next acquire, so no background pass keeps locks available. What `trim` removes is the
- * holds nobody will ever ask for again, which no request can reach.
+ * Reclaim is inline: a dead holder whose lock someone wants is reclaimed by the next acquire, so no
+ * background pass keeps locks available. What `trim` removes is the holds nobody will ever ask for again,
+ * which no request can reach — hygiene rather than liveness.
  */
 trait LockStore:
 
@@ -30,7 +28,7 @@ trait LockStore:
    * Take a lock, waiting up to the demand's patience for a holder to release it; reclaims an expired lease
    * inline.
    *
-   * '''Fair''': waiters are granted in arrival order, among those still within their patience. A waiter
+   * Fair: waiters are granted in arrival order, among those still within their patience. A waiter
    * whose patience elapses gives up its place; nothing else reorders the queue.
    *
    * @param acquisition the lock to take, how long to hold it, and how long to wait
@@ -46,7 +44,7 @@ trait LockStore:
    * them.
    *
    * @param acquisition the lock to take and how long to hold it; its patience is ignored
-   * @return the hold, or `None` when it is held under a live lease '''or''' someone queued first; aborts
+   * @return the hold, or `None` when it is held under a live lease, or someone queued first; aborts
    *         with an `AdapterError` when the store fails
    */
   def tryAcquire(acquisition: Acquisition): IO[ApplicationError.AdapterError, Option[Hold]]

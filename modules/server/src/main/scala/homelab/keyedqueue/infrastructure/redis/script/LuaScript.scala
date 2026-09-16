@@ -17,9 +17,9 @@ import scala.jdk.CollectionConverters.*
  * One registered Lua script: a digest, the shape of reply it was told to expect, and the types either end
  * of it speaks.
  *
- * '''A script is a value, not a class.''' What differs between scripts is what they are sent and what they
- * answer, and both are decided by `In` and `Out` through the encoder and decoder in scope — so a script
- * needs no code of its own, only the two types and the digest it was loaded under.
+ * What differs between scripts is what they are sent and what they answer, and both are decided by `In`
+ * and `Out` through the encoder and decoder in scope — so a script is a value carrying two types and the
+ * digest it was loaded under, with no code of its own.
  *
  * `outputType` is an argument rather than something derived from `Out`, because the two are independent: a
  * `Boolean` arrives as an `INTEGER` reply and an `Option[…]` as a `MULTI` one. What the wire carries is the
@@ -423,7 +423,7 @@ object LuaScript:
           input => decoder.decode(input).flatMap(f)
 
         /**
-         * Read something else from the '''same''' reply, once this has been read.
+         * Read something else from the same reply, once this has been read.
          *
          * What makes a multi-element reply a `for` comprehension: each step reads its own position out of
          * the one reply, and the yield sees them all.

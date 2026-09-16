@@ -8,18 +8,13 @@ import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
 /**
  * What this adapter can fail with, defined where it is raised.
  *
- * '''Not in the domain.''' These are Redis's failure modes — a connection that cannot be opened, a reply
- * this code cannot read — and a port that named them would be describing one adapter's implementation to
- * every other. The domain's signatures say [[ApplicationError]]; what a failure *means* travels in the
- * toolkit's marker traits, which is what the protocol layer maps on.
+ * Redis's failure modes: a connection that cannot be opened, a reply this code cannot read. The enum
+ * carries `AdapterError` as a whole, because a store breaking is never the caller's fault and never a
+ * domain condition, and the ports it reaches declare [[ApplicationError]].
  *
- * '''An `AdapterError` as a whole, not case by case.''' The port declares that it fails with an
- * `AdapterError` and nothing else — a store breaking is never the caller's fault and never a domain
- * condition — so this type has to satisfy that, which it can only do by carrying the marker itself. What
- * the cases add on top is the second question: a store that cannot be reached is transient and worth
+ * What the cases add is the second question: a store that cannot be reached is transient and worth
  * retrying, while a reply that cannot be read is this code being wrong about its own scripts. They are
- * told apart by their markers rather than by name, so a second adapter's equivalents are classified
- * without anyone editing the mapping.
+ * told apart by their markers rather than by name, which is what the protocol layer maps on.
  */
 enum RedisFailure extends ApplicationError.AdapterError:
 

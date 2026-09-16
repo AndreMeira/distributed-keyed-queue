@@ -7,15 +7,12 @@ import homelab.keyedqueue.domain.types.LockName
  * The keys one partition's lock scripts touch: held leases, live holders' tokens, the fence counter, the
  * waiting index and per-lock waiter lists, and the wake stream.
  *
- * '''A lock's partition follows its name''', as a queue's follows the queue's, so every operation on one
- * lock reaches the same keys without being told which partition it is in. What the partition buys is what
- * it buys for the queue: the locks spread across cluster slots instead of every lock in the deployment
- * living on one node — and the wake stream spreads with them, which it must, because a release appends to
- * it in the same script that frees the lock, and a script may only touch one slot.
+ * A lock's partition follows its name, as a queue's follows the queue's, so every operation on one lock
+ * reaches the same keys without being told which partition it is in, and the locks spread across cluster
+ * slots. The wake stream is the partition's — the one [[QueueKeys]] announces on too, since an entry says
+ * which kind of thing it names.
  *
- * '''The wake stream is the partition's, not the locks'.''' It is the one [[QueueKeys]] announces on too:
- * an entry says which kind of thing it names, so sharing a stream costs nothing and saves the slot — and
- * the connection blocked on it — that a second one would need.
+ * See `docs/architecture/redis-cluster.md`.
  *
  * Unlike [[QueueKeys]], the structures are shared by every lock in the partition rather than being one
  * lock's own: `held` and `tokens` carry the name as a member or field. Only `waiters` is a key per lock,
