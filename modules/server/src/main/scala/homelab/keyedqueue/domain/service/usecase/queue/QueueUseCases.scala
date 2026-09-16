@@ -1,4 +1,4 @@
-package homelab.keyedqueue.domain.service.usecase.v1
+package homelab.keyedqueue.domain.service.usecase.queue
 
 
 /**

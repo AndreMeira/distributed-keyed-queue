@@ -110,8 +110,8 @@ Returns true. Three facts about that last line:
 - a **stale** release (a token that no longer matches) returns before reaching it, so no wake is sent for a
   lock that did not change hands.
 
-**What the wake does.** Every instance's `ReadinessListener` is blocked on that stream. The entry routes to
-`LockReadiness`, which wakes **every** local waiter on `route-7`. Both B and C ask; only one can win.
+**What the wake does.** Every instance's `WakeConsumer` is blocked on that stream. `ReadinessProcessor`
+routes the entry to `LockReadiness`, which wakes **every** local waiter on `route-7`. Both B and C ask; only one can win.
 
 ---
 

@@ -2,7 +2,7 @@
 title: "How the lock works — structures, state transitions, and the code that drives them"
 type: architecture
 status: current
-updated: 2026-09-13
+updated: 2026-09-16
 tags: [lock, redis, lua, tickets, fairness, fencing, readiness, wake, architecture]
 ---
 
@@ -94,7 +94,7 @@ the store's.
 The waiter then parks on a mailbox for at most that long, and wakes on whichever comes first:
 
 1. **the wake stream** — a release or trim on *any instance* appends an entry; the shared
-   [`ReadinessListener`](#the-code) delivers it to this instance's `LockReadiness`, which wakes **every**
+   [wake path](#the-code) delivers it to this instance's `LockReadiness`, which wakes **every**
    local waiter on that name;
 2. **the recheck delay** — nothing was announced, but the event the refusal named has now passed
    (a lease expired with no release, because the holder died);
@@ -117,7 +117,8 @@ Two details make this sound rather than merely plausible:
 | `RedisLockStore` | the adapter: one method per script, plus the waiting loop (`queued` → `awaitTurn` → `turn`) |
 | `LockReadiness` | per-name mailboxes; a wake reaches **every** subscriber and is **dropped** if nobody waits |
 | `QueueReadiness` | the queue's counterpart, for contrast: one token to **one** consumer, and **kept** if nobody waits |
-| `ReadinessListener` | one blocking `XREAD` per partition; routes each entry to one readiness by the `kind` it carries |
+| `WakeConsumer` | one blocking `XREAD` per partition, fanned into one batched intake |
+| `ReadinessProcessor` | routes each entry to one readiness by the kind it carries |
 | `LockCleanup` | the periodic `trim` — the only background pass the lock has |
 | `KeyLayout` / `LockKeys` | which partition a name falls in, and the keys that follow from it |
 

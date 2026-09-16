@@ -1,11 +1,12 @@
-package homelab.keyedqueue.domain.service.usecase.v1
+package homelab.keyedqueue.domain.service.usecase.queue
 
 
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.domain.service.validation.{ LockInputValidation, QueueInputValidation }
+import homelab.keyedqueue.domain.service.usecase.lock.{LockAcquireUseCase, LockRefreshUseCase, LockReleaseUseCase, SyncLockUseCases}
+import homelab.keyedqueue.domain.service.validation.{LockInputValidation, QueueInputValidation}
 import zio.ZLayer
 
 

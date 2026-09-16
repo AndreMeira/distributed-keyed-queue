@@ -1,9 +1,9 @@
-package homelab.keyedqueue.domain.service.usecase.v1
+package homelab.keyedqueue.domain.service.usecase.queue
 
 
 import homelab.common.orFail
 import homelab.common.error.{ ApplicationError, ValidationError }
-import homelab.keyedqueue.domain.request.v1.ReleaseRequest
+import homelab.keyedqueue.domain.request.lock.ReleaseRequest
 import homelab.keyedqueue.domain.response.v1.ReleaseResponse
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.validation.LockInputValidation
