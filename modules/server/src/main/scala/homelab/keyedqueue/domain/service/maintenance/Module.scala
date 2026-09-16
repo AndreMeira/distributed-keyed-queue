@@ -26,8 +26,8 @@ object Module:
     for
       watchdog <- ZIO.service[Watchdog]
       cleanup  <- ZIO.service[LockCleanup]
-      _        <- watchdog.run.forkScoped
-      _        <- cleanup.run.forkScoped
+      _        <- watchdog.run.forkScoped.interruptible
+      _        <- cleanup.run.forkScoped.interruptible
     yield ()
 
   /**

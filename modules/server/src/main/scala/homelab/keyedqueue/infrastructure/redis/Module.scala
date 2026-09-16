@@ -61,8 +61,8 @@ object Module:
       consumer   <- WakeConsumer.make(connection, layout, config.wakeBlock)
       _          <- consumer.reachable
       _          <- consumer.positioned
-      _          <- consumer.start.forkScoped
-      _          <- ReadinessProcessor(consumer, queueReady, lockReady).run.forkScoped
+      _          <- consumer.start.forkScoped.interruptible
+      _          <- ReadinessProcessor(consumer, queueReady, lockReady).run.forkScoped.interruptible
     yield ()
 
   /**

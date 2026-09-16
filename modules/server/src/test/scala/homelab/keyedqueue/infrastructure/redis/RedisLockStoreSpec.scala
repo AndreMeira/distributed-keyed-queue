@@ -162,9 +162,12 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
           inside   <- Ref.make(0)
           breach   <- Ref.make(false)
           worker    = ZIO.foreachDiscard(1 to perFiber): _ =>
-                        ZIO.acquireReleaseWith(lock.acquire(Helper.acq("f", 30.seconds, 30.seconds)))(h =>
-                          ZIO.foreachDiscard(h)(held => lock.release(held.claim).ignore)
+                        ZIO.acquireReleaseWith(
+                          lock.acquire(Helper.acq("f", 30.seconds, 30.seconds))
+                        )(
+                          ZIO.foreachDiscard(_)(held => lock.release(held.claim).ignore)
                         ) {
+                          case None    => ZIO.unit
                           case Some(_) =>
                             for
                               n <- inside.updateAndGet(_ + 1)
@@ -172,7 +175,6 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
                               _ <- ZIO.sleep(3.millis)
                               _ <- inside.update(_ - 1)
                             yield ()
-                          case None    => ZIO.unit
                         }
           _        <- ZIO.foreachParDiscard(1 to fibers)(_ => worker)
           broken   <- breach.get

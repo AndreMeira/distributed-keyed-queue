@@ -52,6 +52,6 @@ object RedisSpecSupport {
      * The wake path, running for exactly as long as the suite.
      */
     val init: TestAspect[Nothing, InitDependency, ApplicationError, Any] =
-      TestAspect.beforeAll(RedisModule.init.interruptible)
+      TestAspect.beforeAll(RedisModule.init)
   }
 }
