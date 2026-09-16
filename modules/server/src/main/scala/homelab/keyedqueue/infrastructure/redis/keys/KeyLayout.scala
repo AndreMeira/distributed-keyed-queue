@@ -243,7 +243,8 @@ object KeyLayout:
    * @param cluster whether the store is a Redis Cluster
    * @return the layout
    */
-  def of(cluster: Boolean): KeyLayout = KeyLayout(if cluster then partitions else 1)
+  def of(cluster: Boolean): KeyLayout =
+    if cluster then KeyLayout.cluster else KeyLayout.single
 
   /**
    * The layout of a cluster deployment: every partition, spread across slots.

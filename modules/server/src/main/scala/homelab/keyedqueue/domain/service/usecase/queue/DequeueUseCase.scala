@@ -9,6 +9,7 @@ import homelab.keyedqueue.domain.request.lock.*
 import homelab.keyedqueue.domain.response.queue.*
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
+import homelab.keyedqueue.domain.service.readiness.QueueReadiness
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
 import zio.{Chunk, Duration, IO, NonEmptyChunk, duration2DurationOps}
 
@@ -23,7 +24,12 @@ import zio.{Chunk, Duration, IO, NonEmptyChunk, duration2DurationOps}
  * @param watchdog told about the queue, so its abandoned work is repaired
  * @param validation what turns a request into a demand this service will honour
  */
-final class DequeueUseCase(store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation):
+final class DequeueUseCase(
+  store: QueueStore,
+  watchdog: Watchdog,
+  validation: QueueInputValidation,
+  readiness: QueueReadiness,
+):
 
   /**
    * Wait for a message.
