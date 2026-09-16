@@ -63,8 +63,8 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
         asked   <- Clock.instant
         signal  <- readiness.subscribe(acquisition.name)
         waiter   = Waiter(acquisition, asked, signal)
-        held    <- State.loop(State.Entering(acquisition.patience)):
-                     case State.Entering(within)          => entering(waiter, within)
+        held    <- State.loop(State.Placing(acquisition.patience)):
+                     case State.Placing(within)          => placing(waiter, within)
                      case State.Queued(ticket, recheckAt) => queued(waiter, ticket, recheckAt)
       yield held
 
@@ -75,11 +75,11 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
    * @param within what is left of the patience, which bounds the ticket this may be given
    * @return where the answer leaves the wait; aborts with an `AdapterError` when the store fails
    */
-  private def entering(waiter: Waiter, within: Duration): IO[AdapterError, State] =
+  private def placing(waiter: Waiter, within: Duration): IO[AdapterError, State] =
     Clock.instant.flatMap: now =>
-      store.enter(waiter.acquisition, within).map {
-        case LockStore.Entered.Granted(hold)           => State.Granted(hold)
-        case LockStore.Entered.Queued(ticket, recheck) => State.Queued(ticket, now.plus(atLeastFloor(recheck)))
+      store.place(waiter.acquisition, within).map {
+        case LockStore.Position.Granted(hold)           => State.Granted(hold)
+        case LockStore.Position.Queued(ticket, recheck) => State.Queued(ticket, now.plus(atLeastFloor(recheck)))
       }
 
   /**
@@ -98,10 +98,10 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
       .flatMap:
         case None       => ZIO.succeed(State.GivenUp)
         case Some(left) =>
-          askGrant(waiter, ticket, recheckAt, left).map:
-            case _ -> LockStore.Asked.Gone          => State.Entering(left)
-            case _ -> LockStore.Asked.Granted(hold) => State.Granted(hold)
-            case now -> LockStore.Asked.Wait(delay) => State.Queued(ticket, now.plus(atLeastFloor(delay)))
+          askTurn(waiter, ticket, recheckAt, left).map:
+            case _ -> LockStore.Turn.Gone          => State.Placing(left)
+            case _ -> LockStore.Turn.Granted(hold) => State.Granted(hold)
+            case now -> LockStore.Turn.Wait(delay) => State.Queued(ticket, now.plus(atLeastFloor(delay)))
       .onExit:
         case Exit.Success(State.Queued(_, _)) => ZIO.unit
         case Exit.Success(State.Granted(_))   => ZIO.unit
@@ -120,17 +120,17 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
    * @return when the ask was made, and what the store answered; aborts with an `AdapterError` when the
    *         store fails
    */
-  private def askGrant(
+  private def askTurn(
     waiter: Waiter,
     ticket: Ticket,
     recheckAt: Instant,
     left: Duration,
-  ): IO[AdapterError, (Instant, LockStore.Asked)] =
+  ): IO[AdapterError, (Instant, LockStore.Turn)] =
     for
       timeout <- Clock.instant.map(window(_, recheckAt, left))
       _       <- waiter.signal.await.timeout(timeout).unless(timeout.isZero)
       asking  <- Clock.instant
-      answer  <- store.grant(waiter.acquisition, ticket)
+      answer  <- store.ask(waiter.acquisition, ticket)
     yield asking -> answer
 
   /**
@@ -198,7 +198,7 @@ object LockAcquireUseCase:
      *
      * @param within what is left of the patience, which bounds any ticket this asks for
      */
-    case Entering(within: Duration)
+    case Placing(within: Duration)
 
     /**
      * Holding a place in the queue.
@@ -231,13 +231,13 @@ object LockAcquireUseCase:
      * @return the hold, or `None` when the machine gave up; aborts with an `AdapterError` when the store fails
      */
     def loop(
-      state: State.Entering | State.Queued
+      state: State.Placing | State.Queued
     )(
-      run: State.Entering | State.Queued => IO[AdapterError, State]
+      run: State.Placing | State.Queued => IO[AdapterError, State]
     ): IO[AdapterError, Option[LockStore.Hold]] =
       ZIO.uninterruptibleMask: restore =>
         restore(run(state)).flatMap:
           case State.Granted(hold)  => ZIO.succeed(Some(hold))
           case State.GivenUp        => ZIO.succeed(None)
           case next: State.Queued   => restore(loop(next)(run))
-          case next: State.Entering => restore(loop(next)(run))
+          case next: State.Placing => restore(loop(next)(run))

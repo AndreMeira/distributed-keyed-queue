@@ -36,7 +36,7 @@ trait LockStore:
    * @return the hold, or the ticket and when the answer can next change; aborts with an `AdapterError`
    *         when the store fails
    */
-  def enter(acquisition: Acquisition, within: Duration): IO[ApplicationError.AdapterError, LockStore.Entered]
+  def place(acquisition: Acquisition, within: Duration): IO[ApplicationError.AdapterError, LockStore.Position]
 
   /**
    * Ask whether it is this ticket's turn.
@@ -48,7 +48,7 @@ trait LockStore:
    * @param ticket the ticket to ask with
    * @return what the store answered; aborts with an `AdapterError` when the store fails
    */
-  def grant(acquisition: Acquisition, ticket: Ticket): IO[ApplicationError.AdapterError, LockStore.Asked]
+  def ask(acquisition: Acquisition, ticket: Ticket): IO[ApplicationError.AdapterError, LockStore.Turn]
 
   /**
    * Give up a place in the queue.
@@ -117,9 +117,9 @@ object LockStore:
 
 
   /**
-   * What an enter amounts to: the lock, or a place in the queue for it.
+   * Where a caller stands after asking for a lock: holding it, or queued for it.
    */
-  enum Entered:
+  enum Position:
 
     /**
      * The lock was free and is now this caller's.
@@ -137,9 +137,9 @@ object LockStore:
     case Queued(ticket: Ticket, recheck: Duration)
 
   /**
-   * What asking with a ticket amounts to.
+   * Whether a ticket's turn has come.
    */
-  enum Asked:
+  enum Turn:
 
     /**
      * The turn came and the lock is this caller's.

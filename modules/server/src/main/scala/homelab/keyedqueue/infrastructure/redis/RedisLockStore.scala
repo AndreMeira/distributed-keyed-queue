@@ -4,7 +4,6 @@ package homelab.keyedqueue.infrastructure.redis
 import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.model.{ Acquisition, LockClaim }
 import homelab.keyedqueue.domain.service.lock.LockStore
-import homelab.keyedqueue.domain.service.readiness.LockReadiness
 import homelab.keyedqueue.domain.service.lock.LockStore.Hold
 import homelab.keyedqueue.domain.types.{ LockName, Ticket }
 import homelab.keyedqueue.infrastructure.redis.script.LockScripts
@@ -24,23 +23,20 @@ import java.time.Instant
  * live tickets exist. A dead holder is reclaimed inline by the next grant and a dead waiter is pruned at its
  * own deadline, so nothing sweeps.
  *
- * A waiter parks until a named event rather than polling: every refusal states the delay after which the
- * answer can change, and the waiter parks on its [[LockReadiness]] mailbox for at most that long. Release
- * and trim append to the wake stream in the same script that frees the lock, so every instance's waiters
- * wake and ask, and only the head ticket can win.
+ * Every refusal states the delay after which the answer can change, so a waiter has something to park
+ * until — the waiting itself is `LockAcquireUseCase`'s. Release and trim append to the wake stream in the
+ * same script that frees the lock, so every instance's waiters are woken and only the head ticket can win.
  *
  * See `docs/architecture/lock-mechanics.md` and `docs/architecture/readiness-and-wake.md`.
  *
  * @param monitor what each call on the substrate is traced against
  * @param connection where its connection comes from
  * @param scripts the loaded lock scripts
- * @param readiness where a waiter's wakes land
  */
 final class RedisLockStore(
   monitor: Monitor,
   connection: Connection,
   scripts: LockScripts,
-  readiness: LockReadiness,
   layout: KeyLayout,
 ) extends LockStore:
 
@@ -70,16 +66,16 @@ final class RedisLockStore(
    * @return the hold, or the ticket and the first recheck delay; aborts with `RedisFailure` when the store
    *         fails
    */
-  override def enter(acquisition: Acquisition, within: Duration): IO[RedisFailure, LockStore.Entered] =
-    monitor.trace("RedisLockStore.enter"):
+  override def place(acquisition: Acquisition, within: Duration): IO[RedisFailure, LockStore.Position] =
+    monitor.trace("RedisLockStore.place"):
       connection.provide:
         scripts.acquire
           .execute(layout.lock(acquisition.name), acquisition.name, acquisition.ttl, within)
           .map:
             case AcquireScript.Entered.Granted(token, until)   =>
-              LockStore.Entered.Granted(hold(acquisition.name)(token, until))
+              LockStore.Position.Granted(hold(acquisition.name)(token, until))
             case AcquireScript.Entered.Queued(ticket, recheck) =>
-              LockStore.Entered.Queued(Ticket(ticket), recheck)
+              LockStore.Position.Queued(Ticket(ticket), recheck)
 
   /**
    * One `grant` call: whether it is this ticket's turn yet.
@@ -88,17 +84,17 @@ final class RedisLockStore(
    * @param ticket the ticket to ask with
    * @return what the store answered; aborts with `RedisFailure` when the store fails
    */
-  override def grant(acquisition: Acquisition, ticket: Ticket): IO[RedisFailure, LockStore.Asked] =
+  override def ask(acquisition: Acquisition, ticket: Ticket): IO[RedisFailure, LockStore.Turn] =
     // One span per deliberate ask: their count per acquire is the wake-efficiency signal — an event or two
     // each, never a poll's worth.
-    monitor.trace("RedisLockStore.grant"):
+    monitor.trace("RedisLockStore.ask"):
       connection.provide:
         scripts.grant
           .execute(layout.lock(acquisition.name), acquisition.name, ticket, acquisition.ttl)
           .map:
-            case GrantScript.Asked.Granted(token, until) => LockStore.Asked.Granted(hold(acquisition.name)(token, until))
-            case GrantScript.Asked.Wait(delay)           => LockStore.Asked.Wait(delay)
-            case GrantScript.Asked.Gone                  => LockStore.Asked.Gone
+            case GrantScript.Asked.Granted(token, until) => LockStore.Turn.Granted(hold(acquisition.name)(token, until))
+            case GrantScript.Asked.Wait(delay)           => LockStore.Turn.Wait(delay)
+            case GrantScript.Asked.Gone                  => LockStore.Turn.Gone
 
   /**
    * One `abandon` call, which gives up a place in the queue.

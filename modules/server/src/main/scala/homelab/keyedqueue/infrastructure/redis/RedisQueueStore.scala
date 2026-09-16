@@ -4,7 +4,6 @@ package homelab.keyedqueue.infrastructure.redis
 import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.model.{ Claim, Demand, Grant, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.domain.service.readiness.QueueReadiness
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, QueueKeys }
@@ -34,14 +33,12 @@ import java.time.Instant
  * @param monitor what each call on the substrate is traced against
  * @param connection where its connection comes from
  * @param scripts the loaded script digests
- * @param readiness where a caller waits for a queue to have something worth looking at
  * @param leaseTtl how long a claim survives without a heartbeat
  */
 final class RedisQueueStore(
   monitor: Monitor,
   connection: Connection,
   scripts: QueueScripts,
-  readiness: QueueReadiness,
   layout: KeyLayout,
   leaseTtl: Duration,
 ) extends QueueStore:

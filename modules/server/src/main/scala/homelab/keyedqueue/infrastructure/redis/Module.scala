@@ -5,7 +5,7 @@ import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
 import homelab.common.messaging.Consumer
 import homelab.keyedqueue.domain.service.lock.LockStore
-import homelab.keyedqueue.domain.service.readiness.{ LockReadiness, QueueReadiness, Wake }
+import homelab.keyedqueue.domain.service.readiness.Wake
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
@@ -31,7 +31,7 @@ object Module:
   /**
    * Everything this module needs.
    */
-  type Required = QueueConfig & Monitor & QueueReadiness & LockReadiness
+  type Required = QueueConfig & Monitor
 
   /**
    * Check the store's layout and start the wake path, for the life of the caller's scope.
@@ -138,7 +138,7 @@ object Module:
    * @return the layer
    */
   val stores: ZLayer[
-    Monitor & Connection & QueueScripts & LockScripts & QueueConfig & KeyLayout & QueueReadiness & LockReadiness,
+    Monitor & Connection & QueueScripts & LockScripts & QueueConfig & KeyLayout,
     Nothing,
     QueueStore & LockStore,
   ] = ZLayer.fromZIOEnvironment:
@@ -149,8 +149,6 @@ object Module:
       lockScripts <- ZIO.service[LockScripts]
       config      <- ZIO.service[QueueConfig]
       layout      <- ZIO.service[KeyLayout]
-      queueReady  <- ZIO.service[QueueReadiness]
-      lockReady   <- ZIO.service[LockReadiness]
-      queueStore   = RedisQueueStore(monitor, connection, scripts, queueReady, layout, config.leaseTtl)
-      lockStore    = RedisLockStore(monitor, connection, lockScripts, lockReady, layout)
+      queueStore   = RedisQueueStore(monitor, connection, scripts, layout, config.leaseTtl)
+      lockStore    = RedisLockStore(monitor, connection, lockScripts, layout)
     yield ZEnvironment[QueueStore](queueStore) ++ ZEnvironment[LockStore](lockStore)
