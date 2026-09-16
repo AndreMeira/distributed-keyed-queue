@@ -2,6 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.messaging.Consumer
+import homelab.keyedqueue.domain.service.readiness.Wake
 import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, RedisKey }
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import io.lettuce.core.XReadArgs.StreamOffset

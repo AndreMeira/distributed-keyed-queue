@@ -4,6 +4,7 @@ package homelab.keyedqueue.application.grpc.v1
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.application.grpc.v1.Module as GrpcModule
 import homelab.keyedqueue.domain.service.maintenance.Module as MaintenanceModule
+import homelab.keyedqueue.domain.service.readiness.Module as ReadinessModule
 import homelab.keyedqueue.domain.service.usecase.Module as UseCaseModule
 import homelab.keyedqueue.domain.service.validation.Module as ValidationModule
 import homelab.keyedqueue.infrastructure.configuration.Module as ConfigurationModule
@@ -36,10 +37,12 @@ object GrpcApplication:
     (
       ZIO.unit
         *> RedisModule.init
+        *> ReadinessModule.init
         *> MaintenanceModule.init
         *> GrpcModule.init
     ).provideSome[Scope](
       GrpcModule.layer,
+      ReadinessModule.layer,
       UseCaseModule.layer,
       ValidationModule.layer,
       MaintenanceModule.layer,

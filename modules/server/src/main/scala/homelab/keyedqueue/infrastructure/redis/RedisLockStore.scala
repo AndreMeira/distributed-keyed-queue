@@ -4,6 +4,7 @@ package homelab.keyedqueue.infrastructure.redis
 import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.model.{ Acquisition, LockClaim }
 import homelab.keyedqueue.domain.service.lock.LockStore
+import homelab.keyedqueue.domain.service.readiness.LockReadiness
 import homelab.keyedqueue.domain.service.lock.LockStore.Hold
 import homelab.keyedqueue.domain.types.LockName
 import homelab.keyedqueue.infrastructure.redis.script.LockScripts

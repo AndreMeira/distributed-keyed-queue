@@ -4,6 +4,7 @@ package homelab.keyedqueue.infrastructure.redis
 import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.model.{ Claim, Demand, Grant, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
+import homelab.keyedqueue.domain.service.readiness.QueueReadiness
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, QueueKeys }

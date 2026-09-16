@@ -1,6 +1,7 @@
-package homelab.keyedqueue.infrastructure.redis
+package homelab.keyedqueue.domain.service.readiness
 
 
+import homelab.common.error.ApplicationError
 import homelab.common.messaging.Consumer
 import homelab.keyedqueue.domain.types.{ LockName, QueueName }
 import zio.*
@@ -20,8 +21,8 @@ object ReadinessProcessorSpec extends ZIOSpecDefault:
   private val lock  = LockName("route-7")
 
   /** An input that never delivers: these tests hand wakes to `process` directly. */
-  private val silent: Consumer.Batched[RedisFailure, Wake] = new Consumer.Batched[RedisFailure, Wake]:
-    override def consume[E2 >: RedisFailure](logic: List[Wake] => IO[E2, Unit]): IO[E2, Unit] = ZIO.never
+  private val silent: Consumer.Batched[ApplicationError.AdapterError, Wake] = new Consumer.Batched[ApplicationError.AdapterError, Wake]:
+    override def consume[E2 >: ApplicationError.AdapterError](logic: List[Wake] => IO[E2, Unit]): IO[E2, Unit] = ZIO.never
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("ReadinessProcessor")(
     test("a queue wake reaches the queue's readiness, and not the lock's") {
