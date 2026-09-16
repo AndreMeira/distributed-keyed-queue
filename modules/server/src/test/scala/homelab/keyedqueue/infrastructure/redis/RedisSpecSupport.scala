@@ -6,6 +6,7 @@ import homelab.common.monitor.Monitor
 import homelab.keyedqueue.SpecHelper.Helper
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.infrastructure.redis.Container.Type
+import homelab.keyedqueue.domain.service.readiness.Module as ReadinessModule
 import homelab.keyedqueue.infrastructure.redis.Module as RedisModule
 import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
 import org.testcontainers.containers.GenericContainer
@@ -17,8 +18,8 @@ object RedisSpecSupport {
 
   opaque type Init = Unit
 
-  lazy val layer: ZLayer[QueueConfig, ApplicationError, RedisModule.Provided] =
-    monitor >+> RedisModule.layer
+  lazy val layer: ZLayer[QueueConfig, ApplicationError, RedisModule.Provided & ReadinessModule.Provided] =
+    monitor >+> ReadinessModule.layer >+> RedisModule.layer
 
   /**
    * 
@@ -46,12 +47,12 @@ object RedisSpecSupport {
      * 
      */
     type InitDependency =
-      Connection & KeyLayout & QueueConfig & QueueReadiness & LockReadiness & Scope
+      Connection & KeyLayout & WakeConsumer & ReadinessModule.Provided & ReadinessModule.Required & Scope
 
     /**
      * The wake path, running for exactly as long as the suite.
      */
     val init: TestAspect[Nothing, InitDependency, ApplicationError, Any] =
-      TestAspect.beforeAll(RedisModule.init)
+      TestAspect.beforeAll(RedisModule.init *> ReadinessModule.init)
   }
 }

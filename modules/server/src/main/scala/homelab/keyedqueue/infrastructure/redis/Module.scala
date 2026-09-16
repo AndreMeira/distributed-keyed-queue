@@ -3,7 +3,9 @@ package homelab.keyedqueue.infrastructure.redis
 
 import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
+import homelab.common.messaging.Consumer
 import homelab.keyedqueue.domain.service.lock.LockStore
+import homelab.keyedqueue.domain.service.readiness.{ LockReadiness, QueueReadiness, Wake }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
@@ -24,12 +26,13 @@ object Module:
    * the two readinesses the wake path feeds.
    * Everything this module openly provides
    */
-  type Provided = QueueStore & LockStore & Connection & KeyLayout & QueueReadiness & LockReadiness
+  type Provided = QueueStore & LockStore & Connection & KeyLayout & WakeConsumer &
+    Consumer.Batched[ApplicationError.AdapterError, Wake]
 
   /**
    * Everything this module needs.
    */
-  type Required = QueueConfig & Monitor
+  type Required = QueueConfig & Monitor & QueueReadiness & LockReadiness
 
   /**
    * Check the store's layout and start the wake path, for the life of the caller's scope.
@@ -40,29 +43,18 @@ object Module:
    * @return noop once the layout is verified and the wake path is running; aborts with `Misconfigured` when
    *         the store was written under a different layout, and with `RedisFailure` when it cannot be read
    */
-  def init: ZIO[
-    Connection & KeyLayout & QueueConfig & QueueReadiness & LockReadiness & Scope,
-    ApplicationError,
-    Unit,
-  ] =
+  def init: ZIO[Connection & KeyLayout & WakeConsumer & Scope, ApplicationError, Unit] =
     for
       connection <- ZIO.service[Connection]
       layout     <- ZIO.service[KeyLayout]
-      config     <- ZIO.service[QueueConfig]
-      queueReady <- ZIO.service[QueueReadiness]
-      lockReady  <- ZIO.service[LockReadiness]
+      consumer   <- ZIO.service[WakeConsumer]
       // Before anything is served: an instance whose layout disagrees with the store's must not come up at
       // all — see KeyLayout.
       _          <- connection.provide(layout.verify)
-      // The wake path, in two halves: `WakeConsumer` reads every partition's stream and hands on what
-      // accumulated, `ReadinessProcessor` routes each entry by the kind it carries. Queue entries wake the
-      // queue's readiness (one token, one consumer); lock entries wake the lock's (a broadcast — grants go
-      // by ticket, so every waiter must look).
-      consumer   <- WakeConsumer.make(connection, layout, config.wakeBlock)
+      // The reading half of the wake path; the routing half is the readiness module's.
       _          <- consumer.reachable
       _          <- consumer.positioned
       _          <- consumer.start.forkScoped.interruptible
-      _          <- ReadinessProcessor(consumer, queueReady, lockReady).run.forkScoped.interruptible
     yield ()
 
   /**
@@ -76,7 +68,7 @@ object Module:
       connection,
       scripts,
       lockScripts,
-      readiness,
+      wakes,
       stores,
     )
 
@@ -88,11 +80,18 @@ object Module:
    *
    * @return the layer
    */
-  val readiness: ZLayer[Any, Nothing, QueueReadiness & LockReadiness] = ZLayer.fromZIOEnvironment:
+  val wakes: ZLayer[
+    Connection & KeyLayout & QueueConfig,
+    ApplicationError,
+    WakeConsumer & Consumer.Batched[ApplicationError.AdapterError, Wake],
+  ] = ZLayer.scopedEnvironment:
     for
-      queueReady <- QueueReadiness.make
-      lockReady  <- LockReadiness.make
-    yield ZEnvironment[QueueReadiness](queueReady) ++ ZEnvironment[LockReadiness](lockReady)
+      connection <- ZIO.service[Connection]
+      layout     <- ZIO.service[KeyLayout]
+      config     <- ZIO.service[QueueConfig]
+      consumer   <- WakeConsumer.make(connection, layout, config.wakeBlock)
+    yield ZEnvironment[WakeConsumer](consumer) ++
+      ZEnvironment[Consumer.Batched[ApplicationError.AdapterError, Wake]](consumer)
 
   /**
    * The lock's scripts, registered at startup so a missing

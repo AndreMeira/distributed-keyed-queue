@@ -1,4 +1,4 @@
-package homelab.keyedqueue.infrastructure.redis
+package homelab.keyedqueue.domain.service.readiness
 
 
 import homelab.common.error.ApplicationError
