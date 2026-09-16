@@ -4,7 +4,7 @@ package homelab.keyedqueue.application.grpc.v1
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.SpecHelper.Helper
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import homelab.keyedqueue.infrastructure.redis.{Container, RedisSpecSupport}
+import homelab.keyedqueue.infrastructure.redis.{ Container, RedisSpecSupport }
 import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLockClient
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
 import io.grpc.ManagedChannelBuilder
