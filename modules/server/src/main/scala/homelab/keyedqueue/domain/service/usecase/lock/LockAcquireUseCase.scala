@@ -9,6 +9,7 @@ import homelab.keyedqueue.domain.request.lock.AcquireRequest
 import homelab.keyedqueue.domain.response.lock.AcquireResponse
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.readiness.LockReadiness
+import homelab.keyedqueue.domain.service.readiness.LockReadiness.Signal
 import homelab.keyedqueue.domain.service.usecase.lock.LockAcquireUseCase.{ State, Waiter }
 import homelab.keyedqueue.domain.service.validation.LockInputValidation
 import homelab.keyedqueue.domain.types.Ticket
@@ -60,8 +61,8 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
     ZIO.scoped:
       for
         asked   <- Clock.instant
-        mailbox <- readiness.subscribe(acquisition.name)
-        waiter   = Waiter(acquisition, asked, mailbox)
+        signal  <- readiness.subscribe(acquisition.name)
+        waiter   = Waiter(acquisition, asked, signal)
         held    <- State.loop(State.Entering(acquisition.patience)):
                      case State.Entering(within)          => entering(waiter, within)
                      case State.Queued(ticket, recheckAt) => queued(waiter, ticket, recheckAt)
@@ -127,7 +128,7 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
   ): IO[AdapterError, (Instant, LockStore.Asked)] =
     for
       timeout <- Clock.instant.map(window(_, recheckAt, left))
-      _       <- waiter.mailbox.take.timeout(timeout).unless(timeout.isZero)
+      _       <- waiter.signal.await.timeout(timeout).unless(timeout.isZero)
       asking  <- Clock.instant
       answer  <- store.grant(waiter.acquisition, ticket)
     yield asking -> answer
@@ -181,9 +182,9 @@ object LockAcquireUseCase:
    *
    * @param acquisition the lock to take, how long to hold it, and how long to wait
    * @param asked when the call arrived, which the patience is measured from
-   * @param mailbox where this waiter's wakes land
+   * @param signal what a wake on this lock reaches
    */
-  private case class Waiter(acquisition: Acquisition, asked: Instant, mailbox: Queue[Unit])
+  private case class Waiter(acquisition: Acquisition, asked: Instant, signal: Signal)
 
   /**
    * Where a wait has got to.

@@ -30,11 +30,11 @@ object ReadinessProcessorSpec extends ZIOSpecDefault:
         for
           queueReady <- QueueReadiness.make
           lockReady  <- LockReadiness.make
-          mailbox    <- lockReady.subscribe(lock)
+          signal     <- lockReady.subscribe(lock)
           _          <- queueReady.awaitReady(queue, 50.millis)(ZIO.none) // spend the seed token
           _          <- ReadinessProcessor(silent, queueReady, lockReady).process(List(Wake.Queue(queue)))
           found      <- queueReady.awaitReady(queue, 1.second)(ZIO.some(1))
-          woken      <- mailbox.take.timeout(100.millis)
+          woken      <- signal.await.timeout(100.millis)
         yield assertTrue(found.contains(1), woken.isEmpty)
     },
     test("a lock wake reaches the lock's readiness, and not the queue's") {
@@ -42,10 +42,10 @@ object ReadinessProcessorSpec extends ZIOSpecDefault:
         for
           queueReady <- QueueReadiness.make
           lockReady  <- LockReadiness.make
-          mailbox    <- lockReady.subscribe(lock)
+          signal     <- lockReady.subscribe(lock)
           _          <- queueReady.awaitReady(queue, 50.millis)(ZIO.none)
           _          <- ReadinessProcessor(silent, queueReady, lockReady).process(List(Wake.Lock(lock)))
-          woken      <- mailbox.take.timeout(1.second)
+          woken      <- signal.await.timeout(1.second)
           found      <- queueReady.awaitReady(queue, 100.millis)(ZIO.some(1))
         yield assertTrue(woken.isDefined, found.isEmpty)
     },
@@ -54,10 +54,10 @@ object ReadinessProcessorSpec extends ZIOSpecDefault:
         for
           queueReady <- QueueReadiness.make
           lockReady  <- LockReadiness.make
-          mailbox    <- lockReady.subscribe(lock)
+          signal     <- lockReady.subscribe(lock)
           _          <- queueReady.awaitReady(queue, 50.millis)(ZIO.none)
           _          <- ReadinessProcessor(silent, queueReady, lockReady).process(List(Wake.Gap))
-          woken      <- mailbox.take.timeout(1.second)
+          woken      <- signal.await.timeout(1.second)
           found      <- queueReady.awaitReady(queue, 1.second)(ZIO.some(1))
         yield assertTrue(woken.isDefined, found.contains(1))
     },
