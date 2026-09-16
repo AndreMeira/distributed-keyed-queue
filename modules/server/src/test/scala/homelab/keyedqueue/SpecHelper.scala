@@ -113,7 +113,7 @@ object SpecHelper {
      * Claim exactly one message, for the tests that are not about batching.
      */
     def one(store: QueueStore, queue: QueueName): ZIO[Any, ApplicationError, Option[Grant]] =
-      store.claim(Demand(queue, 2.seconds, 1))
+      store.attemptClaim(Demand(queue, 2.seconds, 1))
 
     /**
      * Acknowledge a single-message batch and report what it was carrying.
@@ -166,6 +166,23 @@ object SpecHelper {
      */
     def boot[A](effect: ZIO[Connection.Commands, Any, A]): ZIO[Connection, Any, A] =
       ZIO.serviceWithZIO[Connection](_.provide(effect))
+
+    /**
+     * A grant as a store hands one over: one message, owned under a claim on `key`.
+     *
+     * @param queue the queue the claim is against
+     * @param key the key the claim owns
+     * @param body what the message carries
+     * @return the grant
+     */
+    def grant(queue: String, key: String, body: String): Grant =
+      val owned = message(MessageKey(key), body)
+      Grant(
+        claim = Claim(QueueName(queue), MessageKey(key), Token(1)),
+        messages = NonEmptyChunk(Grant.Owned(owned.messageId, owned, attempt = 1)),
+        leaseExpiresAt = java.time.Instant.EPOCH,
+        backlogDepth = 0,
+      )
   }
 
   object Failure {

@@ -46,21 +46,6 @@ trait QueueStore:
   def attemptClaim(demand: Demand): IO[ApplicationError.AdapterError, Option[Grant]]
 
   /**
-   * Wait for a key to become claimable, then take the oldest of its messages the demand allows for.
-   *
-   * Blocks the calling fiber, and with it a connection, which is why the blocking pool's size — not the
-   * number of keys — is what bounds concurrent claims, and why this is not something to fork per request.
-   *
-   * One claim covers the whole batch: the key is what is owned, so nothing else may work any of these
-   * messages until the claim ends, however many it turned out to contain.
-   *
-   * @param demand the queue to claim from, how long to wait, and the most to take
-   * @return the claim, or `None` when nothing became claimable in time; aborts with an `AdapterError` if the
-   *         store fails
-   */
-  def claim(demand: Demand): IO[ApplicationError.AdapterError, Option[Grant]]
-
-  /**
    * Report what happened to some of what a claim owns.
    *
    * An id the claim does not own is ignored rather than refused, which is what makes a retried settle

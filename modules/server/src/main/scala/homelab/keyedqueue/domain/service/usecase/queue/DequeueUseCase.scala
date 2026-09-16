@@ -3,14 +3,16 @@ package homelab.keyedqueue.domain.service.usecase.queue
 
 import homelab.common.error.ApplicationError
 import homelab.common.orFail
-import homelab.keyedqueue.domain.model.Grant
+import homelab.keyedqueue.domain.model.{ Demand, Grant }
 import homelab.keyedqueue.domain.request.queue.DequeueRequest
 import homelab.keyedqueue.domain.response.queue.*
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.readiness.QueueReadiness
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
-import zio.IO
+import zio.{ Clock, Duration, IO, UIO, ZIO }
+
+import java.time.Instant
 
 
 /**
@@ -47,8 +49,39 @@ final class DequeueUseCase(
     for
       demand <- validation.parse(request).orFail
       _      <- watchdog.watch(demand.queue)
-      grant  <- store.claim(demand)
+      now    <- Clock.instant
+      grant  <- claim(demand, now)
     yield response(grant)
+
+  /**
+   * Wait for a readiness token, claim when one arrives, and keep at it until the patience is spent.
+   *
+   * @param demand what the caller asked for
+   * @param asked  when its call arrived, which is what the patience is measured from
+   * @return the claim, or `None` when the patience elapsed; aborts with an `AdapterError` when the store fails
+   */
+  private def claim(demand: Demand, asked: Instant): IO[ApplicationError.AdapterError, Option[Grant]] =
+    remainingTime(demand.patience, asked).flatMap:
+      case None               => ZIO.none
+      case Some(patienceLeft) =>
+        readiness
+          .awaitReady(demand.queue, patienceLeft):
+            store.attemptClaim(demand)
+          .flatMap:
+            case granted @ Some(_) => ZIO.succeed(granted)
+            case None              => claim(demand, asked)
+
+  /**
+   * What is left of a caller's patience.
+   *
+   * @param patience what the caller was granted
+   * @param asked    when its call reached this adapter
+   * @return the time still to wait, or `None` when the patience is already spent
+   */
+  private def remainingTime(patience: Duration, asked: Instant): UIO[Option[Duration]] =
+    Clock.instant.map: now =>
+      val left = patience.minus(Duration.fromInterval(asked, now))
+      Option.when(left.toMillis > 0)(left)
 
   /**
    * Present what the store returned as the answer the caller gets.
@@ -61,7 +94,6 @@ final class DequeueUseCase(
    * @return the response, carrying a claim only when there was one
    */
   private def response(grant: Option[Grant]): DequeueResponse =
-    grant match {
+    grant match
       case None          => DequeueResponse.Empty
       case Some(granted) => DequeueResponse.fromGrant(granted)
-    }

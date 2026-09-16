@@ -192,7 +192,7 @@ final class RedisLockStore(
 
   /**
    * Wait for this ticket's turn, until granted or the patience is spent — the ticketed twin of
-   * `RedisQueueStore.claimWithin`.
+   * `DequeueUseCase.claim`.
    *
    * Parks until the earlier of the next known event and the remaining patience — a wake in the mailbox
    * cuts the park short — then asks. Every ask is deliberate: it follows a wake, the arrival of the next
