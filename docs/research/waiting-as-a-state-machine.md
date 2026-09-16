@@ -100,6 +100,31 @@ interrupted mid-wait gives up its place, so the next one is not delayed"*.
 **So the tension is:** the state machine is the better description, and the nesting is the better
 implementation, and the two do not want the same shape.
 
+## Why a loop and not plain recursion
+
+The two read as the same machine, which is what makes this worth stating: written as mutual recursion —
+`queued` calling `queued` for a `Wait` and `entering` for a `Gone` — the recursive call sits *inside* the
+effect the withdrawal handler is attached to. So a step never completes until the whole remaining wait
+completes, and its handler stays pending for all of it. Park three hundred times and three hundred handlers
+are live, each holding a ticket; cancel the caller and all three hundred fire, two hundred and ninety-nine
+of them finding nothing. It is correct — withdrawal is idempotent — but the cost grows with how long the
+caller waited, which is backwards.
+
+A loop makes a step a complete effect: handler installed, step runs, handler fires, state returned, next
+step begins. One handler live, one withdrawal on interruption, and nothing that grows with the wait.
+
+The flip side, stated honestly: the nesting the recursion creates would also cover the space between steps,
+so plain recursion needs no uninterruptible seam. The trade is a bounded cost paid with a mask, against an
+unbounded one paid with nothing:
+
+| | handlers pending | withdrawals on interruption | needs the mask |
+|---|---|---|---|
+| loop | 1 | 1 | yes |
+| mutual recursion | one per transition | one per transition | no |
+
+None of that is visible in the syntax. Both versions are a match and a recursive call; only one of them
+accumulates finalizers, and the difference is where the recursion sits relative to the handler.
+
 ## Three ways to write it, with what each concedes
 
 | | shape | concedes |
