@@ -3,8 +3,8 @@ package homelab.keyedqueue.infrastructure.redis.keys
 
 import homelab.keyedqueue.SpecHelper
 import homelab.keyedqueue.SpecHelper.Helper
-import homelab.keyedqueue.infrastructure.configuration.{Misconfigured, QueueConfig}
-import homelab.keyedqueue.infrastructure.redis.{Connection, RedisSpecSupport}
+import homelab.keyedqueue.infrastructure.configuration.{ Misconfigured, QueueConfig }
+import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisSpecSupport }
 import zio.*
 import zio.test.*
 

@@ -101,16 +101,16 @@ object LockAcquireUseCaseSpec extends ZIOSpecDefault:
         // ticket stayed at the head, B would wait out A's patience — thirty seconds — instead of taking the
         // lock as soon as the holder releases.
         for
-          acquire <- ZIO.service[LockAcquireUseCase]
-          store   <- ZIO.service[LockStore]
-          held    <- store.tryAcquire(Helper.acq("abandoned", 30.seconds)).someOrFailException
-          first   <- acquire(Helper.acquiring("abandoned", 5.seconds, 30.seconds)).fork
-          _       <- ZIO.sleep(300.millis)
-          second  <- acquire(Helper.acquiring("abandoned", 5.seconds, 30.seconds)).timed.fork
-          _       <- ZIO.sleep(300.millis)
-          _       <- first.interrupt
-          _       <- store.release(held.claim)
-          outcome <- second.join
+          acquire       <- ZIO.service[LockAcquireUseCase]
+          store         <- ZIO.service[LockStore]
+          held          <- store.tryAcquire(Helper.acq("abandoned", 30.seconds)).someOrFailException
+          first         <- acquire(Helper.acquiring("abandoned", 5.seconds, 30.seconds)).fork
+          _             <- ZIO.sleep(300.millis)
+          second        <- acquire(Helper.acquiring("abandoned", 5.seconds, 30.seconds)).timed.fork
+          _             <- ZIO.sleep(300.millis)
+          _             <- first.interrupt
+          _             <- store.release(held.claim)
+          outcome       <- second.join
           (took, answer) = outcome
         yield assertTrue(Helper.granted(answer), took < 5.seconds)
       },
@@ -125,9 +125,7 @@ object LockAcquireUseCaseSpec extends ZIOSpecDefault:
           worker    = ZIO.foreachDiscard(1 to perFiber): _ =>
                         ZIO.acquireReleaseWith(
                           acquire(Helper.acquiring("f", 30.seconds, 30.seconds))
-                        )(
-                          answer => ZIO.foreachDiscard(Helper.heldBy(answer))(claim => store.release(claim).ignore)
-                        ): answer =>
+                        )(answer => ZIO.foreachDiscard(Helper.heldBy(answer))(claim => store.release(claim).ignore)): answer =>
                           ZIO
                             .when(Helper.granted(answer)):
                               for

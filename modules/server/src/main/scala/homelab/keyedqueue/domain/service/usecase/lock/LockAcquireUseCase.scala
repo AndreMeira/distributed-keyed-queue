@@ -60,12 +60,12 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
   private def acquire(acquisition: Acquisition): IO[AdapterError, Option[LockStore.Hold]] =
     ZIO.scoped:
       for
-        asked   <- Clock.instant
-        signal  <- readiness.subscribe(acquisition.name)
-        waiter   = Waiter(acquisition, asked, signal)
-        held    <- State.loop(State.Placing(acquisition.patience)):
-                     case State.Placing(within)          => placing(waiter, within)
-                     case State.Queued(ticket, recheckAt) => queued(waiter, ticket, recheckAt)
+        asked  <- Clock.instant
+        signal <- readiness.subscribe(acquisition.name)
+        waiter  = Waiter(acquisition, asked, signal)
+        held   <- State.loop(State.Placing(acquisition.patience)):
+                    case State.Placing(within)           => placing(waiter, within)
+                    case State.Queued(ticket, recheckAt) => queued(waiter, ticket, recheckAt)
       yield held
 
   /**
@@ -237,7 +237,7 @@ object LockAcquireUseCase:
     ): IO[AdapterError, Option[LockStore.Hold]] =
       ZIO.uninterruptibleMask: restore =>
         restore(run(state)).flatMap:
-          case State.Granted(hold)  => ZIO.succeed(Some(hold))
-          case State.GivenUp        => ZIO.succeed(None)
-          case next: State.Queued   => restore(loop(next)(run))
+          case State.Granted(hold) => ZIO.succeed(Some(hold))
+          case State.GivenUp       => ZIO.succeed(None)
+          case next: State.Queued  => restore(loop(next)(run))
           case next: State.Placing => restore(loop(next)(run))

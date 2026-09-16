@@ -33,14 +33,13 @@ object Module:
    * @return the layer
    */
   val useCases: ZLayer[QueueStore & Watchdog & QueueInputValidation & QueueReadiness, Nothing, QueueUseCases] =
-    ZLayer.fromFunction:
-      (store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation, readiness: QueueReadiness) =>
-        QueueUseCases(
-          enqueue = EnqueueUseCase(store, watchdog, validation),
-          dequeue = DequeueUseCase(store, watchdog, validation, readiness),
-          settle = SettleUseCase(store, validation),
-          heartbeat = HeartbeatUseCase(store),
-        )
+    ZLayer.fromFunction: (store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation, readiness: QueueReadiness) =>
+      QueueUseCases(
+        enqueue = EnqueueUseCase(store, watchdog, validation),
+        dequeue = DequeueUseCase(store, watchdog, validation, readiness),
+        settle = SettleUseCase(store, validation),
+        heartbeat = HeartbeatUseCase(store),
+      )
 
   /**
    * The three lock use cases, as one dependency for the lock's gRPC surface.

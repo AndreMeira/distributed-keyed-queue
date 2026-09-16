@@ -180,4 +180,3 @@ final class RedisLockStore(
    */
   private def hold(name: LockName)(granted: TryScript.Granted): Hold =
     Hold(LockClaim(name, granted.token), granted.leaseUntil)
-

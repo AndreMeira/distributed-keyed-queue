@@ -115,7 +115,6 @@ object LockStore:
    */
   final case class Hold(claim: LockClaim, leaseUntil: Instant)
 
-
   /**
    * Where a caller stands after asking for a lock: holding it, or queued for it.
    */
