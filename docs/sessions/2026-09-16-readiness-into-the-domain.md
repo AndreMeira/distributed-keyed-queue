@@ -86,3 +86,35 @@ elsewhere. Do it when the lock side settles, so both ports narrow under one deci
 now; the waiting is `DequeueUseCase.claim`, parking on `QueueReadiness`; `DequeueUseCaseSpec` covers the
 loop with no container.
 
+## Open: how the lock's wait should be expressed
+
+The lock's waiting now lives in `LockAcquireUseCase` with no mutable state: a `Waiter` carries what does not
+change (acquisition, asked, mailbox), and the ticket and the recheck instant are parameters of the
+recursion. Three shapes were weighed for what comes next; none is obviously right, and the current one is
+good enough to leave alone.
+
+1. **The recursion as it stands.** `entering` → `await` (per-ticket `acquireReleaseExit`) → `awaitTurn`. The
+   ticket has a scope, so withdrawal on interruption is correct by construction. The machine is spread over
+   three methods.
+2. **Two `Loop`s** (`homelab.common.flow.Loop`, `Next.Continue | Next.Done`). Outer loop: one iteration per
+   ticket, state = the patience left (`Duration`). Inner loop: one iteration per ask, state = when the
+   answer can next change (`Instant`). The per-ticket bracket sits between them, which is where the ticket's
+   lifetime belongs. Bodies stay named methods, partially applied — `Loop(patience)(entering(waiter))` — so
+   no anonymous logic. Costs one indirection per loop and a curried definition.
+3. **One `Loop` with a state enum** — `Entering(within) | Queued(ticket, recheckAt)`. The best *description*
+   of the machine: every transition in one match, and `Gone → Entering(left)` reads as what it is. But a flat
+   loop changes the ticket inside itself, so a bracket around the loop cannot know which ticket to withdraw:
+   it needs a `Ref` again, which is the sideways update this refactor removed.
+
+**What the third option actually costs, measured rather than assumed.** Without the finaliser an interrupted
+waiter's ticket lives until its own deadline — which is when that caller would have given up anyway, since
+the ticket's deadline *is* its patience end, and the grant script prunes expired tickets from the head. So
+it is a latency regression for the waiters behind, bounded by the abandoned caller's remaining patience, not
+a correctness bug. `LockAcquireUseCaseSpec` asserts against it: "a waiter interrupted mid-wait gives up its
+place, so the next one is not delayed".
+
+`Workflow` was considered and set aside: it models resumable, keyed, possibly-persisted processes, and a
+waiter's wait is none of those — `persisted` wants a `KeyValueStore` for state that dies with the process
+anyway, and `serialised` wants a `KeyLock`, which is what the lock *is*. It would earn its keep if the
+branching ever got genuinely complicated.
+

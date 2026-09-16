@@ -96,6 +96,24 @@ object LockAcquireUseCaseSpec extends ZIOSpecDefault:
           sneaked <- barged.get
         yield assertTrue(Helper.granted(granted), !sneaked)
       },
+      test("a waiter interrupted mid-wait gives up its place, so the next one is not delayed") {
+        // What the withdrawal finaliser is for. A queues, B queues behind it, then A is interrupted. If A's
+        // ticket stayed at the head, B would wait out A's patience — thirty seconds — instead of taking the
+        // lock as soon as the holder releases.
+        for
+          acquire <- ZIO.service[LockAcquireUseCase]
+          store   <- ZIO.service[LockStore]
+          held    <- store.tryAcquire(Helper.acq("abandoned", 30.seconds)).someOrFailException
+          first   <- acquire(Helper.acquiring("abandoned", 5.seconds, 30.seconds)).fork
+          _       <- ZIO.sleep(300.millis)
+          second  <- acquire(Helper.acquiring("abandoned", 5.seconds, 30.seconds)).timed.fork
+          _       <- ZIO.sleep(300.millis)
+          _       <- first.interrupt
+          _       <- store.release(held.claim)
+          outcome <- second.join
+          (took, answer) = outcome
+        yield assertTrue(Helper.granted(answer), took < 5.seconds)
+      },
       test("mutual exclusion under contention: never two holders at once") {
         val fibers   = 12
         val perFiber = 2
