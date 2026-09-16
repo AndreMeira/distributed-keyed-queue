@@ -4,7 +4,6 @@ package homelab.keyedqueue.infrastructure.redis
 import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.model.{ Claim, Demand, Grant, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
-import homelab.keyedqueue.domain.service.readiness.QueueReadiness
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, QueueKeys }
@@ -34,14 +33,12 @@ import java.time.Instant
  * @param monitor what each call on the substrate is traced against
  * @param connection where its connection comes from
  * @param scripts the loaded script digests
- * @param readiness where a caller waits for a queue to have something worth looking at
  * @param leaseTtl how long a claim survives without a heartbeat
  */
 final class RedisQueueStore(
   monitor: Monitor,
   connection: Connection,
   scripts: QueueScripts,
-  readiness: QueueReadiness,
   layout: KeyLayout,
   leaseTtl: Duration,
 ) extends QueueStore:
@@ -62,91 +59,20 @@ final class RedisQueueStore(
         scripts.enqueue.execute(layout.queue(submission.queue), submission.message)
 
   /**
-   * One `claim` call, and — when it finds nothing — a wait for the queue to be worth another look.
-   *
-   * The claim is a single script: a key is either in `ready` or claimed, never neither, so this adapter
-   * keeps no holding list and needs no recovery for one. Patience is a deadline, so a caller woken by an
-   * entry another instance won waits out what is left of it and a lost race costs one round trip.
-   *
-   * @param demand the queue to claim from, how long to wait, and the most to take
-   * @return the claim, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
-   */
-  override def claim(demand: Demand): IO[RedisFailure, Option[Grant]] =
-    monitor.trace("RedisQueueStore.claim"):
-      for
-        asked   <- Clock.instant
-        claimed <- claimWithin(layout.queue(demand.queue), demand, asked)
-      yield claimed
-
-  /**
-   * Wait for a readiness token, claim when one arrives, and keep at it until the patience is spent.
-   *
-   * @param keys the queue being claimed from
-   * @param demand what the caller asked for
-   * @param asked when its call arrived, which is what the patience is measured from
-   * @return the claim, or `None` when the patience elapsed; aborts with `RedisFailure` when the store fails
-   */
-  private def claimWithin(keys: QueueKeys, demand: Demand, asked: Instant): IO[RedisFailure, Option[Grant]] =
-    remainingTime(demand.patience, asked).flatMap {
-      case None               => ZIO.none
-      case Some(patienceLeft) =>
-        readiness
-          .awaitReady(demand.queue, patienceLeft):
-            attemptClaim(keys, demand)
-          .flatMap:
-            case granted @ Some(_) => ZIO.succeed(granted)
-            case None              => claimWithin(keys, demand, asked)
-    }
-
-  /**
    * Claim whatever is claimable, without waiting.
    *
-   * @param keys the queue to claim from
    * @param demand how much to take
    * @return the claim, or `None` when nothing was claimable; aborts with `RedisFailure` when the store fails
    */
-  private def attemptClaim(keys: QueueKeys, demand: Demand): IO[RedisFailure, Option[Grant]] =
+  override def attemptClaim(demand: Demand): IO[RedisFailure, Option[Grant]] =
     monitor.trace("RedisQueueStore.attemptClaim"):
       connection.provide:
-        scripts.claim.execute(keys, leaseTtl, demand.batch).map(_.map(granted(keys)))
-
-  /**
-   * The claim a granted reply amounts to.
-   *
-   * The reply names the key the script chose; only this caller knows which queue it was chosen from, which
-   * is why the script answers with less than a `Grant`.
-   *
-   * @param keys the queue that was claimed from
-   * @param claimed what the script granted
-   * @return the claim, as the port promises it
-   */
-  private def granted(keys: QueueKeys)(claimed: ClaimScript.Claimed): Grant =
-    Grant(Claim(keys.queue, claimed.key, claimed.token), claimed.batch, claimed.deadline, claimed.backlog)
-
-  /**
-   * Match the keys a beat could not renew back to the claims it was sent with.
-   *
-   * The script reports keys, and the caller has to stop working *claims* — a key alone would not say which
-   * claim it lost, which is why only the beat that was sent can pair them up.
-   *
-   * @param held the claims the beat carried
-   * @param reply the deadline every renewed claim now carries, and the keys that were not renewed
-   * @return the deadline, and the claims that had already been revoked
-   */
-  private def renewed(held: Chunk[Claim])(reply: RenewScript.Output): (Instant, Chunk[Claim]) =
-    (reply.renewedUntil, held.filter(claim => reply.lost.toSet.contains(claim.key)))
-
-  /**
-   * What is left of a caller's patience.
-   *
-   * @param patience what the caller was granted
-   * @param asked when its call reached this adapter
-   * @return the time still to wait, or `None` when the patience is already spent
-   */
-  private def remainingTime(patience: Duration, asked: Instant): UIO[Option[Duration]] =
-    Clock.instant.map: now =>
-      val left = patience.minus(Duration.fromInterval(asked, now))
-      Option.when(left.toMillis > 0)(left)
+        val keys = layout.queue(demand.queue)
+        scripts.claim
+          .execute(keys, leaseTtl, demand.batch)
+          .map:
+            case None          => None
+            case Some(claimed) => Some(granted(keys, claimed))
 
   /**
    * One `settle` call, which checks the token every time and advances it only when the claim ends — a
@@ -179,7 +105,7 @@ final class RedisQueueStore(
       connection.provide:
         ZIO
           .foreach(claims.groupBy(_.queue).toList): (queue, held) =>
-            scripts.renew.execute(layout.queue(queue), leaseTtl, held).map(renewed(held))
+            scripts.renew.execute(layout.queue(queue), leaseTtl, held).map(renewed(held, _))
           .map: results =>
             val (when, chunk) = results.unzip
             when.maxOption.getOrElse(Instant.EPOCH) -> Chunk.fromIterable(chunk).flatten
@@ -196,3 +122,29 @@ final class RedisQueueStore(
     monitor.trace("RedisQueueStore.sweep"):
       connection.provide:
         scripts.sweep.execute(layout.queue(queue), limit)
+
+  /**
+   * The claim a granted reply amounts to.
+   *
+   * The reply names the key the script chose; only this caller knows which queue it was chosen from, which
+   * is why the script answers with less than a `Grant`.
+   *
+   * @param keys the queue that was claimed from
+   * @param claimed what the script granted
+   * @return the claim, as the port promises it
+   */
+  private def granted(keys: QueueKeys, claimed: ClaimScript.Claimed): Grant =
+    Grant(Claim(keys.queue, claimed.key, claimed.token), claimed.batch, claimed.deadline, claimed.backlog)
+
+  /**
+   * Match the keys a beat could not renew back to the claims it was sent with.
+   *
+   * The script reports keys, and the caller has to stop working *claims* — a key alone would not say which
+   * claim it lost, which is why only the beat that was sent can pair them up.
+   *
+   * @param held the claims the beat carried
+   * @param reply the deadline every renewed claim now carries, and the keys that were not renewed
+   * @return the deadline, and the claims that had already been revoked
+   */
+  private def renewed(held: Chunk[Claim], reply: RenewScript.Output): (Instant, Chunk[Claim]) =
+    (reply.renewedUntil, held.filter(claim => reply.lost.toSet.contains(claim.key)))

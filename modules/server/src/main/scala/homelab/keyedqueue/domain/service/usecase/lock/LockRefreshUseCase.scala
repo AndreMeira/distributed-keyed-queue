@@ -1,5 +1,6 @@
 package homelab.keyedqueue.domain.service.usecase.lock
 
+
 import homelab.common.error.{ ApplicationError, ValidationError }
 import homelab.common.orFail
 import homelab.keyedqueue.domain.request.lock.RefreshRequest

@@ -5,10 +5,10 @@ import homelab.common.orFail
 import homelab.keyedqueue.SpecHelper.Helper
 import homelab.common.error.ValidationError
 import homelab.keyedqueue.domain.error.InvalidInput
-import homelab.keyedqueue.domain.model.{Claim, Demand, Message, Renewal, Settlement, Submission}
+import homelab.keyedqueue.domain.model.{ Claim, Demand, Message, Renewal, Settlement, Submission }
 import homelab.keyedqueue.domain.model.Message.Encoding
 import homelab.keyedqueue.domain.model.Settlement.Verdict
-import homelab.keyedqueue.domain.request.queue.{DequeueRequest, EnqueueRequest, SettleRequest}
+import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, SettleRequest }
 import homelab.keyedqueue.domain.request.lock.*
 import homelab.keyedqueue.domain.request.queue.SettleRequest.MessageOutcome
 import homelab.keyedqueue.domain.types.*

@@ -34,9 +34,8 @@ Below the handler, the stores **trace but do not measure**: everything that reac
 span, and nothing records a hit or a latency series. The RPC above already counts and times the operation a
 caller asked for, so a second metric per store method would double the series for something the span
 already answers — and the question these spans exist for is "where did that call's time go", which is a
-trace question. Pure helpers are left alone: a span around clock arithmetic is noise. The one private
-method that is traced is `RedisQueueStore.attempt`, because it repeats — a claim that loses the race
-retries, and the span count is what shows the redundant attempts.
+trace question. Pure helpers are left alone: a span around clock arithmetic is noise. `RedisQueueStore.attemptClaim` is traced because it repeats — a claim that loses the race retries, and the
+span count is what shows the redundant attempts.
 
 The toolkit records three shared instruments, tagged with `operation`:
 
@@ -85,15 +84,17 @@ caller's `max_wait`, so on a contended lock its p99 approaches `max_wait` and th
 own panel; alert on `release` and `refresh` only. The same two-population reading applies — grants that
 were immediate, and waits that were served or timed out.
 
-Beneath the handler, `RedisLockStore` traces what the wait was made of:
+Beneath the handler, `RedisLockStore` traces what the wait was made of. The wait itself is
+`LockAcquireUseCase`'s and opens no span of its own, so the caller's wait time is the handler's
+measurement; what the store shows is each thing the wait asked for:
 
-- **`RedisLockStore.acquire`** spans the whole wait — its duration is the caller's wait time.
-- **`RedisLockStore.grant`** is one span per deliberate ask for the lock. Their count per acquire is the
+- **`RedisLockStore.place`** is the first ask — the lock, or a ticket for it.
+- **`RedisLockStore.ask`** is one span per deliberate ask for the lock. Their count per acquire is the
   wake-efficiency signal: a waiter asks when a release wakes it, when a known deadline arrives (the lease's
   end, the head ticket's deadline), or when its patience runs out — an event or two each, never a poll's
-  worth. A crowd of `grant` spans right after a release is the broadcast working: every local waiter asks
+  worth. A crowd of `ask` spans right after a release is the broadcast working: every local waiter asks
   once, the head wins.
-- **`tryAcquire`, `release`, `refresh`, `trim`** are one script each, ordinary latencies.
+- **`tryAcquire`, `release`, `refresh`, `trim`, `withdraw`** are one script each, ordinary latencies.
 
 The cleanup loop follows the watchdog's rule: it runs on a timer (`DKQ_LOCK_TRIM_INTERVAL`), so what
 matters is what it removed, which it logs — abandoned locks by name, because a holder that died without

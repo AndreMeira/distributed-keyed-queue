@@ -7,13 +7,13 @@ import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.domain.model.Message
 import homelab.keyedqueue.domain.model.Message.Encoding
 import homelab.keyedqueue.domain.model.Settlement.Verdict
-import homelab.keyedqueue.domain.request.queue.{DequeueRequest, EnqueueRequest, HeartbeatRequest, SettleRequest}
+import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, HeartbeatRequest, SettleRequest }
 import homelab.keyedqueue.domain.request.lock.*
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.v1
 import io.scalaland.chimney.dsl.*
-import io.scalaland.chimney.{PartialTransformer, Transformer, partial}
-import zio.{Chunk, Duration, duration2DurationOps}
+import io.scalaland.chimney.{ PartialTransformer, Transformer, partial }
+import zio.{ Chunk, Duration, duration2DurationOps }
 
 import java.time.Instant
 

@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.usecase.queue
 
 
 import homelab.common.orFail
-import homelab.common.error.{ApplicationError, ValidationError}
+import homelab.common.error.{ ApplicationError, ValidationError }
 import homelab.keyedqueue.domain.request.queue.SettleRequest
 import homelab.keyedqueue.domain.request.lock.*
 import homelab.keyedqueue.domain.response.queue.*

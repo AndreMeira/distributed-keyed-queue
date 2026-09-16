@@ -2,10 +2,12 @@ package homelab.keyedqueue
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.model.{ Acquisition, Claim, Demand, Grant, Message, Settlement }
+import homelab.keyedqueue.domain.model.{ Acquisition, Claim, Demand, Grant, LockClaim, Message, Settlement }
 import homelab.keyedqueue.domain.model.Message.Encoding
 import homelab.keyedqueue.domain.model.Settlement.Verdict
+import homelab.keyedqueue.domain.request.lock.AcquireRequest
 import homelab.keyedqueue.domain.request.queue.EnqueueRequest
+import homelab.keyedqueue.domain.response.lock.AcquireResponse
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
@@ -113,7 +115,7 @@ object SpecHelper {
      * Claim exactly one message, for the tests that are not about batching.
      */
     def one(store: QueueStore, queue: QueueName): ZIO[Any, ApplicationError, Option[Grant]] =
-      store.claim(Demand(queue, 2.seconds, 1))
+      store.attemptClaim(Demand(queue, 2.seconds, 1))
 
     /**
      * Acknowledge a single-message batch and report what it was carrying.
@@ -166,6 +168,54 @@ object SpecHelper {
      */
     def boot[A](effect: ZIO[Connection.Commands, Any, A]): ZIO[Connection, Any, A] =
       ZIO.serviceWithZIO[Connection](_.provide(effect))
+
+    /**
+     * A grant as a store hands one over: one message, owned under a claim on `key`.
+     *
+     * @param queue the queue the claim is against
+     * @param key the key the claim owns
+     * @param body what the message carries
+     * @return the grant
+     */
+    def grant(queue: String, key: String, body: String): Grant =
+      val owned = message(MessageKey(key), body)
+      Grant(
+        claim = Claim(QueueName(queue), MessageKey(key), Token(1)),
+        messages = NonEmptyChunk(Grant.Owned(owned.messageId, owned, attempt = 1)),
+        leaseExpiresAt = java.time.Instant.EPOCH,
+        backlogDepth = 0,
+      )
+
+    /**
+     * An acquire as it arrives over the wire.
+     *
+     * @param name the lock to take
+     * @param ttl how long to hold it
+     * @param patience how long to wait for it
+     * @return the request
+     */
+    def acquiring(name: String, ttl: Duration, patience: Duration): AcquireRequest =
+      AcquireRequest(name, ttl, patience)
+
+    /**
+     * Whether an acquire came back with the lock.
+     *
+     * @param answer what the use case returned
+     * @return true when the lock was granted
+     */
+    def granted(answer: AcquireResponse): Boolean = answer match
+      case AcquireResponse.Granted(_, _) => true
+      case AcquireResponse.Unavailable   => false
+
+    /**
+     * The claim an acquire came back with, which is what releases it.
+     *
+     * @param answer what the use case returned
+     * @return the claim, or `None` when the lock was not granted
+     */
+    def heldBy(answer: AcquireResponse): Option[LockClaim] = answer match
+      case AcquireResponse.Granted(claim, _) => Some(claim)
+      case AcquireResponse.Unavailable       => None
   }
 
   object Failure {

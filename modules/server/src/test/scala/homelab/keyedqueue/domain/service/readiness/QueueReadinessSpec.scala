@@ -83,7 +83,7 @@ object QueueReadinessSpec extends ZIOSpecDefault:
     test("work announced as a caller is interrupted around it is not stranded from a retrying caller") {
       // Interrupt a consumer in the window where a wake arrives — the path neither the timeout nor the exit
       // handler reaches — then check the guarantee the store actually relies on: a *retrying* caller finds
-      // the work. This mirrors `RedisQueueStore.claimWithin`, which loops `awaitReady` until granted or the
+      // the work. This mirrors `DequeueUseCase.claim`, which loops `awaitReady` until granted or the
       // patience is spent; a single `awaitReady` is not how the store waits, and asserting on one tests a
       // momentary internal state rather than the recovery the design promises. Each look that finds nothing
       // re-arms a token on its way out, so the next look takes it and runs the claim.

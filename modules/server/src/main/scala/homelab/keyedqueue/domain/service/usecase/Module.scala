@@ -5,6 +5,7 @@ import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
+import homelab.keyedqueue.domain.service.readiness.{ LockReadiness, QueueReadiness }
 import homelab.keyedqueue.domain.service.usecase.lock.*
 import homelab.keyedqueue.domain.service.usecase.queue.*
 import homelab.keyedqueue.domain.service.validation.{ LockInputValidation, QueueInputValidation }
@@ -21,7 +22,7 @@ import zio.ZLayer
  */
 object Module:
   type Provided = QueueUseCases & LockUseCases
-  type Required = QueueStore & Watchdog & QueueInputValidation & LockStore & LockInputValidation
+  type Required = QueueStore & Watchdog & QueueInputValidation & QueueReadiness & LockStore & LockInputValidation & LockReadiness
 
   lazy val layer: ZLayer[Required, ApplicationError, Provided] =
     useCases ++ lockUseCases
@@ -31,11 +32,11 @@ object Module:
    *
    * @return the layer
    */
-  val useCases: ZLayer[QueueStore & Watchdog & QueueInputValidation, Nothing, QueueUseCases] =
-    ZLayer.fromFunction: (store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation) =>
+  val useCases: ZLayer[QueueStore & Watchdog & QueueInputValidation & QueueReadiness, Nothing, QueueUseCases] =
+    ZLayer.fromFunction: (store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation, readiness: QueueReadiness) =>
       QueueUseCases(
         enqueue = EnqueueUseCase(store, watchdog, validation),
-        dequeue = DequeueUseCase(store, watchdog, validation),
+        dequeue = DequeueUseCase(store, watchdog, validation, readiness),
         settle = SettleUseCase(store, validation),
         heartbeat = HeartbeatUseCase(store),
       )
@@ -45,10 +46,10 @@ object Module:
    *
    * @return the layer
    */
-  val lockUseCases: ZLayer[LockStore & LockInputValidation, Nothing, LockUseCases] =
-    ZLayer.fromFunction: (store: LockStore, validation: LockInputValidation) =>
+  val lockUseCases: ZLayer[LockStore & LockInputValidation & LockReadiness, Nothing, LockUseCases] =
+    ZLayer.fromFunction: (store: LockStore, validation: LockInputValidation, readiness: LockReadiness) =>
       LockUseCases(
-        acquire = LockAcquireUseCase(store, validation),
+        acquire = LockAcquireUseCase(store, validation, readiness),
         release = LockReleaseUseCase(store, validation),
         refresh = LockRefreshUseCase(store, validation),
       )

@@ -43,17 +43,19 @@ final class LockReadiness(waiting: Ref[Map[LockName, Set[Queue[Unit]]]]):
       ZIO.foreachDiscard(current.keys)(ready)
 
   /**
-   * A mailbox for this name's wakes, held for the life of the scope.
+   * A signal for this name's wakes, good for the life of the scope.
    *
    * @param lock the lock to be woken for
-   * @return the mailbox; wakes land in it until the scope closes
+   * @return the signal; wakes reach it until the scope closes
    */
-  def subscribe(lock: LockName): ZIO[Scope, Nothing, Queue[Unit]] =
-    ZIO.acquireRelease {
-      Queue.sliding[Unit](1).tap { mailbox =>
-        waiting.update(joined(lock, mailbox))
-      }
-    }(mailbox => waiting.update(left(lock, mailbox)))
+  def subscribe(lock: LockName): ZIO[Scope, Nothing, LockReadiness.Signal] =
+    ZIO
+      .acquireRelease {
+        Queue.sliding[Unit](1).tap { mailbox =>
+          waiting.update(joined(lock, mailbox))
+        }
+      }(mailbox => waiting.update(left(lock, mailbox)))
+      .map(LockReadiness.Signal(_))
 
   /**
    * The map with this mailbox added under the name.
@@ -90,6 +92,23 @@ final class LockReadiness(waiting: Ref[Map[LockName, Set[Queue[Unit]]]]):
 
 
 object LockReadiness:
+
+  /**
+   * What a parked waiter holds: something to wait on, and nothing else.
+   *
+   * A wake while nobody waits is kept for the next await, and two wakes read as one — a waiter acts on
+   * what it finds when it looks, not on how many times it was told.
+   *
+   * @param mailbox where this waiter's wakes land
+   */
+  final class Signal(mailbox: Queue[Unit]):
+
+    /**
+     * Wait for the next wake on this name.
+     *
+     * @return noop when one arrives
+     */
+    def await: UIO[Unit] = mailbox.take
 
   /**
    * An empty readiness.

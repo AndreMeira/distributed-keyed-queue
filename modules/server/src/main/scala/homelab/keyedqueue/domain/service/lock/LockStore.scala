@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.service.lock
 
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.{ Acquisition, LockClaim }
-import homelab.keyedqueue.domain.types.LockName
+import homelab.keyedqueue.domain.types.{ LockName, Ticket }
 import homelab.keyedqueue.domain.service.lock.LockStore.Hold
 import zio.*
 
@@ -25,17 +25,41 @@ import java.time.Instant
 trait LockStore:
 
   /**
-   * Take a lock, waiting up to the demand's patience for a holder to release it; reclaims an expired lease
-   * inline.
+   * Ask for the lock, and take a place in its queue when it cannot be granted at once.
    *
-   * Fair: waiters are granted in arrival order, among those still within their patience. A waiter
-   * whose patience elapses gives up its place; nothing else reorders the queue.
+   * Does not wait: it answers with the lock or with the ticket that says where the caller stands. The
+   * ticket carries a deadline of `within` from now, so a caller that gives up early stops delaying the
+   * waiters behind it.
    *
-   * @param acquisition the lock to take, how long to hold it, and how long to wait
-   * @return the hold, carrying the claim and lease; `None` when the wait elapsed first; aborts with an
-   *         `AdapterError` when the store fails
+   * @param acquisition the lock to take and how long to hold it
+   * @param within how much of the caller's patience is left, which bounds the ticket
+   * @return the hold, or the ticket and when the answer can next change; aborts with an `AdapterError`
+   *         when the store fails
    */
-  def acquire(acquisition: Acquisition): IO[ApplicationError.AdapterError, Option[Hold]]
+  def place(acquisition: Acquisition, within: Duration): IO[ApplicationError.AdapterError, LockStore.Position]
+
+  /**
+   * Ask whether it is this ticket's turn.
+   *
+   * Does not wait: it answers with the lock, with how long until the answer can change, or with the news
+   * that the queue no longer knows this ticket.
+   *
+   * @param acquisition the lock being queued for and how long to hold it
+   * @param ticket the ticket to ask with
+   * @return what the store answered; aborts with an `AdapterError` when the store fails
+   */
+  def ask(acquisition: Acquisition, ticket: Ticket): IO[ApplicationError.AdapterError, LockStore.Turn]
+
+  /**
+   * Give up a place in the queue.
+   *
+   * Best effort: a withdrawal that does not land leaves a ticket the store prunes at its own deadline.
+   *
+   * @param name the lock queued for
+   * @param ticket the ticket to withdraw
+   * @return noop; aborts with an `AdapterError` when the store fails
+   */
+  def withdraw(name: LockName, ticket: Ticket): IO[ApplicationError.AdapterError, Unit]
 
   /**
    * Take a lock only if it is free now; reclaims an expired lease inline.
@@ -90,3 +114,47 @@ object LockStore:
    * @param leaseUntil when the hold lapses unless refreshed, on the store's clock
    */
   final case class Hold(claim: LockClaim, leaseUntil: Instant)
+
+  /**
+   * Where a caller stands after asking for a lock: holding it, or queued for it.
+   */
+  enum Position:
+
+    /**
+     * The lock was free and is now this caller's.
+     *
+     * @param hold what authorises releasing and refreshing it
+     */
+    case Granted(hold: Hold)
+
+    /**
+     * Somebody else has it, and this caller is queued behind them.
+     *
+     * @param ticket this caller's place
+     * @param recheck how long until the answer can change, whatever the wakes say
+     */
+    case Queued(ticket: Ticket, recheck: Duration)
+
+  /**
+   * Whether a ticket's turn has come.
+   */
+  enum Turn:
+
+    /**
+     * The turn came and the lock is this caller's.
+     *
+     * @param hold what authorises releasing and refreshing it
+     */
+    case Granted(hold: Hold)
+
+    /**
+     * Not yet.
+     *
+     * @param recheck how long until the answer can change
+     */
+    case Wait(recheck: Duration)
+
+    /**
+     * The queue no longer knows this ticket, so the caller has lost its place and must enter again.
+     */
+    case Gone
