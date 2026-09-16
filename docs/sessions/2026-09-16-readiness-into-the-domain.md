@@ -73,3 +73,16 @@ name back.
 - All four `forkScoped` loops in `main` now carry `.interruptible`, which closes the uninterruptible-acquire
   trap from 2026-09-15 for every caller rather than for the one spec that found it.
 - `'''` appears nowhere in `modules/server/src/main`; the rule is in `CLAUDE.md` and greppable on a diff.
+
+## Parked (mechanical)
+
+**The store's input still carries a patience it ignores.** `attemptClaim(demand: Demand)` answers about now,
+and `Demand.patience` is documented as not consulted — but it is still in scope for a store, which is the
+miniature of the inversion this work removes. Narrowing the input (the queue and the batch, or a type that
+carries only those) is mechanical and deliberately deferred: it is churn against a refactor whose subject is
+elsewhere. Do it when the lock side settles, so both ports narrow under one decision.
+
+**The queue side is otherwise closed.** `QueueStore` is five operations, each answering about what is true
+now; the waiting is `DequeueUseCase.claim`, parking on `QueueReadiness`; `DequeueUseCaseSpec` covers the
+loop with no container.
+

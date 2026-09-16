@@ -84,15 +84,17 @@ caller's `max_wait`, so on a contended lock its p99 approaches `max_wait` and th
 own panel; alert on `release` and `refresh` only. The same two-population reading applies — grants that
 were immediate, and waits that were served or timed out.
 
-Beneath the handler, `RedisLockStore` traces what the wait was made of:
+Beneath the handler, `RedisLockStore` traces what the wait was made of. The wait itself is
+`LockAcquireUseCase`'s and opens no span of its own, so the caller's wait time is the handler's
+measurement; what the store shows is each thing the wait asked for:
 
-- **`RedisLockStore.acquire`** spans the whole wait — its duration is the caller's wait time.
+- **`RedisLockStore.enter`** is the first ask — the lock, or a ticket for it.
 - **`RedisLockStore.grant`** is one span per deliberate ask for the lock. Their count per acquire is the
   wake-efficiency signal: a waiter asks when a release wakes it, when a known deadline arrives (the lease's
   end, the head ticket's deadline), or when its patience runs out — an event or two each, never a poll's
   worth. A crowd of `grant` spans right after a release is the broadcast working: every local waiter asks
   once, the head wins.
-- **`tryAcquire`, `release`, `refresh`, `trim`** are one script each, ordinary latencies.
+- **`tryAcquire`, `release`, `refresh`, `trim`, `withdraw`** are one script each, ordinary latencies.
 
 The cleanup loop follows the watchdog's rule: it runs on a timer (`DKQ_LOCK_TRIM_INTERVAL`), so what
 matters is what it removed, which it logs — abandoned locks by name, because a holder that died without

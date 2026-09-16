@@ -114,7 +114,8 @@ Two details make this sound rather than merely plausible:
 
 | piece | role |
 |---|---|
-| `RedisLockStore` | the adapter: one method per script, plus the waiting loop (`queued` → `awaitTurn` → `turn`) |
+| `LockAcquireUseCase` | the waiting: enter, hold a ticket, park until the next known event, ask again (`queued` → `awaitTurn` → `turn`) |
+| `RedisLockStore` | the adapter: one method per script, and no waiting — `enter`, `grant`, `withdraw`, `tryAcquire`, `release`, `refresh`, `trim` |
 | `LockReadiness` | per-name mailboxes; a wake reaches **every** subscriber and is **dropped** if nobody waits |
 | `QueueReadiness` | the queue's counterpart, for contrast: one token to **one** consumer, and **kept** if nobody waits |
 | `WakeConsumer` | one blocking `XREAD` per partition, fanned into one batched intake |
@@ -130,9 +131,9 @@ because a waiter subscribes before it enters. Handing the lock's wakes to the qu
 single token to a waiter that may not be next, and the head sleeps: that was a real stall, caught by the
 contention spec.
 
-**The waiting loop, in three methods.** `awaitTurn` computes the window (the shorter of the remaining
-patience and the time to the next recheck) and parks; `turn` runs `grant.lua` and interprets the three
-answers — granted, wait-this-long, ticket-gone; a gone ticket means the whole enter is redone, since the
+**The waiting loop, in three methods** — in `LockAcquireUseCase`, not in the adapter. `awaitTurn` computes
+the window (the shorter of the remaining patience and the time to the next recheck) and parks; `turn` asks
+the store, which runs `grant.lua`, and interprets the three answers — granted, wait-this-long, ticket-gone; a gone ticket means the whole enter is redone, since the
 ticket expired while its owner was still willing to wait.
 
 ## Where to look next
