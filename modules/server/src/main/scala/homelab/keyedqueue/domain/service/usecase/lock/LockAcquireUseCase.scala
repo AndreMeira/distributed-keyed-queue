@@ -43,7 +43,8 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
       for
         acquisition <- validation.parse(request).orFail
         asked       <- Clock.instant
-        waiter      <- readiness.subscribe(acquisition.name).map(Waiter(acquisition, asked, _))
+        signal      <- readiness.subscribe(acquisition.name)
+        waiter       = Waiter(acquisition, asked, signal)
         result      <- AcquireLifecycle.run(waiter, acquisition.patience)
       yield result match
         case Some(hold) => AcquireResponse.Granted(hold.claim, hold.leaseUntil)
