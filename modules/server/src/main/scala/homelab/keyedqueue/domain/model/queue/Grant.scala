@@ -1,4 +1,4 @@
-package homelab.keyedqueue.domain.model
+package homelab.keyedqueue.domain.model.queue
 
 
 import homelab.keyedqueue.domain.types.MessageId

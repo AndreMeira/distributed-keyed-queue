@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.response.queue
 
 
-import homelab.keyedqueue.domain.model.{ Grant, Message }
+import homelab.keyedqueue.domain.model.queue.{ Grant, Message }
 import homelab.keyedqueue.domain.types.{ ClaimRef, MessageId }
 import zio.Chunk
 

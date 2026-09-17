@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.service.usecase.lock
 
 
-import homelab.keyedqueue.domain.service.lock.LockStore
+import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.service.readiness.LockReadiness
 import homelab.keyedqueue.domain.service.validation.LockInputValidation
 import zio.*

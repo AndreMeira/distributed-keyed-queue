@@ -4,8 +4,8 @@ package homelab.keyedqueue.infrastructure.redis
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.SpecHelper
 import homelab.keyedqueue.SpecHelper.Helper
-import homelab.keyedqueue.domain.model.Acquisition
-import homelab.keyedqueue.domain.service.lock.LockStore
+import homelab.keyedqueue.domain.model.lock.Acquisition
+import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.types.LockName
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import zio.*
@@ -29,42 +29,42 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
       test("a free lock is taken; the same lock held is refused") {
         for
           lock  <- ZIO.service[LockStore]
-          first <- lock.tryAcquire(Helper.acq("a", ttl))
-          again <- lock.tryAcquire(Helper.acq("a", ttl))
+          first <- lock.tryAcquire(LockName("a"), ttl)
+          again <- lock.tryAcquire(LockName("a"), ttl)
         yield assertTrue(first.isDefined, again.isEmpty)
       },
       test("release frees it, and the fence rejects a double release") {
         for
           lock     <- ZIO.service[LockStore]
-          held     <- lock.tryAcquire(Helper.acq("b", ttl)).someOrFailException
+          held     <- lock.tryAcquire(LockName("b"), ttl).someOrFailException
           released <- lock.release(held.claim)
           twice    <- lock.release(held.claim)
-          retaken  <- lock.tryAcquire(Helper.acq("b", ttl))
+          retaken  <- lock.tryAcquire(LockName("b"), ttl)
         yield assertTrue(released, !twice, retaken.isDefined)
       },
       test("a dead holder is reclaimed inline on the next acquire — no sweep, no watchdog") {
         for
           lock    <- ZIO.service[LockStore]
-          _       <- lock.tryAcquire(Helper.acq("c", ttl))
-          blocked <- lock.tryAcquire(Helper.acq("c", ttl))
+          _       <- lock.tryAcquire(LockName("c"), ttl)
+          blocked <- lock.tryAcquire(LockName("c"), ttl)
           _       <- ZIO.sleep(ttl + 300.millis)
-          taken   <- lock.tryAcquire(Helper.acq("c", ttl))
+          taken   <- lock.tryAcquire(LockName("c"), ttl)
         yield assertTrue(blocked.isEmpty, taken.isDefined)
       },
       test("refresh extends a held lease and is rejected once the lock is lost") {
         for
           lock      <- ZIO.service[LockStore]
-          held      <- lock.tryAcquire(Helper.acq("d", ttl)).someOrFailException
+          held      <- lock.tryAcquire(LockName("d"), ttl).someOrFailException
           (_, ok)   <- lock.refresh(held.claim, ttl)
           _         <- ZIO.sleep(ttl + 300.millis)
-          stolen    <- lock.tryAcquire(Helper.acq("d", ttl)).someOrFailException
+          stolen    <- lock.tryAcquire(LockName("d"), ttl).someOrFailException
           (_, lost) <- lock.refresh(held.claim, ttl)
         yield assertTrue(ok, stolen.claim.token > held.claim.token, !lost)
       },
       test("trim honours the grace: a late holder may still refresh, an abandoned one is removed") {
         for
           lock      <- ZIO.service[LockStore]
-          held      <- lock.tryAcquire(Helper.acq("g", 300.millis)).someOrFailException
+          held      <- lock.tryAcquire(LockName("g"), 300.millis).someOrFailException
           _         <- ZIO.sleep(600.millis)
           // Expired, but within a generous grace: not trimmed, and the late holder may still extend.
           early     <- lock.trim(grace = 1.hour, limit = 10)
@@ -73,7 +73,7 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
           // Expired beyond a tiny grace: abandoned, so the hold is removed and the fence entry with it.
           freed     <- lock.trim(grace = 100.millis, limit = 10)
           (_, lost) <- lock.refresh(held.claim, 1.second)
-          retaken   <- lock.tryAcquire(Helper.acq("g", ttl))
+          retaken   <- lock.tryAcquire(LockName("g"), ttl)
         yield assertTrue(early.isEmpty, ok, freed.contains(LockName("g")), !lost, retaken.isDefined)
       },
     ) @@ RedisSpecSupport.Aspect.init @@ SpecHelper.Aspect.common

@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.usecase.queue
 
 
 import homelab.common.error.{ ApplicationError, ValidationError }
-import homelab.keyedqueue.domain.model.{ Claim, Renewal }
+import homelab.keyedqueue.domain.model.queue.{ Claim, Renewal }
 import homelab.keyedqueue.domain.request.queue.HeartbeatRequest
 import homelab.keyedqueue.domain.request.lock.*
 import homelab.keyedqueue.domain.response.queue.*

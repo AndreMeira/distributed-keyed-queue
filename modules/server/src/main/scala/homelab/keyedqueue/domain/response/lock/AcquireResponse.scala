@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.response.lock
 
 
-import homelab.keyedqueue.domain.model.LockClaim
+import homelab.keyedqueue.domain.model.lock.LockClaim
 
 import java.time.Instant
 

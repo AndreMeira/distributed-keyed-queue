@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.codecs.storage
 
 
-import homelab.keyedqueue.domain.model.Message
+import homelab.keyedqueue.domain.model.queue.Message
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.{ Inbound, Outbound }
 import homelab.keyedqueue.v1
 import zio.Chunk

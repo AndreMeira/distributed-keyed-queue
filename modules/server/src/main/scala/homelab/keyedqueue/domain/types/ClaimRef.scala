@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.types
 
 /**
  * The opaque handle a consumer holds while it works a message: a
- * [[homelab.keyedqueue.domain.model.Claim]] it cannot read.
+ * [[homelab.keyedqueue.domain.model.queue.Claim]] it cannot read.
  */
 type ClaimRef = ClaimRef.Type
 

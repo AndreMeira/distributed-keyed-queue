@@ -3,8 +3,8 @@ package homelab.keyedqueue.infrastructure.codecs.grpc.v1
 
 import com.google.protobuf.ByteString
 import com.google.protobuf.timestamp.Timestamp
-import homelab.keyedqueue.domain.model.Message
-import homelab.keyedqueue.domain.model.Message.Encoding
+import homelab.keyedqueue.domain.model.queue.Message
+import homelab.keyedqueue.domain.model.queue.Message.Encoding
 import homelab.keyedqueue.domain.response.lock.{ AcquireResponse, RefreshResponse, ReleaseResponse }
 import homelab.keyedqueue.domain.response.queue.*
 import homelab.keyedqueue.domain.response.queue.SettleResponse.Applied

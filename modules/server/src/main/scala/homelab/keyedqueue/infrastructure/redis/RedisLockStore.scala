@@ -2,13 +2,12 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.monitor.Monitor
-import homelab.keyedqueue.domain.model.{ Acquisition, LockClaim }
-import homelab.keyedqueue.domain.service.lock.LockStore
-import homelab.keyedqueue.domain.service.lock.LockStore.Hold
-import homelab.keyedqueue.domain.types.{ LockName, Ticket }
+import homelab.keyedqueue.domain.model.lock.{ Hold, LockClaim, Position, Turn }
+import homelab.keyedqueue.domain.service.persistence.LockStore
+import homelab.keyedqueue.domain.types.{ LockName, Ticket, Token }
 import homelab.keyedqueue.infrastructure.redis.script.LockScripts
 import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, LockKeys }
-import homelab.keyedqueue.infrastructure.redis.script.lock.{ AcquireScript, GrantScript, TryScript }
+import homelab.keyedqueue.infrastructure.redis.script.lock.{ AcquireScript, GrantScript }
 import zio.*
 
 import java.time.Instant
@@ -47,54 +46,53 @@ final class RedisLockStore(
    * them is the barging the tickets exist to end. The script names the token and the deadline; naming the
    * lock is this adapter's job, since only the caller knows which it asked for.
    *
-   * @param acquisition the lock to take and how long to hold it; its patience is ignored here
+   * @param name the lock to take
+   * @param ttl how long the hold survives without a refresh
    * @return the hold, or `None` when the lock is held or queued for
    */
-  override def tryAcquire(acquisition: Acquisition): IO[RedisFailure, Option[Hold]] =
+  override def tryAcquire(name: LockName, ttl: Duration): IO[RedisFailure, Option[Hold]] =
     monitor.trace("RedisLockStore.tryAcquire"):
       connection.provide:
-        scripts.tryAcquire.execute(layout.lock(acquisition.name), acquisition.name, acquisition.ttl).map {
+        scripts.tryAcquire.execute(layout.lock(name), name, ttl).map {
           case None          => None
-          case Some(granted) => Some(hold(acquisition.name)(granted))
+          case Some(granted) => Some(hold(name, granted.token, granted.leaseUntil))
         }
 
   /**
    * One `acquire` call: the lock, or the ticket that says where the caller stands.
    *
-   * @param acquisition the lock to take and how long to hold it
+   * @param name the lock to take
+   * @param ttl how long the hold survives without a refresh
    * @param within what is left of the caller's patience, which bounds the ticket it may be given
    * @return the hold, or the ticket and the first recheck delay; aborts with `RedisFailure` when the store
    *         fails
    */
-  override def place(acquisition: Acquisition, within: Duration): IO[RedisFailure, LockStore.Position] =
+  override def place(name: LockName, ttl: Duration, within: Duration): IO[RedisFailure, Position] =
     monitor.trace("RedisLockStore.place"):
       connection.provide:
-        scripts.acquire
-          .execute(layout.lock(acquisition.name), acquisition.name, acquisition.ttl, within)
-          .map:
-            case AcquireScript.Entered.Granted(token, until)   =>
-              LockStore.Position.Granted(hold(acquisition.name)(token, until))
-            case AcquireScript.Entered.Queued(ticket, recheck) =>
-              LockStore.Position.Queued(Ticket(ticket), recheck)
+        scripts.acquire.execute(layout.lock(name), name, ttl, within).map {
+          case AcquireScript.Entered.Granted(token, until)   => Position.Granted(hold(name, token, until))
+          case AcquireScript.Entered.Queued(ticket, recheck) => Position.Queued(Ticket(ticket), recheck)
+        }
 
   /**
    * One `grant` call: whether it is this ticket's turn yet.
    *
-   * @param acquisition the lock queued for and how long to hold it
+   * @param name the lock queued for
+   * @param ttl how long the hold survives without a refresh
    * @param ticket the ticket to ask with
    * @return what the store answered; aborts with `RedisFailure` when the store fails
    */
-  override def ask(acquisition: Acquisition, ticket: Ticket): IO[RedisFailure, LockStore.Turn] =
+  override def ask(name: LockName, ttl: Duration, ticket: Ticket): IO[RedisFailure, Turn] =
     // One span per deliberate ask: their count per acquire is the wake-efficiency signal — an event or two
     // each, never a poll's worth.
     monitor.trace("RedisLockStore.ask"):
       connection.provide:
-        scripts.grant
-          .execute(layout.lock(acquisition.name), acquisition.name, ticket, acquisition.ttl)
-          .map:
-            case GrantScript.Asked.Granted(token, until) => LockStore.Turn.Granted(hold(acquisition.name)(token, until))
-            case GrantScript.Asked.Wait(delay)           => LockStore.Turn.Wait(delay)
-            case GrantScript.Asked.Gone                  => LockStore.Turn.Gone
+        scripts.grant.execute(layout.lock(name), name, ticket, ttl).map {
+          case GrantScript.Asked.Granted(token, until) => Turn.Granted(hold(name, token, until))
+          case GrantScript.Asked.Wait(delay)           => Turn.Wait(delay)
+          case GrantScript.Asked.Gone                  => Turn.Gone
+        }
 
   /**
    * One `abandon` call, which gives up a place in the queue.
@@ -105,7 +103,10 @@ final class RedisLockStore(
    */
   override def withdraw(name: LockName, ticket: Ticket): IO[RedisFailure, Unit] =
     monitor.trace("RedisLockStore.withdraw"):
-      connection.provide(scripts.abandon.execute(layout.lock(name), name, ticket)).unit
+      connection.provide:
+        scripts.abandon
+          .execute(layout.lock(name), name, ticket)
+          .unit
 
   /**
    * One `release` call, which frees the lock and wakes whoever waits on it.
@@ -134,7 +135,9 @@ final class RedisLockStore(
   override def refresh(claim: LockClaim, ttl: Duration): IO[RedisFailure, (Instant, Boolean)] =
     monitor.trace("RedisLockStore.refresh"):
       connection.provide:
-        scripts.refresh.execute(layout.lock(claim.name), claim.name, claim.token, ttl).map(_.toTuple)
+        scripts.refresh
+          .execute(layout.lock(claim.name), claim.name, claim.token, ttl)
+          .map(_.toTuple)
 
   /**
    * One `trim` call, which removes holds abandoned past the grace and the waiter lists left with them.
@@ -149,24 +152,9 @@ final class RedisLockStore(
   override def trim(grace: Duration, limit: Int): IO[RedisFailure, Chunk[LockName]] =
     monitor.trace("RedisLockStore.trim"):
       connection.provide:
-        ZIO.foreach(layout.locks)(swept(grace, limit)).map(_.flatten)
-
-  /**
-   * One partition's trim.
-   *
-   * @param grace how long past lease expiry a hold survives before it may be removed
-   * @param limit the most holds one pass removes
-   * @param keys the partition being swept
-   * @return the names freed there, oldest lease first; aborts with `Unavailable` when the store cannot be
-   *         reached
-   */
-  private def swept(
-    grace: Duration,
-    limit: Int,
-  )(
-    keys: LockKeys
-  ): ZIO[Connection.Commands, RedisFailure, Chunk[LockName]] =
-    scripts.trim.execute(keys, grace, limit)
+        ZIO
+          .foreach(layout.locks)(keys => scripts.trim.execute(keys, grace, limit))
+          .map(_.flatten)
 
   /**
    * The hold a granted reply amounts to.
@@ -175,8 +163,9 @@ final class RedisLockStore(
    * why the script answers with less than a `Hold`.
    *
    * @param name the lock that was asked for
-   * @param granted the token the grant runs under, and when its lease lapses
+   * @param token what the grant runs under
+   * @param leaseUntil when the lease lapses
    * @return the hold, as the port promises it
    */
-  private def hold(name: LockName)(granted: TryScript.Granted): Hold =
-    Hold(LockClaim(name, granted.token), granted.leaseUntil)
+  private def hold(name: LockName, token: Token, leaseUntil: Instant): Hold =
+    Hold(LockClaim(name, token), leaseUntil)

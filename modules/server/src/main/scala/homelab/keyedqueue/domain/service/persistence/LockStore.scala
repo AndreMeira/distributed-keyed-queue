@@ -1,10 +1,9 @@
-package homelab.keyedqueue.domain.service.lock
+package homelab.keyedqueue.domain.service.persistence
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.model.{ Acquisition, LockClaim }
+import homelab.keyedqueue.domain.model.lock.{ Hold, LockClaim, Position, Turn }
 import homelab.keyedqueue.domain.types.{ LockName, Ticket }
-import homelab.keyedqueue.domain.service.lock.LockStore.Hold
 import zio.*
 
 import java.time.Instant
@@ -31,12 +30,13 @@ trait LockStore:
    * ticket carries a deadline of `within` from now, so a caller that gives up early stops delaying the
    * waiters behind it.
    *
-   * @param acquisition the lock to take and how long to hold it
+   * @param name the lock to take
+   * @param ttl how long the hold survives without a refresh
    * @param within how much of the caller's patience is left, which bounds the ticket
    * @return the hold, or the ticket and when the answer can next change; aborts with an `AdapterError`
    *         when the store fails
    */
-  def place(acquisition: Acquisition, within: Duration): IO[ApplicationError.AdapterError, LockStore.Position]
+  def place(name: LockName, ttl: Duration, within: Duration): IO[ApplicationError.AdapterError, Position]
 
   /**
    * Ask whether it is this ticket's turn.
@@ -44,11 +44,12 @@ trait LockStore:
    * Does not wait: it answers with the lock, with how long until the answer can change, or with the news
    * that the queue no longer knows this ticket.
    *
-   * @param acquisition the lock being queued for and how long to hold it
+   * @param name the lock being queued for
+   * @param ttl how long the hold survives without a refresh
    * @param ticket the ticket to ask with
    * @return what the store answered; aborts with an `AdapterError` when the store fails
    */
-  def ask(acquisition: Acquisition, ticket: Ticket): IO[ApplicationError.AdapterError, LockStore.Turn]
+  def ask(name: LockName, ttl: Duration, ticket: Ticket): IO[ApplicationError.AdapterError, Turn]
 
   /**
    * Give up a place in the queue.
@@ -67,11 +68,12 @@ trait LockStore:
    * "Free now" includes free of waiters: when someone queued first, this refuses rather than barge past
    * them.
    *
-   * @param acquisition the lock to take and how long to hold it; its patience is ignored
+   * @param name the lock to take
+   * @param ttl how long the hold survives without a refresh
    * @return the hold, or `None` when it is held under a live lease, or someone queued first; aborts
    *         with an `AdapterError` when the store fails
    */
-  def tryAcquire(acquisition: Acquisition): IO[ApplicationError.AdapterError, Option[Hold]]
+  def tryAcquire(name: LockName, ttl: Duration): IO[ApplicationError.AdapterError, Option[Hold]]
 
   /**
    * Release a lock this caller holds, so a waiter may take it.
@@ -103,58 +105,3 @@ trait LockStore:
    * @return the names freed, oldest lease first; aborts with an `AdapterError` when the store fails
    */
   def trim(grace: Duration, limit: Int): IO[ApplicationError.AdapterError, Chunk[LockName]]
-
-
-object LockStore:
-
-  /**
-   * A held lock: the claim that authorises releasing or refreshing it, and the current lease.
-   *
-   * @param claim which lock, under which fence generation — and the handle a caller carries
-   * @param leaseUntil when the hold lapses unless refreshed, on the store's clock
-   */
-  final case class Hold(claim: LockClaim, leaseUntil: Instant)
-
-  /**
-   * Where a caller stands after asking for a lock: holding it, or queued for it.
-   */
-  enum Position:
-
-    /**
-     * The lock was free and is now this caller's.
-     *
-     * @param hold what authorises releasing and refreshing it
-     */
-    case Granted(hold: Hold)
-
-    /**
-     * Somebody else has it, and this caller is queued behind them.
-     *
-     * @param ticket this caller's place
-     * @param recheck how long until the answer can change, whatever the wakes say
-     */
-    case Queued(ticket: Ticket, recheck: Duration)
-
-  /**
-   * Whether a ticket's turn has come.
-   */
-  enum Turn:
-
-    /**
-     * The turn came and the lock is this caller's.
-     *
-     * @param hold what authorises releasing and refreshing it
-     */
-    case Granted(hold: Hold)
-
-    /**
-     * Not yet.
-     *
-     * @param recheck how long until the answer can change
-     */
-    case Wait(recheck: Duration)
-
-    /**
-     * The queue no longer knows this ticket, so the caller has lost its place and must enter again.
-     */
-    case Gone

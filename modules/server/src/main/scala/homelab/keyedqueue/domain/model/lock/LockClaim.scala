@@ -1,4 +1,4 @@
-package homelab.keyedqueue.domain.model
+package homelab.keyedqueue.domain.model.lock
 
 
 import homelab.keyedqueue.domain.types.*

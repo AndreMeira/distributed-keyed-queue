@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.service.validation
 
 import homelab.common.Validated
 import homelab.keyedqueue.domain.error.InvalidInput
-import homelab.keyedqueue.domain.model.*
+import homelab.keyedqueue.domain.model.queue.*
 import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, SettleRequest }
 import homelab.keyedqueue.domain.request.lock.*
 import homelab.keyedqueue.domain.service.validation.CommonValidation.{ nonNegative, nonEmpty as nonEmptyString }

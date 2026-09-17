@@ -2,9 +2,10 @@ package homelab.keyedqueue
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.model.{ Acquisition, Claim, Demand, Grant, LockClaim, Message, Settlement }
-import homelab.keyedqueue.domain.model.Message.Encoding
-import homelab.keyedqueue.domain.model.Settlement.Verdict
+import homelab.keyedqueue.domain.model.lock.LockClaim
+import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Message, Settlement }
+import homelab.keyedqueue.domain.model.queue.Message.Encoding
+import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
 import homelab.keyedqueue.domain.request.lock.AcquireRequest
 import homelab.keyedqueue.domain.request.queue.EnqueueRequest
 import homelab.keyedqueue.domain.response.lock.AcquireResponse
@@ -63,12 +64,6 @@ object SpecHelper {
       )
 
     /**
-     * An acquisition for a name — patience defaults to none, which `tryAcquire` ignores anyway.
-     */
-    def acq(name: String, ttl: Duration, patience: Duration = Duration.Zero): Acquisition =
-      Acquisition(LockName(name), ttl, patience)
-
-    /**
      * A message whose cargo is `body`: these tests care about order and ownership, not about content.
      */
     def message(key: MessageKey, body: String): Message =
@@ -115,7 +110,7 @@ object SpecHelper {
      * Claim exactly one message, for the tests that are not about batching.
      */
     def one(store: QueueStore, queue: QueueName): ZIO[Any, ApplicationError, Option[Grant]] =
-      store.attemptClaim(Demand(queue, 2.seconds, 1))
+      store.attemptClaim(queue, 1)
 
     /**
      * Acknowledge a single-message batch and report what it was carrying.

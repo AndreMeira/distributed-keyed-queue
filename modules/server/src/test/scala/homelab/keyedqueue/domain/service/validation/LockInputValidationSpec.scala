@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.validation
 
 
 import homelab.keyedqueue.domain.error.InvalidInput
-import homelab.keyedqueue.domain.model.LockClaim
+import homelab.keyedqueue.domain.model.lock.LockClaim
 import homelab.keyedqueue.domain.request.lock.{ AcquireRequest, RefreshRequest, ReleaseRequest }
 import homelab.keyedqueue.domain.types.*
 import zio.*

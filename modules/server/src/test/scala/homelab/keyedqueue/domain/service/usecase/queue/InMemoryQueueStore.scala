@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.usecase.queue
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.model.{ Claim, Demand, Grant, Settlement, Submission }
+import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.QueueName
 import zio.*
@@ -33,10 +33,11 @@ final class InMemoryQueueStore(pending: Ref[Chunk[Grant]]) extends QueueStore:
   /**
    * Take the oldest pending grant, if there is one.
    *
-   * @param demand what the caller asked for, which this store does not inspect
+   * @param queue the queue asked about, which this store does not inspect
+   * @param batch the most to take, which this store does not inspect
    * @return the grant, or `None` when none is pending
    */
-  override def attemptClaim(demand: Demand): IO[ApplicationError.AdapterError, Option[Grant]] =
+  override def attemptClaim(queue: QueueName, batch: Int): IO[ApplicationError.AdapterError, Option[Grant]] =
     pending.modify(queued => (queued.headOption, queued.drop(1)))
 
   // The operations below are not exercised by the specs that use this store; they answer without recording.

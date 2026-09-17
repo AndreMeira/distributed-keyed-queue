@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.persistence
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.model.{ Claim, Grant, Demand, Settlement, Submission }
+import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Settlement, Submission }
 import homelab.keyedqueue.domain.types.*
 import zio.{ Chunk, Duration, IO }
 
@@ -35,15 +35,16 @@ trait QueueStore:
   /**
    * Claim whatever is claimable now, and answer at once.
    *
-   * The demand's patience is not consulted: an empty answer means nothing was claimable at the moment it
-   * was asked, not that there is nothing coming. Waiting for a queue to become worth another look is
+   * An empty answer means nothing was claimable at the moment it was asked, not that there is nothing
+   * coming. Waiting for a queue to become worth another look is
    * [[homelab.keyedqueue.domain.service.readiness.QueueReadiness]]'s, not a store's.
    *
-   * @param demand the queue to claim from, and the most to take
+   * @param queue the queue to claim from
+   * @param batch the most to take
    * @return the claim, or `None` when nothing was claimable; aborts with an `AdapterError` when the store
    *         fails
    */
-  def attemptClaim(demand: Demand): IO[ApplicationError.AdapterError, Option[Grant]]
+  def attemptClaim(queue: QueueName, batch: Int): IO[ApplicationError.AdapterError, Option[Grant]]
 
   /**
    * Report what happened to some of what a claim owns.
