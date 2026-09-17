@@ -92,16 +92,21 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
       /**
        * Ask for the lock: it is granted, or this caller takes a place in the queue.
        *
+       * The step is uninterruptible, so a place that reached the store is always observed and its ticket
+       * arrives at the state that withdraws it. The clock is read before the ask, which is the instant a
+       * recheck delay counts from.
+       *
        * @return the lock, or a place in the queue with the first recheck time; aborts with an
        *         `AdapterError` when the store fails
        */
       override def next: IO[AdapterError, AcquireLifecycle] =
-        for
-          position <- store.place(waiter.acquisition, within)
-          now      <- Clock.instant
-        yield position match
-          case LockStore.Position.Granted(hold)           => Granted(hold)
-          case LockStore.Position.Queued(ticket, recheck) => Queued(waiter, ticket, now.plus(atLeastFloor(recheck)))
+        ZIO.uninterruptible:
+          for
+            now      <- Clock.instant
+            position <- store.place(waiter.acquisition, within)
+          yield position match
+            case LockStore.Position.Granted(hold)           => Granted(hold)
+            case LockStore.Position.Queued(ticket, recheck) => Queued(waiter, ticket, now.plus(atLeastFloor(recheck)))
 
     /**
      * Holding a place in the queue, with the next ask due at a known time.
@@ -179,7 +184,7 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
     /**
      * Advance the wait until it reaches a state that answers.
      *
-     * A step is interruptible — a waiter parks inside one — and the space between two steps is not, so a
+     * A step is run interruptible — a waiter parks inside one — and the space between two steps is not, so a
      * step's own handlers are what decide the fate of anything that step holds.
      *
      * @param state where the wait has got to

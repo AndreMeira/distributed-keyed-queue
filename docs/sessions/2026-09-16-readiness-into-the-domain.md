@@ -132,6 +132,11 @@ Nine methods and the spin floor left `RedisLockStore`, which is script calls and
 joined `Token` in `domain/types`. The waiting is `LockAcquireUseCase`'s, as a four-state machine —
 `Placing`, `Queued`, `Granted`, `GivenUp` — with `State.loop` in the enum's own companion driving it.
 
+> The names here are what stood on the 16th. `State` and its companion's `loop` became the
+> `AcquireLifecycle` trait and the `loop` beside it the next day, and the driver stopped narrowing its
+> argument to the live states. The shape as it stands is
+> [`architecture/states-as-classes.md`](../architecture/states-as-classes.md).
+
 **What the vocabulary settled on, and why it changed twice.** `enter`/`Entered` paired with `grant`/`Asked`,
 which crossed itself: the method was named for the outcome it hoped for and the result for the act, so
 `grant` could answer `Asked.Gone`. `place`/`Position` and `ask`/`Turn` name where a caller stands and
