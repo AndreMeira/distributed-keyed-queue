@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.persistence
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.model.lock.{ Hold, LockClaim, Position, Turn }
+import homelab.keyedqueue.domain.model.lock.{ Hold, Claim, Position, Turn }
 import homelab.keyedqueue.domain.types.{ LockName, Ticket }
 import zio.*
 
@@ -82,7 +82,7 @@ trait LockStore:
    * @return true when released, false when the hold had already been revoked; aborts with an `AdapterError`
    *         when the store fails
    */
-  def release(claim: LockClaim): IO[ApplicationError.AdapterError, Boolean]
+  def release(claim: Claim): IO[ApplicationError.AdapterError, Boolean]
 
   /**
    * Push a hold's lease forward.
@@ -92,7 +92,7 @@ trait LockStore:
    * @return the new deadline and whether the hold is still valid; aborts with an `AdapterError` when the
    *         store fails
    */
-  def refresh(claim: LockClaim, ttl: Duration): IO[ApplicationError.AdapterError, (Instant, Boolean)]
+  def refresh(claim: Claim, ttl: Duration): IO[ApplicationError.AdapterError, (Instant, Boolean)]
 
   /**
    * Remove holds whose lease expired longer than `grace` ago, freeing their locks.

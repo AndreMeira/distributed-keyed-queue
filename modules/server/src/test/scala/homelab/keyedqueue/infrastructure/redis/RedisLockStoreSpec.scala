@@ -4,7 +4,6 @@ package homelab.keyedqueue.infrastructure.redis
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.SpecHelper
 import homelab.keyedqueue.SpecHelper.Helper
-import homelab.keyedqueue.domain.model.lock.Acquisition
 import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.types.LockName
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig

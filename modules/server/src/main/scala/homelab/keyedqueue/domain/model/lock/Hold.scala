@@ -8,4 +8,4 @@ import java.time.Instant
  * @param claim which lock, under which fence generation — and the handle a caller carries
  * @param leaseUntil when the hold lapses unless refreshed, on the store's clock
  */
-final case class Hold(claim: LockClaim, leaseUntil: Instant)
+final case class Hold(claim: Claim, leaseUntil: Instant)

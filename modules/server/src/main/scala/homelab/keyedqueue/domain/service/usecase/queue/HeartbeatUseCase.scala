@@ -51,7 +51,7 @@ final class HeartbeatUseCase(store: QueueStore):
    * @return its receipts, sorted
    */
   private def parse(request: HeartbeatRequest): Renewal =
-    val read = request.receipts.map(receipt => receipt -> Claim.fromReference(receipt))
+    val read = request.receipts.map(receipt => receipt -> Claim.decode(receipt))
     Renewal(
       held = read.collect { case (_, Some(claim)) => claim },
       unreadable = read.collect { case (receipt, None) => receipt },

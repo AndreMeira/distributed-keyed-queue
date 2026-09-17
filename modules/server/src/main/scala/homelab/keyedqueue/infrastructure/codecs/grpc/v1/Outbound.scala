@@ -3,6 +3,7 @@ package homelab.keyedqueue.infrastructure.codecs.grpc.v1
 
 import com.google.protobuf.ByteString
 import com.google.protobuf.timestamp.Timestamp
+import homelab.keyedqueue.domain.model.queue.Claim
 import homelab.keyedqueue.domain.model.queue.Message
 import homelab.keyedqueue.domain.model.queue.Message.Encoding
 import homelab.keyedqueue.domain.response.lock.{ AcquireResponse, RefreshResponse, ReleaseResponse }
@@ -41,13 +42,13 @@ object Outbound:
 
   // proto3 has no presence for a scalar, so absence is the empty string — which is what "no claim" looks
   // like on the wire, and why `deliveries` being empty says the same thing.
-  private given Transformer[Option[ClaimRef], String] = _.getOrElse(ClaimRef(""))
+  private given Transformer[Option[Claim.Ref], String] = _.getOrElse(Claim.Ref(""))
 
   // Likewise for the lease: no claim, no deadline.
   private given Transformer[Option[Instant], Option[Timestamp]] =
     _.map(instant => Timestamp(instant.getEpochSecond, instant.getNano))
 
-  private given Transformer[ClaimRef, String] = identity(_)
+  private given Transformer[Claim.Ref, String] = identity(_)
 
   private given Transformer[Chunk[Byte], ByteString] =
     bytes => ByteString.copyFrom(bytes.toArray)
@@ -115,9 +116,9 @@ object Outbound:
      * @return the wire response
      */
     def toProto: v1.AcquireResponse = response match
-      case AcquireResponse.Unavailable           => v1.AcquireResponse(acquired = false)
-      case AcquireResponse.Granted(claim, until) =>
-        v1.AcquireResponse(acquired = true, claim.receipt, claim.token, Some(until.transformInto[Timestamp]))
+      case AcquireResponse.Unavailable                    => v1.AcquireResponse(acquired = false)
+      case AcquireResponse.Granted(receipt, token, until) =>
+        v1.AcquireResponse(acquired = true, receipt, token, Some(until.transformInto[Timestamp]))
 
   extension (response: ReleaseResponse)
     /** @return the wire response */

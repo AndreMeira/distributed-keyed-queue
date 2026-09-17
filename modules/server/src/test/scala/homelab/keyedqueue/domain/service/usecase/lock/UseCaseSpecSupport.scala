@@ -15,7 +15,7 @@ import zio.*
  */
 object UseCaseSpecSupport {
 
-  /** The ceilings a parsed acquisition is held to, wide enough that these specs are never clamped. */
+  /** The ceilings a parsed demand is held to, wide enough that these specs are never clamped. */
   val limits: LockInputValidation.Config = LockInputValidation.Config(maxWait = 60.seconds, maxTtl = 10.minutes)
 
   /**

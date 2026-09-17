@@ -2,7 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.monitor.Monitor
-import homelab.keyedqueue.domain.model.lock.{ Hold, LockClaim, Position, Turn }
+import homelab.keyedqueue.domain.model.lock.{ Hold, Claim, Position, Turn }
 import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.types.{ LockName, Ticket, Token }
 import homelab.keyedqueue.infrastructure.redis.script.LockScripts
@@ -114,7 +114,7 @@ final class RedisLockStore(
    * @param claim the claim from the hold
    * @return true when released, false when the hold had already been revoked
    */
-  override def release(claim: LockClaim): IO[RedisFailure, Boolean] =
+  override def release(claim: Claim): IO[RedisFailure, Boolean] =
     // The wake is the script's job: lock/release.lua appends to the wake stream on a real release, and the
     // shared listener delivers it to every instance's readiness — so a waiter on another instance wakes,
     // which an in-process call could never reach.
@@ -132,7 +132,7 @@ final class RedisLockStore(
    * @param ttl how much longer to grant
    * @return the new deadline, and whether the hold survived to take it
    */
-  override def refresh(claim: LockClaim, ttl: Duration): IO[RedisFailure, (Instant, Boolean)] =
+  override def refresh(claim: Claim, ttl: Duration): IO[RedisFailure, (Instant, Boolean)] =
     monitor.trace("RedisLockStore.refresh"):
       connection.provide:
         scripts.refresh
@@ -168,4 +168,4 @@ final class RedisLockStore(
    * @return the hold, as the port promises it
    */
   private def hold(name: LockName, token: Token, leaseUntil: Instant): Hold =
-    Hold(LockClaim(name, token), leaseUntil)
+    Hold(Claim(name, token), leaseUntil)

@@ -2,8 +2,8 @@ package homelab.keyedqueue
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.model.lock.LockClaim
-import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Message, Settlement }
+import homelab.keyedqueue.domain.model.lock.Claim as LockClaim
+import homelab.keyedqueue.domain.model.queue.{ Claim as QueueClaim, Grant, Message, Settlement }
 import homelab.keyedqueue.domain.model.queue.Message.Encoding
 import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
 import homelab.keyedqueue.domain.request.lock.AcquireRequest
@@ -96,7 +96,7 @@ object SpecHelper {
      * @return the settlement to hand the store
      */
     def settlement(
-      claim: Claim,
+      claim: QueueClaim,
       outcomes: NonEmptyChunk[(MessageId, Verdict)],
       retryAfter: Duration = Duration.Zero,
     ): Settlement =
@@ -175,7 +175,7 @@ object SpecHelper {
     def grant(queue: String, key: String, body: String): Grant =
       val owned = message(MessageKey(key), body)
       Grant(
-        claim = Claim(QueueName(queue), MessageKey(key), Token(1)),
+        claim = QueueClaim(QueueName(queue), MessageKey(key), Token(1)),
         messages = NonEmptyChunk(Grant.Owned(owned.messageId, owned, attempt = 1)),
         leaseExpiresAt = java.time.Instant.EPOCH,
         backlogDepth = 0,
@@ -199,8 +199,8 @@ object SpecHelper {
      * @return true when the lock was granted
      */
     def granted(answer: AcquireResponse): Boolean = answer match
-      case AcquireResponse.Granted(_, _) => true
-      case AcquireResponse.Unavailable   => false
+      case AcquireResponse.Granted(_, _, _) => true
+      case AcquireResponse.Unavailable      => false
 
     /**
      * The claim an acquire came back with, which is what releases it.
@@ -209,8 +209,8 @@ object SpecHelper {
      * @return the claim, or `None` when the lock was not granted
      */
     def heldBy(answer: AcquireResponse): Option[LockClaim] = answer match
-      case AcquireResponse.Granted(claim, _) => Some(claim)
-      case AcquireResponse.Unavailable       => None
+      case AcquireResponse.Granted(receipt, _, _) => LockClaim.decode(receipt)
+      case AcquireResponse.Unavailable            => None
   }
 
   object Failure {
