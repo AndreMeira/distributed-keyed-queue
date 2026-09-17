@@ -24,13 +24,16 @@ that expresses it.
 sealed private trait AcquireLifecycle:
   def next: IO[AdapterError, AcquireLifecycle] = ZIO.succeed(this)
 
-private object AcquireLifecycle:
-  case object GivenUp                          extends AcquireLifecycle
-  case class  Granted(hold: LockStore.Hold)    extends AcquireLifecycle
+private object AcquireLifecycle {
+  case object GivenUp extends AcquireLifecycle
+  
+  case class  Granted(hold: LockStore.Hold) extends AcquireLifecycle
+  
   class Placing(waiter: Waiter, within: Duration) extends AcquireLifecycle:
-    override def next = …                      // ask; granted, or take a ticket
+    override def next = ??? // ask; granted, or take a ticket
+  
   class Queued(waiter: Waiter, ticket: Ticket, recheckAt: Instant) extends AcquireLifecycle:
-    override def next = …                      // park, ask, and land somewhere
+    override def next = ??? // park, ask, and land somewhere
 
   private def loop(state: AcquireLifecycle): IO[AdapterError, Option[LockStore.Hold]] =
     ZIO.uninterruptibleMask: restore =>
@@ -38,6 +41,7 @@ private object AcquireLifecycle:
         case Granted(hold) => ZIO.succeed(Some(hold))
         case GivenUp       => ZIO.succeed(None)
         case next          => restore(loop(next))
+}        
 ```
 
 Three known things are composed here. Each has a name; the combination does not.

@@ -10,7 +10,7 @@ import homelab.keyedqueue.domain.response.lock.AcquireResponse
 import homelab.keyedqueue.domain.service.lock.LockStore
 import homelab.keyedqueue.domain.service.readiness.LockReadiness
 import homelab.keyedqueue.domain.service.readiness.LockReadiness.Signal
-import homelab.keyedqueue.domain.service.usecase.lock.LockAcquireUseCase.{ Waiter, atLeastFloor, window }
+import homelab.keyedqueue.domain.service.usecase.lock.LockAcquireUseCase.{ Waiter, atLeastFloor }
 import homelab.keyedqueue.domain.service.validation.LockInputValidation
 import homelab.keyedqueue.domain.types.Ticket
 import zio.*
@@ -122,12 +122,12 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
        *         end of the wait; aborts with an `AdapterError` when the store fails
        */
       override def next: IO[AdapterError, AcquireLifecycle] =
-        remainingTime
+        patienceLeft
           .flatMap:
-            case None                => ZIO.succeed(GivenUp)
-            case Some(remainingTime) =>
-              awaitTurn(remainingTime).map:
-                case _ -> LockStore.Turn.Gone          => Placing(waiter, remainingTime)
+            case None           => ZIO.succeed(GivenUp)
+            case Some(patience) =>
+              awaitTurn(patience).map:
+                case _ -> LockStore.Turn.Gone          => Placing(waiter, patience)
                 case _ -> LockStore.Turn.Granted(hold) => Granted(hold)
                 case now -> LockStore.Turn.Wait(delay) => Queued(waiter, ticket, now.plus(atLeastFloor(delay)))
           .onExit:
@@ -140,7 +140,7 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
        *
        * @return the time still to wait, or `None` when it is spent
        */
-      private def remainingTime: UIO[Option[Duration]] =
+      private def patienceLeft: UIO[Option[Duration]] =
         Clock.instant.map: now =>
           val elapsed = Duration.fromInterval(waiter.asked, now)
           val left    = waiter.acquisition.patience.minus(elapsed)
@@ -152,13 +152,14 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
        * The clock is read twice: once to size the park, and once at the ask, which is the instant a `Wait`
        * delay counts from.
        *
-       * @param left the patience remaining, which bounds the park
+       * @param patience the patience remaining, which bounds the park
        * @return when the ask was made, and what the store answered; aborts with an `AdapterError` when the
        *         store fails
        */
-      private def awaitTurn(left: Duration): IO[AdapterError, (Instant, LockStore.Turn)] =
+      private def awaitTurn(patience: Duration): IO[AdapterError, (Instant, LockStore.Turn)] =
         for
-          timeout <- Clock.instant.map(window(_, recheckAt, left))
+          waiting <- Clock.instant.map(now => Duration.fromInterval(now, recheckAt))
+          timeout  = (waiting min patience) max Duration.Zero
           _       <- waiter.signal.await.timeout(timeout).unless(timeout.isZero)
           asking  <- Clock.instant
           answer  <- store.ask(waiter.acquisition, ticket)
@@ -210,26 +211,10 @@ object LockAcquireUseCase:
   private case class Waiter(acquisition: Acquisition, asked: Instant, signal: Signal)
 
   /**
-   * How long to park before the next event, bounded by the patience left.
-   *
-   * @param now       when the park starts
-   * @param recheckAt when the answer can next change
-   * @param left      the patience remaining
-   * @return the park; zero when the event time has already passed
-   */
-  private def window(now: Instant, recheckAt: Instant, left: Duration): Duration =
-    val until = Duration.fromInterval(now, recheckAt)
-    if until.toMillis <= 0 then Duration.Zero
-    else if until.toMillis < left.toMillis then until
-    else left
-
-  /**
    * A delay no shorter than the spin floor.
    *
    * @param delay what the store named
    * @return that, or the floor, whichever is longer
    */
   private def atLeastFloor(delay: Duration): Duration =
-    if delay.toMillis < floor.toMillis
-    then floor
-    else delay
+    if delay.toMillis < floor.toMillis then floor else delay
