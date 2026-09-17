@@ -83,10 +83,7 @@ final class LockReadiness(waiting: Ref[Map[LockName, Set[Queue[Unit]]]]):
 object LockReadiness:
 
   /**
-   * What a parked waiter holds: something to wait on, and nothing else.
-   *
-   * A wake while nobody waits is kept for the next await, and two wakes read as one — a waiter acts on
-   * what it finds when it looks, not on how many times it was told.
+   * What a parked waiter waits on.
    *
    * @param mailbox where this waiter's wakes land
    */
@@ -95,7 +92,9 @@ object LockReadiness:
     /**
      * Wait for the next wake on this name.
      *
-     * @return noop when one arrives
+     * A wake that arrives while nobody waits is held for the next call, and repeats collapse into one.
+     *
+     * @return noop when a wake arrives
      */
     def await: UIO[Unit] = mailbox.take
 
