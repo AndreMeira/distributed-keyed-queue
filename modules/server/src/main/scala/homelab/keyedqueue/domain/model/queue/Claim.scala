@@ -1,10 +1,6 @@
 package homelab.keyedqueue.domain.model.queue
 
-
 import homelab.keyedqueue.domain.types.*
-
-import java.nio.charset.StandardCharsets
-import java.util.Base64
 
 
 /**
@@ -23,13 +19,12 @@ final case class Claim(queue: QueueName, key: MessageKey, token: Token):
   /**
    * Encode as the opaque string a consumer carries.
    *
-   * Base64url per field, joined with `.`: the alphabet cannot produce a dot, so the separator stays clear
-   * of a queue name or a key whatever they contain.
+   * The fields go through [[Obfuscated]], so a queue name or a key may hold anything.
    *
    * @return the reference
    */
   def reference: Claim.Ref =
-    Claim.Ref(Seq(queue, key, token.toString).map(Claim.encoded).mkString("."))
+    Claim.Ref(Obfuscated.encode(queue, key, token.toString))
 
 
 object Claim:
@@ -63,29 +58,8 @@ object Claim:
    * @return the claim it names, or `None` when it is not one we issued
    */
   def decode(reference: String): Option[Claim] =
-    reference.split('.') match
-      case Array(queue, key, token) =>
-        for
-          name       <- decoded(queue)
-          messageKey <- decoded(key)
-          generation <- decoded(token).flatMap(_.toLongOption)
-        yield Claim(QueueName(name), MessageKey(messageKey), Token(generation))
-      case _                        => None
-
-  /**
-   * One field, base64url encoded.
-   *
-   * @param part the field
-   * @return its encoding, which holds no dot
-   */
-  private def encoded(part: String): String =
-    Base64.getUrlEncoder.withoutPadding.encodeToString(part.getBytes(StandardCharsets.UTF_8))
-
-  /**
-   * One field, read back.
-   *
-   * @param part the encoded field
-   * @return what it encodes, or `None` when it is not base64url
-   */
-  private def decoded(part: String): Option[String] =
-    scala.util.Try(String(Base64.getUrlDecoder.decode(part), StandardCharsets.UTF_8)).toOption
+    Obfuscated(reference).decoded match
+      case Some(Seq(queue, key, token)) =>
+        for generation <- token.toLongOption
+        yield Claim(QueueName(queue), MessageKey(key), Token(generation))
+      case _                            => None
