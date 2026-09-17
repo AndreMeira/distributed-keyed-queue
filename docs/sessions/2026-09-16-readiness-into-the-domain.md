@@ -118,3 +118,69 @@ waiter's wait is none of those — `persisted` wants a `KeyValueStore` for state
 anyway, and `serialised` wants a `KeyLock`, which is what the lock *is*. It would earn its keep if the
 branching ever got genuinely complicated.
 
+## The lock half
+
+The same cut, on the harder side. `LockStore` answers what the Lua already answered and waits for nothing:
+
+```
+place(acquisition, within) -> Position.Granted(hold) | Position.Queued(ticket, recheck)
+ask(acquisition, ticket)   -> Turn.Granted(hold) | Turn.Wait(delay) | Turn.Gone
+withdraw(name, ticket)
+```
+
+Nine methods and the spin floor left `RedisLockStore`, which is script calls and codecs again. `Ticket`
+joined `Token` in `domain/types`. The waiting is `LockAcquireUseCase`'s, as a four-state machine —
+`Placing`, `Queued`, `Granted`, `GivenUp` — with `State.loop` in the enum's own companion driving it.
+
+> The names here are what stood on the 16th. `State` and its companion's `loop` became the
+> `AcquireLifecycle` trait and the `loop` beside it the next day, and the driver stopped narrowing its
+> argument to the live states. The shape as it stands is
+> [`architecture/states-as-classes.md`](../architecture/states-as-classes.md).
+
+**What the vocabulary settled on, and why it changed twice.** `enter`/`Entered` paired with `grant`/`Asked`,
+which crossed itself: the method was named for the outcome it hoped for and the result for the act, so
+`grant` could answer `Asked.Gone`. `place`/`Position` and `ask`/`Turn` name where a caller stands and
+whether its turn has come. The scripts keep `AcquireScript.Entered` and `GrantScript.Asked`, so the adapter
+visibly translates the substrate's words into the port's.
+
+**`subscribe` hands out a `Signal`, not a `Queue[Unit]`** — a waiter needs one capability, and the queue
+handed it `offer`, `shutdown` and `size` as well.
+
+### Three shapes were tried, and the third won
+
+1. Nested `acquireReleaseExit` + a `Waiting` outcome enum. Correct, no interruption trickery, machine spread
+   over three methods.
+2. `Loop` from the toolkit with `Next.Continue | Next.Done`, plus a hand-rolled guarded loop.
+3. One flat machine whose `State` includes the terminal cases, so a step is `State => IO[E, State]` and the
+   driver exits on `Granted`/`GivenUp`. `loop` takes `State.Placing | State.Queued`, so "a step starts from
+   a live state" is a type rather than a comment.
+
+Two findings came out of building them, both recorded in `docs/research/waiting-as-a-state-machine.md` and,
+from the toolkit's side, in `homelab-toolkit-zio`'s `docs/research/scoped-loop.md`:
+
+- **The naive guarded loop is wrong and fails silently.** `restore` must wrap the recursive call as well as
+  the step; without it every iteration past the first is uninterruptible, `timeout`-based parking never ends
+  and `interrupt` blocks. The symptom was two tests hanging for a minute each, with no error.
+- **A loop beats plain recursion for a reason unrelated to interruption.** Mutual recursion never discharges
+  a handler until the whole wait ends, so finalisers accumulate one per transition: a waiter that parks 300
+  times pays 300 withdrawals when cancelled. Neither version looks different on the page.
+
+## Two traps worth remembering
+
+**A corrupt TASTy file looks like a dozen unrelated compiler bugs.** `LockStore.tasty is broken, reading
+aborted with IndexOutOfBoundsException` finally named what had been appearing all day as
+`NoClassDefFoundError` on `Module$`/`KeyLayout$`/`QueueConfig$`, "type Message is not a member of v1",
+"value Hold is not a member of LockStore", and one run of three phantom test failures. `sbt server/clean`
+cleared it in seconds.
+
+This also revises an older entry: the **unexplained intermittent** in `RedisLockStoreSpec` that
+`2026-09-13`'s log has carried across three sightings — six failures on a full-suite run, passing alone,
+passing on a re-run — is much more likely to have been this than a race. If it recurs, clean the module
+before hunting for a timing bug.
+
+**An unused constructor parameter is the one dependency the compiler will not flag.** Both stores kept a
+`readiness` they had not used since the waiting moved out, through three commits of a refactor whose whole
+point was removing exactly that dependency. Nothing failed; the import and a `@param` line kept it alive.
+`-Wunused:params` would catch it, at the cost of noise elsewhere. Until then it is a review question: after
+moving logic out of a class, check what its constructor still asks for.
+

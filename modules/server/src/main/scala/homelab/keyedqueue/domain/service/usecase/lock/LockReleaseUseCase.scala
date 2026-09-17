@@ -21,8 +21,8 @@ final class LockReleaseUseCase(store: LockStore, validation: LockInputValidation
   /**
    * Parse the receipt, then release.
    *
-   * `false` is a response, not a failure: the hold had already been revoked, which the caller must be told
-   * rather than have raised at it.
+   * `false` says the hold had already been revoked, which the caller must be told so it stops acting as
+   * the holder.
    *
    * @param request the receipt, untrusted
    * @return whether it applied; aborts with `ValidationError` when the receipt is not one this service

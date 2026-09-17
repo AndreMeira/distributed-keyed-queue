@@ -74,7 +74,7 @@ final class Watchdog(store: QueueStore, config: Watchdog.Config, queues: Ref[Set
   /**
    * Report a sweep that failed.
    *
-   * A warning, not a failure: the loop continues, and the next pass is one interval away.
+   * Logged as a warning: the loop carries on, and the next pass is one interval away.
    *
    * @param queue the queue whose sweep failed
    * @param error what the store reported

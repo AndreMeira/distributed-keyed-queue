@@ -21,8 +21,7 @@ final class LockRefreshUseCase(store: LockStore, validation: LockInputValidation
   /**
    * Parse, then refresh.
    *
-   * A lost hold is a response, not a failure: the caller must stop treating the lock as held, which it
-   * learns from `Lost` rather than from an error.
+   * A lost hold comes back in the answer, so the caller learns to stop treating the lock as held.
    *
    * @param request the receipt and how much longer to hold, untrusted
    * @return the new lease, or that the hold is lost; aborts with `ValidationError` when the request is

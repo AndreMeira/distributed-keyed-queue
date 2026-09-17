@@ -28,6 +28,10 @@ What is specific to this repo:
     itself, and why `dequeue`'s latency is not comparable to the rest.
   - [`architecture/end-to-end-testing.md`](architecture/end-to-end-testing.md) — the test harness, settled
     even while the thing it tests is not.
+  - [`architecture/readiness-and-wake.md`](architecture/readiness-and-wake.md) — how a consumer waits:
+    what a readiness holds, why the queue's and the lock's differ, and every path that could lose a wake.
+  - [`architecture/states-as-classes.md`](architecture/states-as-classes.md) — the shape the lock's wait is
+    written in, named: defunctionalised recursion, absorbing terminals, trampolined. Wants abstracting.
 
   And in `learning-material/`:
   - [`claiming-identity.md`](learning-material/claiming-identity.md) — *superseded*: why a claim taken in
