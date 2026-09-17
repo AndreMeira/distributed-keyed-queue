@@ -49,7 +49,7 @@ final class LockCleanup(store: LockStore, config: LockCleanup.Config):
   /**
    * Report a trim that failed.
    *
-   * A warning, not a failure: the loop continues, and the next pass is one interval away.
+   * Logged as a warning: the loop carries on, and the next pass is one interval away.
    *
    * @param error what the store reported
    * @return noop

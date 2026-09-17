@@ -86,10 +86,6 @@ final class DequeueUseCase(
   /**
    * Present what the store returned as the answer the caller gets.
    *
-   * Nothing to report is a *response*, not a failure: a dequeue that waited its full patience and found no
-   * work has behaved exactly as asked. Reporting that as an error would push every consumer's quiet case
-   * into error handling, and make an idle queue indistinguishable from a broken one.
-   *
    * @param grant what the store handed over, or nothing when the wait elapsed first
    * @return the response, carrying a claim only when there was one
    */
