@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.validation
 
 
 import homelab.keyedqueue.domain.error.InvalidInput
-import homelab.keyedqueue.domain.model.LockClaim
+import homelab.keyedqueue.domain.model.lock.Claim
 import homelab.keyedqueue.domain.request.lock.{ AcquireRequest, RefreshRequest, ReleaseRequest }
 import homelab.keyedqueue.domain.types.*
 import zio.*
@@ -22,22 +22,22 @@ object LockInputValidationSpec extends ZIOSpecDefault:
     LockInputValidation(LockInputValidation.Config(maxWait = 30.seconds, maxTtl = 10.minutes))
 
   /** A claim as a holder would carry it, and the receipt the service would have issued for it. */
-  private val claim   = LockClaim(LockName("resource"), Token(7))
-  private val receipt = claim.receipt
+  private val claim   = Claim(LockName("resource"), Token(7))
+  private val receipt = claim.reference
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("LockInputValidation")(
     test("a well-formed acquire passes through unchanged") {
       val parsed = validation.parse(AcquireRequest("resource", ttl = 5.seconds, maxWait = 10.seconds))
-      assertTrue(parsed.toEither.exists { acquisition =>
-        acquisition.name == LockName("resource")
-        && acquisition.ttl == 5.seconds
-        && acquisition.patience == 10.seconds
+      assertTrue(parsed.toEither.exists { demand =>
+        demand.name == LockName("resource")
+        && demand.ttl == 5.seconds
+        && demand.patience == 10.seconds
       })
     },
     test("both ceilings clamp: a ttl and a wait beyond them come back as the ceilings") {
       val parsed = validation.parse(AcquireRequest("resource", ttl = 2.hours, maxWait = 5.minutes))
-      assertTrue(parsed.toEither.exists { acquisition =>
-        acquisition.ttl == 10.minutes && acquisition.patience == 30.seconds
+      assertTrue(parsed.toEither.exists { demand =>
+        demand.ttl == 10.minutes && demand.patience == 30.seconds
       })
     },
     test("an acquire with three problems is refused once, naming all three") {

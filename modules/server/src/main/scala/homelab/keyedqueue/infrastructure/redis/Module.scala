@@ -4,7 +4,7 @@ package homelab.keyedqueue.infrastructure.redis
 import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
 import homelab.common.messaging.Consumer
-import homelab.keyedqueue.domain.service.lock.LockStore
+import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.service.readiness.Wake
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig

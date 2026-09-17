@@ -3,7 +3,8 @@ package homelab.keyedqueue.domain.service.usecase.lock
 
 import homelab.keyedqueue.SpecHelper
 import homelab.keyedqueue.SpecHelper.Helper
-import homelab.keyedqueue.domain.service.lock.LockStore
+import homelab.keyedqueue.domain.service.persistence.LockStore
+import homelab.keyedqueue.domain.types.LockName
 import homelab.keyedqueue.infrastructure.redis.RedisSpecSupport
 import zio.*
 import zio.test.*
@@ -23,7 +24,7 @@ object LockAcquireUseCaseSpec extends ZIOSpecDefault:
         for
           acquire   <- ZIO.service[LockAcquireUseCase]
           store     <- ZIO.service[LockStore]
-          held      <- store.tryAcquire(Helper.acq("e", 30.seconds)).someOrFailException
+          held      <- store.tryAcquire(LockName("e"), 30.seconds).someOrFailException
           waiter    <- acquire(Helper.acquiring("e", 30.seconds, 5.seconds)).fork
           _         <- ZIO.sleep(300.millis)
           parked    <- waiter.poll.map(_.isEmpty)
@@ -38,7 +39,7 @@ object LockAcquireUseCaseSpec extends ZIOSpecDefault:
         for
           acquire           <- ZIO.service[LockAcquireUseCase]
           store             <- ZIO.service[LockStore]
-          held              <- store.tryAcquire(Helper.acq("cross", 30.seconds)).someOrFailException
+          held              <- store.tryAcquire(LockName("cross"), 30.seconds).someOrFailException
           waiter            <- acquire(Helper.acquiring("cross", 30.seconds, 10.seconds)).timed.fork
           _                 <- ZIO.sleep(300.millis)
           parked            <- waiter.poll.map(_.isEmpty)
@@ -52,7 +53,7 @@ object LockAcquireUseCaseSpec extends ZIOSpecDefault:
         for
           acquire           <- ZIO.service[LockAcquireUseCase]
           store             <- ZIO.service[LockStore]
-          _                 <- store.tryAcquire(Helper.acq("h", 500.millis)).someOrFailException
+          _                 <- store.tryAcquire(LockName("h"), 500.millis).someOrFailException
           waiter            <- acquire(Helper.acquiring("h", 30.seconds, 10.seconds)).timed.fork
           _                 <- ZIO.sleep(200.millis)
           parked            <- waiter.poll.map(_.isEmpty)
@@ -63,7 +64,7 @@ object LockAcquireUseCaseSpec extends ZIOSpecDefault:
         for
           acquire <- ZIO.service[LockAcquireUseCase]
           store   <- ZIO.service[LockStore]
-          held    <- store.tryAcquire(Helper.acq("fifo", 30.seconds)).someOrFailException
+          held    <- store.tryAcquire(LockName("fifo"), 30.seconds).someOrFailException
           order   <- Ref.make(Chunk.empty[Int])
           turn     = (i: Int) =>
                        acquire(Helper.acquiring("fifo", 5.seconds, 20.seconds)).flatMap: answer =>
@@ -83,11 +84,11 @@ object LockAcquireUseCaseSpec extends ZIOSpecDefault:
         for
           acquire <- ZIO.service[LockAcquireUseCase]
           store   <- ZIO.service[LockStore]
-          held    <- store.tryAcquire(Helper.acq("barge", 30.seconds)).someOrFailException
+          held    <- store.tryAcquire(LockName("barge"), 30.seconds).someOrFailException
           waiter  <- acquire(Helper.acquiring("barge", 30.seconds, 10.seconds)).fork
           _       <- ZIO.sleep(300.millis)
           barged  <- Ref.make(false)
-          newcomer = store.tryAcquire(Helper.acq("barge", 30.seconds)).flatMap(r => barged.set(true).when(r.isDefined))
+          newcomer = store.tryAcquire(LockName("barge"), 30.seconds).flatMap(r => barged.set(true).when(r.isDefined))
           spam    <- newcomer.repeat(Schedule.spaced(5.millis)).fork
           _       <- store.release(held.claim)
           granted <- waiter.join
@@ -103,7 +104,7 @@ object LockAcquireUseCaseSpec extends ZIOSpecDefault:
         for
           acquire       <- ZIO.service[LockAcquireUseCase]
           store         <- ZIO.service[LockStore]
-          held          <- store.tryAcquire(Helper.acq("abandoned", 30.seconds)).someOrFailException
+          held          <- store.tryAcquire(LockName("abandoned"), 30.seconds).someOrFailException
           first         <- acquire(Helper.acquiring("abandoned", 5.seconds, 30.seconds)).fork
           _             <- ZIO.sleep(300.millis)
           second        <- acquire(Helper.acquiring("abandoned", 5.seconds, 30.seconds)).timed.fork

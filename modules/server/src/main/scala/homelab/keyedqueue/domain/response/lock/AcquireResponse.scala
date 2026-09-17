@@ -1,7 +1,8 @@
 package homelab.keyedqueue.domain.response.lock
 
 
-import homelab.keyedqueue.domain.model.LockClaim
+import homelab.keyedqueue.domain.model.lock.Claim
+import homelab.keyedqueue.domain.types.Token
 
 import java.time.Instant
 
@@ -21,8 +22,8 @@ enum AcquireResponse:
   /**
    * The lock was granted.
    *
-   * @param claim which lock, under which fence — the handle to release or refresh with, and the token to
-   *              stamp downstream writes with
+   * @param receipt the handle to release or refresh with
+   * @param token the fence this hold was granted under, to stamp downstream writes with
    * @param leaseUntil when the hold lapses unless refreshed
    */
-  case Granted(claim: LockClaim, leaseUntil: Instant)
+  case Granted(receipt: Claim.Ref, token: Token, leaseUntil: Instant)

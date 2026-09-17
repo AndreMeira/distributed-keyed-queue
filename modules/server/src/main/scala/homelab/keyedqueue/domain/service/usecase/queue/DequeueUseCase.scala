@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.service.usecase.queue
 
 import homelab.common.error.ApplicationError
 import homelab.common.orFail
-import homelab.keyedqueue.domain.model.{ Demand, Grant }
+import homelab.keyedqueue.domain.model.queue.{ Demand, Grant }
 import homelab.keyedqueue.domain.request.queue.DequeueRequest
 import homelab.keyedqueue.domain.response.queue.*
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
@@ -66,7 +66,7 @@ final class DequeueUseCase(
       case Some(patienceLeft) =>
         readiness
           .awaitReady(demand.queue, patienceLeft):
-            store.attemptClaim(demand)
+            store.attemptClaim(demand.queue, demand.batch)
           .flatMap:
             case granted @ Some(_) => ZIO.succeed(granted)
             case None              => claim(demand, asked)

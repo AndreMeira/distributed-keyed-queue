@@ -5,7 +5,7 @@ import homelab.common.error.{ ApplicationError, ValidationError }
 import homelab.common.orFail
 import homelab.keyedqueue.domain.request.lock.RefreshRequest
 import homelab.keyedqueue.domain.response.lock.RefreshResponse
-import homelab.keyedqueue.domain.service.lock.LockStore
+import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.service.validation.LockInputValidation
 import zio.IO
 

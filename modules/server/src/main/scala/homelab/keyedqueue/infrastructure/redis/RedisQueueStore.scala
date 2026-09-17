@@ -2,7 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.monitor.Monitor
-import homelab.keyedqueue.domain.model.{ Claim, Demand, Grant, Settlement, Submission }
+import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.domain.types.*
@@ -61,15 +61,16 @@ final class RedisQueueStore(
   /**
    * Claim whatever is claimable, without waiting.
    *
-   * @param demand how much to take
+   * @param queue the queue to claim from
+   * @param batch how much to take
    * @return the claim, or `None` when nothing was claimable; aborts with `RedisFailure` when the store fails
    */
-  override def attemptClaim(demand: Demand): IO[RedisFailure, Option[Grant]] =
+  override def attemptClaim(queue: QueueName, batch: Int): IO[RedisFailure, Option[Grant]] =
     monitor.trace("RedisQueueStore.attemptClaim"):
       connection.provide:
-        val keys = layout.queue(demand.queue)
+        val keys = layout.queue(queue)
         scripts.claim
-          .execute(keys, leaseTtl, demand.batch)
+          .execute(keys, leaseTtl, batch)
           .map:
             case None          => None
             case Some(claimed) => Some(granted(keys, claimed))

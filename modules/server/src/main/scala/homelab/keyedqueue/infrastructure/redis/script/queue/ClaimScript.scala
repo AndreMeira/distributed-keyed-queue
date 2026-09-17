@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.redis.script.queue
 
 
-import homelab.keyedqueue.domain.model.{ Grant, Message }
+import homelab.keyedqueue.domain.model.queue.{ Grant, Message }
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.keys.QueueKeys
 import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisFailure }

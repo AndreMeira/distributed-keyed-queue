@@ -4,10 +4,10 @@ package homelab.keyedqueue.domain.service.usecase.lock
 import homelab.common.error.ApplicationError
 import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.orFail
-import homelab.keyedqueue.domain.model.Acquisition
+import homelab.keyedqueue.domain.model.lock.{ Demand, Hold, Position, Turn }
 import homelab.keyedqueue.domain.request.lock.AcquireRequest
 import homelab.keyedqueue.domain.response.lock.AcquireResponse
-import homelab.keyedqueue.domain.service.lock.LockStore
+import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.service.readiness.LockReadiness
 import homelab.keyedqueue.domain.service.readiness.LockReadiness.Signal
 import homelab.keyedqueue.domain.service.usecase.lock.LockAcquireUseCase.{ Waiter, atLeastFloor }
@@ -26,7 +26,7 @@ import java.time.Instant
  * given up on every exit that is not a grant.
  *
  * @param store where the lock lives
- * @param validation what turns a request into an acquisition this service will honour
+ * @param validation what turns a request into an demand this service will honour
  * @param readiness where a waiter parks, and what a release wakes
  */
 final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation, readiness: LockReadiness):
@@ -41,13 +41,13 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
   def apply(request: AcquireRequest): IO[ApplicationError, AcquireResponse] =
     ZIO.scoped:
       for
-        acquisition <- validation.parse(request).orFail
-        asked       <- Clock.instant
-        signal      <- readiness.subscribe(acquisition.name)
-        waiter       = Waiter(acquisition, asked, signal)
-        result      <- AcquireLifecycle.run(waiter, acquisition.patience)
+        demand <- validation.parse(request).orFail
+        asked  <- Clock.instant
+        signal <- readiness.subscribe(demand.name)
+        waiter  = Waiter(demand, asked, signal)
+        result <- AcquireLifecycle.run(waiter, demand.patience)
       yield result match
-        case Some(hold) => AcquireResponse.Granted(hold.claim, hold.leaseUntil)
+        case Some(hold) => AcquireResponse.Granted(hold.claim.reference, hold.claim.token, hold.leaseUntil)
         case None       => AcquireResponse.Unavailable
 
   /**
@@ -68,7 +68,7 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
   /**
    * The states a wait passes through, and the driver that runs them.
    *
-   * [[run]] starts at [[Placing]] and follows each state's own transition until one of the two that answer.
+   * [[run]] starts at [[Demanding]] and follows each state's own transition until one of the two that answer.
    */
   private object AcquireLifecycle {
 
@@ -80,15 +80,15 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
      *
      * @param hold what authorises releasing and refreshing it
      */
-    case class Granted(hold: LockStore.Hold) extends AcquireLifecycle
+    case class Granted(hold: Hold) extends AcquireLifecycle
 
     /**
-     * About to ask for the lock, with no place in the acquisition queue yet.
+     * About to ask for the lock, with no place in the demand queue yet.
      *
      * @param waiter who is waiting, for what, and since when
      * @param within what is left of the patience, which bounds any ticket the ask is answered with
      */
-    class Placing(waiter: Waiter, within: Duration) extends AcquireLifecycle:
+    class Demanding(waiter: Waiter, within: Duration) extends AcquireLifecycle:
 
       /**
        * Ask for the lock: it is granted, or this caller takes a place in the queue.
@@ -103,10 +103,10 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
       override def next: IO[AdapterError, AcquireLifecycle] = ZIO.uninterruptible {
         for
           now      <- Clock.instant
-          position <- store.place(waiter.acquisition, within)
+          position <- store.place(waiter.demand.name, waiter.demand.ttl, within)
         yield position match
-          case LockStore.Position.Granted(hold)           => Granted(hold)
-          case LockStore.Position.Queued(ticket, recheck) => Queued(waiter, ticket, now.plus(atLeastFloor(recheck)))
+          case Position.Granted(hold)           => Granted(hold)
+          case Position.Queued(ticket, recheck) => Queued(waiter, ticket, now.plus(atLeastFloor(recheck)))
       }
 
     /**
@@ -133,13 +133,13 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
             case None           => ZIO.succeed(GivenUp)
             case Some(patience) =>
               awaitTurn(patience).map:
-                case _ -> LockStore.Turn.Gone          => Placing(waiter, patience)
-                case _ -> LockStore.Turn.Granted(hold) => Granted(hold)
-                case now -> LockStore.Turn.Wait(delay) => Queued(waiter, ticket, now.plus(atLeastFloor(delay)))
+                case _ -> Turn.Gone          => Demanding(waiter, patience)
+                case _ -> Turn.Granted(hold) => Granted(hold)
+                case now -> Turn.Wait(delay) => Queued(waiter, ticket, now.plus(atLeastFloor(delay)))
           .onExit:
             case Exit.Success(_: Queued)  => ZIO.unit
             case Exit.Success(_: Granted) => ZIO.unit
-            case _                        => store.withdraw(waiter.acquisition.name, ticket).ignore
+            case _                        => store.withdraw(waiter.demand.name, ticket).ignore
 
       /**
        * What is left of this waiter's patience.
@@ -149,7 +149,7 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
       private def patienceLeft: UIO[Option[Duration]] =
         Clock.instant.map: now =>
           val elapsed = Duration.fromInterval(waiter.asked, now)
-          val left    = waiter.acquisition.patience.minus(elapsed)
+          val left    = waiter.demand.patience.minus(elapsed)
           Option.when(left.toMillis > 0)(left)
 
       /**
@@ -162,13 +162,13 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
        * @return when the ask was made, and what the store answered; aborts with an `AdapterError` when the
        *         store fails
        */
-      private def awaitTurn(patience: Duration): IO[AdapterError, (Instant, LockStore.Turn)] =
+      private def awaitTurn(patience: Duration): IO[AdapterError, (Instant, Turn)] =
         for
           // The shorter of the patience left and the next recheck from now.
           timeout <- Clock.instant.map(now => Duration.fromInterval(now, recheckAt) min patience)
           _       <- waiter.signal.await.timeout(timeout).unless(timeout <= Duration.Zero)
           asking  <- Clock.instant
-          answer  <- store.ask(waiter.acquisition, ticket)
+          answer  <- store.ask(waiter.demand.name, waiter.demand.ttl, ticket)
         yield asking -> answer
 
     /**
@@ -179,8 +179,8 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
      * @return the hold, or `None` when the patience elapsed first; aborts with an `AdapterError` when the
      *         store fails
      */
-    def run(waiter: Waiter, within: Duration): IO[AdapterError, Option[LockStore.Hold]] =
-      loop(Placing(waiter, within))
+    def run(waiter: Waiter, within: Duration): IO[AdapterError, Option[Hold]] =
+      loop(Demanding(waiter, within))
 
     /**
      * Advance the wait until it reaches a state that answers.
@@ -191,7 +191,7 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
      * @param state where the wait has got to
      * @return the hold, or `None` when the wait gave up; aborts with an `AdapterError` when the store fails
      */
-    private def loop(state: AcquireLifecycle): IO[AdapterError, Option[LockStore.Hold]] =
+    private def loop(state: AcquireLifecycle): IO[AdapterError, Option[Hold]] =
       ZIO.uninterruptibleMask: restore =>
         restore(state.next).flatMap:
           case Granted(hold) => ZIO.succeed(Some(hold))
@@ -210,11 +210,11 @@ object LockAcquireUseCase:
    *
    * None of the three changes while the wait lasts.
    *
-   * @param acquisition the lock to take, how long to hold it, and how long to wait
+   * @param demand the lock to take, how long to hold it, and how long to wait
    * @param asked when the call arrived, which the patience is measured from
    * @param signal what a wake on this lock reaches
    */
-  private case class Waiter(acquisition: Acquisition, asked: Instant, signal: Signal)
+  private case class Waiter(demand: Demand, asked: Instant, signal: Signal)
 
   /**
    * A delay no shorter than the spin floor.

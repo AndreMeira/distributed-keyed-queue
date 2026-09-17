@@ -1,8 +1,8 @@
 package homelab.keyedqueue.infrastructure.redis.script
 
 
-import homelab.keyedqueue.domain.model.Message
-import homelab.keyedqueue.domain.model.Settlement.Verdict
+import homelab.keyedqueue.domain.model.queue.Message
+import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
