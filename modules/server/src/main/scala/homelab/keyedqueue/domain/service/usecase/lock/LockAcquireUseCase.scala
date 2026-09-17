@@ -99,14 +99,14 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
        * @return the lock, or a place in the queue with the first recheck time; aborts with an
        *         `AdapterError` when the store fails
        */
-      override def next: IO[AdapterError, AcquireLifecycle] =
-        ZIO.uninterruptible:
-          for
-            now      <- Clock.instant
-            position <- store.place(waiter.acquisition, within)
-          yield position match
-            case LockStore.Position.Granted(hold)           => Granted(hold)
-            case LockStore.Position.Queued(ticket, recheck) => Queued(waiter, ticket, now.plus(atLeastFloor(recheck)))
+      override def next: IO[AdapterError, AcquireLifecycle] = ZIO.uninterruptible {
+        for
+          now      <- Clock.instant
+          position <- store.place(waiter.acquisition, within)
+        yield position match
+          case LockStore.Position.Granted(hold)           => Granted(hold)
+          case LockStore.Position.Queued(ticket, recheck) => Queued(waiter, ticket, now.plus(atLeastFloor(recheck)))
+      }
 
     /**
      * Holding a place in the queue, with the next ask due at a known time.
