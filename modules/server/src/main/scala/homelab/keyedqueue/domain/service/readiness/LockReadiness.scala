@@ -50,45 +50,34 @@ final class LockReadiness(waiting: Ref[Map[LockName, Set[Queue[Unit]]]]):
    */
   def subscribe(lock: LockName): ZIO[Scope, Nothing, LockReadiness.Signal] =
     ZIO
-      .acquireRelease {
-        Queue.sliding[Unit](1).tap { mailbox =>
-          waiting.update(joined(lock, mailbox))
-        }
-      }(mailbox => waiting.update(left(lock, mailbox)))
+      .acquireRelease(addSubscriber(lock))(removeSubscriber(lock, _))
       .map(LockReadiness.Signal(_))
 
   /**
-   * The map with this mailbox added under the name.
+   * Open a mailbox for this lock and put it among those a wake reaches.
    *
-   * @param lock the lock subscribed to
-   * @param mailbox the mailbox arriving
-   * @param current the map as it was
-   * @return the map as it becomes
+   * @param lock the lock to be woken for
+   * @return the mailbox, already subscribed
    */
-  private def joined(
-    lock: LockName,
-    mailbox: Queue[Unit],
-  )(
-    current: Map[LockName, Set[Queue[Unit]]]
-  ): Map[LockName, Set[Queue[Unit]]] =
-    current.updated(lock, current.getOrElse(lock, Set.empty) + mailbox)
+  private def addSubscriber(lock: LockName): UIO[Queue[Unit]] =
+    for
+      mailbox <- Queue.sliding[Unit](1)
+      _       <- waiting.update: current =>
+                   val subscribers = current.getOrElse(lock, Set.empty) + mailbox
+                   current.updated(lock, subscribers)
+    yield mailbox
 
   /**
-   * The map with this mailbox removed, and the name dropped when it was the last.
+   * Take this mailbox out of the lock's subscribers, and the name with it once it holds none.
    *
    * @param lock the lock subscribed to
    * @param mailbox the mailbox leaving
-   * @param current the map as it was
-   * @return the map as it becomes
+   * @return noop
    */
-  private def left(
-    lock: LockName,
-    mailbox: Queue[Unit],
-  )(
-    current: Map[LockName, Set[Queue[Unit]]]
-  ): Map[LockName, Set[Queue[Unit]]] =
-    val remaining = current.getOrElse(lock, Set.empty) - mailbox
-    if remaining.isEmpty then current.removed(lock) else current.updated(lock, remaining)
+  private def removeSubscriber(lock: LockName, mailbox: Queue[Unit]): UIO[Unit] =
+    waiting.update: current =>
+      val remaining = current.getOrElse(lock, Set.empty) - mailbox
+      if remaining.isEmpty then current.removed(lock) else current.updated(lock, remaining)
 
 
 object LockReadiness:
