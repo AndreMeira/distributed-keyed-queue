@@ -158,9 +158,9 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
        */
       private def awaitTurn(patience: Duration): IO[AdapterError, (Instant, LockStore.Turn)] =
         for
-          waiting <- Clock.instant.map(now => Duration.fromInterval(now, recheckAt))
-          timeout  = (waiting min patience) max Duration.Zero
-          _       <- waiter.signal.await.timeout(timeout).unless(timeout.isZero)
+          // The shorter of the patience left and the next recheck from now.
+          timeout <- Clock.instant.map(now => Duration.fromInterval(now, recheckAt) min patience)
+          _       <- waiter.signal.await.timeout(timeout).unless(timeout <= Duration.Zero)
           asking  <- Clock.instant
           answer  <- store.ask(waiter.acquisition, ticket)
         yield asking -> answer
