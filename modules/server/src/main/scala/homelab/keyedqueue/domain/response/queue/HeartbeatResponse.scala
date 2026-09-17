@@ -1,7 +1,6 @@
 package homelab.keyedqueue.domain.response.queue
 
 
-import homelab.keyedqueue.domain.types.ClaimRef
 import zio.Chunk
 
 import java.time.Instant

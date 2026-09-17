@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.redis.script.queue
 
 
-import homelab.keyedqueue.domain.model.Claim
+import homelab.keyedqueue.domain.model.queue.Claim
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.RedisFailure
 import homelab.keyedqueue.infrastructure.redis.Connection.Commands

@@ -1,4 +1,4 @@
-package homelab.keyedqueue.domain.model
+package homelab.keyedqueue.domain.model.lock
 
 
 import homelab.keyedqueue.domain.types.LockName
@@ -15,4 +15,4 @@ import zio.Duration
  * @param ttl how long the hold survives without a refresh
  * @param patience how long to wait for a holder to release, at most what the service allows
  */
-final case class Acquisition(name: LockName, ttl: Duration, patience: Duration)
+final case class Demand(name: LockName, ttl: Duration, patience: Duration)

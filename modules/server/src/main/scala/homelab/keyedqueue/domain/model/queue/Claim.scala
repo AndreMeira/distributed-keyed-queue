@@ -1,16 +1,12 @@
-package homelab.keyedqueue.domain.model
-
+package homelab.keyedqueue.domain.model.queue
 
 import homelab.keyedqueue.domain.types.*
-
-import java.nio.charset.StandardCharsets
-import java.util.Base64
 
 
 /**
  * What a consumer must hand back to settle or renew: which key, in which queue, under which claim.
  *
- * Handed to a consumer as an opaque [[ClaimRef]] so it cannot reason about the fencing scheme or do
+ * Handed to a consumer as an opaque [[Claim.Ref]] so it cannot reason about the fencing scheme or do
  * arithmetic on it. Forgery is not a threat model: the store validates the token against the key's current
  * generation, so a made-up reference buys nothing a guessed one would not.
  *
@@ -23,23 +19,34 @@ final case class Claim(queue: QueueName, key: MessageKey, token: Token):
   /**
    * Encode as the opaque string a consumer carries.
    *
-   * Base64url over a space-separated triple: queue names and keys may contain anything, and base64 of the
-   * whole thing keeps the separator out of reach of their content.
+   * The fields go through [[Obfuscated]], so a queue name or a key may hold anything.
    *
    * @return the reference
    */
-  def reference: ClaimRef =
-    val raw = queue + " " + key + " " + token.toString
-    ClaimRef(Base64.getUrlEncoder.withoutPadding.encodeToString(raw.getBytes(StandardCharsets.UTF_8)))
+  def reference: Claim.Ref =
+    Claim.Ref(Obfuscated.encode(queue, key, token.toString))
 
 
 object Claim:
 
+  /** The opaque handle a consumer holds while it works a message: a [[Claim]] it cannot read. */
+  opaque type Ref <: String = String
+
+  object Ref:
+
+    /**
+     * A handle, trusted.
+     *
+     * @param value the encoded handle
+     * @return the handle
+     */
+    def apply(value: String): Ref = value
+
   /**
    * Read back a reference handed out by [[Claim.reference]].
    *
-   * Takes a `String` rather than a [[ClaimRef]]: what a consumer hands back is an unchecked value, and this
-   * is the mechanics of deciding whether it is a receipt. `ClaimRef` is what this service *hands out* —
+   * Takes a `String` rather than a [[Claim.Ref]]: what a consumer hands back is an unchecked value, and this
+   * is the mechanics of deciding whether it is a receipt. `Claim.Ref` is what this service *hands out* —
    * evidence of a claim it granted — so requiring one here would mean minting it before the check.
    *
    * Answers with an `Option` rather than refusing, because its two callers disagree about what a failure
@@ -50,11 +57,9 @@ object Claim:
    * @param reference the opaque string from the consumer
    * @return the claim it names, or `None` when it is not one we issued
    */
-  def fromReference(reference: String): Option[Claim] =
-    scala.util
-      .Try(String(Base64.getUrlDecoder.decode(reference), StandardCharsets.UTF_8))
-      .toOption
-      .map(_.split(' '))
-      .collect:
-        case Array(queue, key, token) if token.toLongOption.isDefined =>
-          Claim(QueueName(queue), MessageKey(key), Token(token.toLong))
+  def decode(reference: String): Option[Claim] =
+    Obfuscated(reference).decoded match
+      case Some(Seq(queue, key, token)) =>
+        for generation <- token.toLongOption
+        yield Claim(QueueName(queue), MessageKey(key), Token(generation))
+      case _                            => None

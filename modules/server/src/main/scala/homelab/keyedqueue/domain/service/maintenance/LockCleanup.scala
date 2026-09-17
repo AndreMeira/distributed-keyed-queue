@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.maintenance
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.service.lock.LockStore
+import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.types.LockName
 import zio.*
 

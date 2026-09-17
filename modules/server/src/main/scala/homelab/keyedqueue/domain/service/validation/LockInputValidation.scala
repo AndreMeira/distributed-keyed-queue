@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.service.validation
 
 import homelab.common.Validated
 import homelab.keyedqueue.domain.error.InvalidInput
-import homelab.keyedqueue.domain.model.{ Acquisition, LockClaim }
+import homelab.keyedqueue.domain.model.lock.{ Demand, Claim }
 import homelab.keyedqueue.domain.request.lock.{ AcquireRequest, RefreshRequest, ReleaseRequest }
 import homelab.keyedqueue.domain.service.validation.CommonValidation.nonEmpty as nonEmptyString
 import homelab.keyedqueue.domain.types.*
@@ -29,17 +29,17 @@ final class LockInputValidation(config: LockInputValidation.Config):
    * the wait as a dequeue's is. All three problems accumulate.
    *
    * @param request what the caller sent, untrusted
-   * @return the acquisition to hand the store; accumulates `EmptyLockName`, `NonPositiveTtl` and
+   * @return the demand to hand the store; accumulates `EmptyLockName`, `NonPositiveTtl` and
    *         `NonPositiveMaxWait`
    */
-  def parse(request: AcquireRequest): Validated[Acquisition] =
+  def parse(request: AcquireRequest): Validated[Demand] =
     Validation
       .validate(
         nonEmptyString(request.name, InvalidInput.EmptyLockName).map(LockName.apply),
         holding(request.ttl),
         waiting(request.maxWait),
       )
-      .map((name, ttl, patience) => Acquisition(name, ttl, patience))
+      .map((name, ttl, patience) => Demand(name, ttl, patience))
 
   /**
    * The claim a `Release` names.
@@ -47,7 +47,7 @@ final class LockInputValidation(config: LockInputValidation.Config):
    * @param request what the caller sent, untrusted
    * @return the claim; fails with `UnreadableReceipt` when the handle is not one this service issued
    */
-  def parse(request: ReleaseRequest): Validated[LockClaim] =
+  def parse(request: ReleaseRequest): Validated[Claim] =
     receipt(request.receipt)
 
   /**
@@ -56,7 +56,7 @@ final class LockInputValidation(config: LockInputValidation.Config):
    * @param request what the caller sent, untrusted
    * @return the claim and ttl; accumulates `UnreadableReceipt` and `NonPositiveTtl`
    */
-  def parse(request: RefreshRequest): Validated[(LockClaim, Duration)] =
+  def parse(request: RefreshRequest): Validated[(Claim, Duration)] =
     Validation.validate(receipt(request.receipt), holding(request.ttl))
 
   /**
@@ -65,8 +65,8 @@ final class LockInputValidation(config: LockInputValidation.Config):
    * @param value the handle as it arrived
    * @return the claim it names; fails with `UnreadableReceipt` when it names none
    */
-  private def receipt(value: String): Validated[LockClaim] =
-    Validation.fromOptionWith(InvalidInput.UnreadableReceipt)(LockClaim.fromReceipt(value))
+  private def receipt(value: String): Validated[Claim] =
+    Validation.fromOptionWith(InvalidInput.UnreadableReceipt)(Claim.decode(value))
 
   /**
    * How long this service will actually wait for a lock: positive, and clamped to the ceiling.

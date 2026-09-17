@@ -4,9 +4,9 @@ package homelab.keyedqueue.infrastructure.redis
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.SpecHelper
 import homelab.keyedqueue.SpecHelper.Helper
-import homelab.keyedqueue.domain.model.{ Claim, Demand, Grant, Message, Settlement, Submission }
-import homelab.keyedqueue.domain.model.Message.Encoding
-import homelab.keyedqueue.domain.model.Settlement.Verdict
+import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Message, Settlement, Submission }
+import homelab.keyedqueue.domain.model.queue.Message.Encoding
+import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
@@ -30,13 +30,13 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
 
   def spec: Spec[TestEnvironment & Scope, Any] = {
     suite("QueueStore over Redis")(
-      test("attemptClaim answers at once, whatever patience the demand carries") {
-        // The non-waiting half of the port: 30 seconds of patience buys nothing here, because waiting is
-        // the readiness's job and an attempt only reports what was true when it asked.
+      test("attemptClaim answers about now, without waiting") {
+        // The non-waiting half of the port: an attempt reports what was true when it asked, and there is
+        // no patience to hand it — waiting is the readiness's job.
         for
           worker          <- ZIO.service[QueueStore]
           queue            = QueueName("attempt")
-          outcome         <- worker.attemptClaim(Demand(queue, 30.seconds, 1)).timed
+          outcome         <- worker.attemptClaim(queue, 1).timed
           (elapsed, found) = outcome
         yield assertTrue(found.isEmpty, elapsed < 1.second)
       },
@@ -82,11 +82,11 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           _          <- worker.enqueue(Submission(queue, Helper.message(MessageKey("k1"), "first")))
           _          <- worker.enqueue(Submission(queue, Helper.message(MessageKey("k1"), "second")))
           _          <- worker.enqueue(Submission(queue, Helper.message(MessageKey("k2"), "other-key")))
-          held       <- worker.attemptClaim(Demand(queue, 2.seconds, 1))
-          while_held <- worker.attemptClaim(Demand(queue, 2.seconds, 1))
+          held       <- worker.attemptClaim(queue, 1)
+          while_held <- worker.attemptClaim(queue, 1)
         yield assertTrue(
-          held.map(Helper.body) == Some(Chunk("first")),
-          while_held.map(Helper.body) == Some(Chunk("other-key")), // a different key, never k1's queued second
+          held.map(Helper.body).contains(Chunk("first")),
+          while_held.map(Helper.body).contains(Chunk("other-key")), // a different key, never k1's queued second
         )
       },
       test("a failure leaves the message where it was, and counts the attempt") {
@@ -96,12 +96,12 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           key     = MessageKey("k1")
           _      <- worker.enqueue(Submission(queue, Helper.message(key, "poison")))
           _      <- worker.enqueue(Submission(queue, Helper.message(key, "after")))
-          first  <- worker.attemptClaim(Demand(queue, 2.seconds, 1))
+          first  <- worker.attemptClaim(queue, 1)
           _      <- ZIO.foreachDiscard(first)(Helper.nack(worker))
-          second <- worker.attemptClaim(Demand(queue, 2.seconds, 1))
+          second <- worker.attemptClaim(queue, 1)
         yield assertTrue(
-          second.map(Helper.body) == Some(Chunk("poison")), // the same message, not the one behind it
-          second.flatMap(_.messages.headOption.map(_.attempt)) == Some(2),
+          second.map(Helper.body).contains(Chunk("poison")), // the same message, not the one behind it
+          second.flatMap(_.messages.headOption.map(_.attempt)).contains(2),
         )
       },
       test("a settle after the lease lapsed is rejected, and the messages come back") {
@@ -110,14 +110,14 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           queue   = QueueName("lapsed")
           key     = MessageKey("k1")
           _      <- worker.enqueue(Submission(queue, Helper.message(key, "work")))
-          held   <- worker.attemptClaim(Demand(queue, 2.seconds, 1))
+          held   <- worker.attemptClaim(queue, 1)
           _      <- ZIO.sleep(leaseTtl + 500.millis)
           _      <- worker.sweep(queue, 100)
           late   <- ZIO.foreach(held)(batch => worker.settle(Helper.settlement(batch.claim, Helper.acks(batch))))
-          again  <- worker.attemptClaim(Demand(queue, 2.seconds, 1))
+          again  <- worker.attemptClaim(queue, 1)
         yield assertTrue(
-          late == Some(false),                          // the token was spent by the revoke
-          again.map(Helper.body) == Some(Chunk("work")), // and the work came back
+          late.contains(false),                          // the token was spent by the revoke
+          again.map(Helper.body).contains(Chunk("work")), // and the work came back
         )
       },
       test("a claim hands over a batch, in producer order, with what is left behind counted") {
@@ -126,7 +126,7 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           queue   = QueueName("batch")
           key     = MessageKey("k1")
           _      <- ZIO.foreachDiscard(List("a", "b", "c", "d"))(m => worker.enqueue(Submission(queue, Helper.message(key, m))))
-          held   <- worker.attemptClaim(Demand(queue, 2.seconds, 3))
+          held   <- worker.attemptClaim(queue, 3)
         yield assertTrue(
           held.map(Helper.body).contains(Chunk("a", "b", "c")),
           held.map(_.backlogDepth).contains(1), // d, still queued
@@ -139,7 +139,7 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           queue   = QueueName("batch-short")
           key     = MessageKey("k1")
           _      <- ZIO.foreachDiscard(List("a", "b"))(m => worker.enqueue(Submission(queue, Helper.message(key, m))))
-          held   <- worker.attemptClaim(Demand(queue, 2.seconds, 10))
+          held   <- worker.attemptClaim(queue, 10)
         yield assertTrue(
           held.map(Helper.body).contains(Chunk("a", "b")),
           held.map(_.backlogDepth).contains(0),
@@ -151,13 +151,13 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           queue    = QueueName("partial")
           key      = MessageKey("k1")
           _       <- ZIO.foreachDiscard(List("a", "b"))(m => worker.enqueue(Submission(queue, Helper.message(key, m))))
-          held    <- worker.attemptClaim(Demand(queue, 2.seconds, 2))
+          held    <- worker.attemptClaim(queue, 2)
           batch    = held.get
           first   <- worker.settle(Helper.settlement(batch.claim, NonEmptyChunk(batch.messages(0).id -> Verdict.Done)))
           // Still owed the second, so the key is nobody else's yet.
-          blocked <- worker.attemptClaim(Demand(queue, 1.second, 1))
+          blocked <- worker.attemptClaim(queue, 1)
           second  <- worker.settle(Helper.settlement(batch.claim, NonEmptyChunk(batch.messages(1).id -> Verdict.Done)))
-          after   <- worker.attemptClaim(Demand(queue, 1.second, 1))
+          after   <- worker.attemptClaim(queue, 1)
         yield assertTrue(first, second, blocked.isEmpty, after.isEmpty) // nothing left, so nothing to claim
       },
       test("a nacked message stays in its place, and the key comes back when nothing is owed") {
@@ -168,14 +168,14 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           queue   = QueueName("mixed")
           key     = MessageKey("k1")
           _      <- ZIO.foreachDiscard(List("1", "2", "3", "4", "5"))(m => worker.enqueue(Submission(queue, Helper.message(key, m))))
-          held   <- worker.attemptClaim(Demand(queue, 2.seconds, 4))
+          held   <- worker.attemptClaim(queue, 4)
           batch   = held.get
           by      = batch.messages.map(owned => Helper.cargo(owned.message) -> owned.id).toMap
           _      <- worker.settle(Helper.settlement(batch.claim, NonEmptyChunk(by("1") -> Verdict.Done)))
           _      <- worker.settle(Helper.settlement(batch.claim, NonEmptyChunk(by("2") -> Verdict.Failed)))
           _      <- worker.settle(Helper.settlement(batch.claim, NonEmptyChunk(by("4") -> Verdict.Done)))
           _      <- worker.settle(Helper.settlement(batch.claim, NonEmptyChunk(by("3") -> Verdict.Failed)))
-          again  <- worker.attemptClaim(Demand(queue, 2.seconds, 5))
+          again  <- worker.attemptClaim(queue, 5)
         yield assertTrue(
           again.map(Helper.body).contains(Chunk("2", "3", "5")),                // producer order, whatever order they were settled in
           again.map(_.messages.map(_.attempt).toChunk).contains(Chunk(2, 2, 1)), // the nacked ones carry their count
@@ -187,7 +187,7 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           queue    = QueueName("unowned")
           key      = MessageKey("k1")
           _       <- ZIO.foreachDiscard(List("a", "b"))(m => worker.enqueue(Submission(queue, Helper.message(key, m))))
-          held    <- worker.attemptClaim(Demand(queue, 2.seconds, 1))
+          held    <- worker.attemptClaim(queue, 1)
           batch    = held.get
           // "b" is queued but not owned by this claim, and "nowhere" is nobody's.
           applied <- worker.settle(
@@ -198,7 +198,7 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
                      )
           // Still owed "a", so the claim is alive and the key is still held.
           _       <- worker.settle(Helper.settlement(batch.claim, Helper.acks(batch)))
-          after   <- worker.attemptClaim(Demand(queue, 2.seconds, 2))
+          after   <- worker.attemptClaim(queue, 2)
         yield assertTrue(applied, after.map(Helper.body).contains(Chunk("b")))
       },
       test("the same id enqueued twice for a key is one message") {
@@ -209,7 +209,7 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           key     = MessageKey("k1")
           first  <- worker.enqueue(Submission(queue, Helper.message(key, "once")))
           again  <- worker.enqueue(Submission(queue, Helper.message(key, "once")))
-          held   <- worker.attemptClaim(Demand(queue, 2.seconds, 5))
+          held   <- worker.attemptClaim(queue, 5)
         yield assertTrue(first == 1L, again == 1L, held.map(Helper.body).contains(Chunk("once")))
       },
       test("acknowledging clears the payload as well as the place in line") {
@@ -219,7 +219,7 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           queue     = QueueName("cleanup")
           key       = MessageKey("k1")
           _        <- ZIO.foreachDiscard(List("a", "b"))(m => worker.enqueue(Submission(queue, Helper.message(key, m))))
-          held     <- worker.attemptClaim(Demand(queue, 2.seconds, 2))
+          held     <- worker.attemptClaim(queue, 2)
           _        <- ZIO.foreachDiscard(held)(batch => worker.settle(Helper.settlement(batch.claim, Helper.acks(batch))))
           payloads <- ZIO.attemptBlocking(redis.hlen(layout.queue(QueueName("cleanup")).payloads(MessageKey("k1")))).orDie
           owned    <- ZIO.attemptBlocking(redis.scard(layout.queue(QueueName("cleanup")).owned(MessageKey("k1")))).orDie
@@ -238,7 +238,7 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           queue   = QueueName("backoff-reclaim")
           key     = MessageKey("k1")
           _      <- ZIO.foreachDiscard(List("a", "b"))(m => worker.enqueue(Submission(queue, Helper.message(key, m))))
-          held   <- worker.attemptClaim(Demand(queue, 2.seconds, 2))
+          held   <- worker.attemptClaim(queue, 2)
           batch   = held.get
           // Nack the first with a backoff; the second stays owed, so the claim lives on.
           _      <- worker.settle(Helper.settlement(batch.claim, NonEmptyChunk(batch.messages(0).id -> Verdict.Failed), 1.second))
@@ -257,15 +257,15 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           queue    = QueueName("swept")
           _       <- worker.enqueue(Submission(queue, Helper.message(MessageKey("k1"), "abandoned")))
           _       <- worker.enqueue(Submission(queue, Helper.message(MessageKey("k2"), "backed-off")))
-          held    <- worker.attemptClaim(Demand(queue, 2.seconds, 1))
-          second  <- worker.attemptClaim(Demand(queue, 2.seconds, 1))
+          held    <- worker.attemptClaim(queue, 1)
+          second  <- worker.attemptClaim(queue, 1)
           // k2 is nacked with a backoff; k1 is simply dropped, so only its lease can return it.
           _       <- ZIO.foreachDiscard(second)(batch =>
                        worker.settle(Helper.settlement(batch.claim, Helper.acks(batch).map((id, _) => id -> Verdict.Failed), 300.millis))
                      )
           _       <- ZIO.sleep(leaseTtl + 500.millis)
           swept   <- worker.sweep(queue, 100)
-          claimed <- worker.attemptClaim(Demand(queue, 2.seconds, 1))
+          claimed <- worker.attemptClaim(queue, 1)
         yield assertTrue(
           swept.reclaimed.map(_.toString) == Chunk("k1"),
           swept.released.map(_.toString) == Chunk("k2"),
@@ -277,7 +277,7 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           worker        <- ZIO.service[QueueStore]
           queue          = QueueName("beat")
           _             <- worker.enqueue(Submission(queue, Helper.message(MessageKey("k1"), "work")))
-          held          <- worker.attemptClaim(Demand(queue, 2.seconds, 1))
+          held          <- worker.attemptClaim(queue, 1)
           ghost          = Claim(queue, MessageKey("gone"), Token(7))
           renewed       <- worker.renew(Chunk.fromIterable(held.map(_.claim)) :+ ghost)
           (until, stale) = renewed

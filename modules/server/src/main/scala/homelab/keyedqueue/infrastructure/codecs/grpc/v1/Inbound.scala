@@ -4,9 +4,9 @@ package homelab.keyedqueue.infrastructure.codecs.grpc.v1
 import com.google.protobuf.ByteString
 import com.google.protobuf.duration.Duration as WireDuration
 import com.google.protobuf.timestamp.Timestamp
-import homelab.keyedqueue.domain.model.Message
-import homelab.keyedqueue.domain.model.Message.Encoding
-import homelab.keyedqueue.domain.model.Settlement.Verdict
+import homelab.keyedqueue.domain.model.queue.Message
+import homelab.keyedqueue.domain.model.queue.Message.Encoding
+import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
 import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, HeartbeatRequest, SettleRequest }
 import homelab.keyedqueue.domain.request.lock.*
 import homelab.keyedqueue.domain.types.*

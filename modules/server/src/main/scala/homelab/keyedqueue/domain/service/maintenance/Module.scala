@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.service.maintenance
 
 
-import homelab.keyedqueue.domain.service.lock.LockStore
+import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import zio.*
 

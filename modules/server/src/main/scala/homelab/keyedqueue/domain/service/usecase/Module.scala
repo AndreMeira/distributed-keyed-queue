@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.usecase
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.service.lock.LockStore
+import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.readiness.{ LockReadiness, QueueReadiness }

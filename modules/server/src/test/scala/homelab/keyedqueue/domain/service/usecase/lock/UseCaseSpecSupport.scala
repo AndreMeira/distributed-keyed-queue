@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.service.usecase.lock
 
 
-import homelab.keyedqueue.domain.service.lock.LockStore
+import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.service.readiness.LockReadiness
 import homelab.keyedqueue.domain.service.validation.LockInputValidation
 import zio.*
@@ -15,7 +15,7 @@ import zio.*
  */
 object UseCaseSpecSupport {
 
-  /** The ceilings a parsed acquisition is held to, wide enough that these specs are never clamped. */
+  /** The ceilings a parsed demand is held to, wide enough that these specs are never clamped. */
   val limits: LockInputValidation.Config = LockInputValidation.Config(maxWait = 60.seconds, maxTtl = 10.minutes)
 
   /**

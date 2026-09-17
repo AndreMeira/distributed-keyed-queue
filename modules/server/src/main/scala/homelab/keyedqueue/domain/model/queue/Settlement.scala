@@ -1,7 +1,7 @@
-package homelab.keyedqueue.domain.model
+package homelab.keyedqueue.domain.model.queue
 
 
-import homelab.keyedqueue.domain.model.Settlement.Outcome
+import homelab.keyedqueue.domain.model.queue.Settlement.Outcome
 import homelab.keyedqueue.domain.types.MessageId
 import zio.{ Duration, NonEmptyChunk }
 

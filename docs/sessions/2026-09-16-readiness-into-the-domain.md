@@ -76,6 +76,8 @@ name back.
 
 ## Parked (mechanical)
 
+> Done on the 17th, once the lock side settled — both ports narrowed together, as below.
+
 **The store's input still carries a patience it ignores.** `attemptClaim(demand: Demand)` answers about now,
 and `Demand.patience` is documented as not consulted — but it is still in scope for a store, which is the
 miniature of the inversion this work removes. Narrowing the input (the queue and the batch, or a type that

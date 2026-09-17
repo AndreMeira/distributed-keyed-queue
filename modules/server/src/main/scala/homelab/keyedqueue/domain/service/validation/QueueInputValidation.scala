@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.service.validation
 
 import homelab.common.Validated
 import homelab.keyedqueue.domain.error.InvalidInput
-import homelab.keyedqueue.domain.model.*
+import homelab.keyedqueue.domain.model.queue.*
 import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, SettleRequest }
 import homelab.keyedqueue.domain.request.lock.*
 import homelab.keyedqueue.domain.service.validation.CommonValidation.{ nonNegative, nonEmpty as nonEmptyString }
@@ -83,7 +83,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * @return the claim it names; fails with `UnreadableReceipt` when it names none
    */
   private def receipt(value: String): Validated[Claim] =
-    Claim.fromReference(value) match
+    Claim.decode(value) match
       case Some(claim) => Validation.succeed(claim)
       case None        => Validation.fail(InvalidInput.UnreadableReceipt)
 

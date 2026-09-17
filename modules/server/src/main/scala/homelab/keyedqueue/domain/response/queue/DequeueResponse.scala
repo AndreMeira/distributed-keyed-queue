@@ -1,8 +1,8 @@
 package homelab.keyedqueue.domain.response.queue
 
 
-import homelab.keyedqueue.domain.model.{ Grant, Message }
-import homelab.keyedqueue.domain.types.{ ClaimRef, MessageId }
+import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Message }
+import homelab.keyedqueue.domain.types.MessageId
 import zio.Chunk
 
 import java.time.Instant
@@ -31,7 +31,7 @@ enum DequeueResponse:
    * @param backlogDepth how many more were queued for this key behind the batch
    */
   case NonEmpty(
-    receipt: ClaimRef,
+    receipt: Claim.Ref,
     head: DequeueResponse.Delivery,
     tail: Chunk[DequeueResponse.Delivery],
     leaseExpiresAt: Instant,
