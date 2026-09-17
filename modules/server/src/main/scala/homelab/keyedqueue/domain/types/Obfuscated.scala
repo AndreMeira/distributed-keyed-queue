@@ -3,6 +3,7 @@ package homelab.keyedqueue.domain.types
 
 import java.nio.charset.StandardCharsets
 import java.util.Base64
+import zio.prelude.*
 
 
 /**
@@ -42,9 +43,7 @@ object Obfuscated:
      * @return the parts, in the order they were encoded, or `None` when any of them is not base64url
      */
     def decoded: Option[Seq[String]] =
-      value.split('.').toSeq.map(decodedPart) match
-        case seq if seq.contains(None) => None
-        case seq                       => Some(seq.flatten)
+      value.split('.').toList.forEach(decodedPart)
 
   /**
    * One part, encoded.
