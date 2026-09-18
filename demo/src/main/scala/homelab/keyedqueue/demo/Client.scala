@@ -39,7 +39,7 @@ final case class Client(stub: KeyedQueueClient):
               key = key,
               messageId = s"$key/$body",
               payloadType = "demo.Text/v1",
-              encoding = Encoding.ENCODING_JSON,
+              encoding = "application/json",
               payload = ByteString.copyFromUtf8(body),
             )
           ),

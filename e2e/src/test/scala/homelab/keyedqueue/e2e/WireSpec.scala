@@ -70,6 +70,6 @@ object WireSpec extends ZIOSpecDefault:
       key = key,
       messageId = s"$key/$body",
       payloadType = "e2e.Text/v1",
-      encoding = Encoding.ENCODING_JSON,
+      encoding = "application/json",
       payload = ByteString.copyFromUtf8(body),
     )

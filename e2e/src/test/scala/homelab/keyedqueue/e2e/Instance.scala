@@ -47,7 +47,7 @@ final case class Instance(name: String, address: String, client: KeyedQueueClien
               key = key,
               messageId = s"$key/$body",
               payloadType = "e2e.Text/v1",
-              encoding = Encoding.ENCODING_JSON,
+              encoding = "application/json",
               payload = ByteString.copyFromUtf8(body),
             )
           ),
