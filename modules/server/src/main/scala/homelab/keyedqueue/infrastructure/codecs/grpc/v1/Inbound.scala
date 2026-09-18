@@ -5,7 +5,6 @@ import com.google.protobuf.ByteString
 import com.google.protobuf.duration.Duration as WireDuration
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.domain.model.queue.Message
-import homelab.keyedqueue.domain.model.queue.Message.Encoding
 import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
 import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, HeartbeatRequest, SettleRequest }
 import homelab.keyedqueue.domain.request.lock.*
@@ -21,7 +20,7 @@ import java.time.Instant
 /**
  * Wire to domain.
  *
- * Partial: a request that names no encoding, or carries no message at all, is refused here.
+ * Partial: a request that carries no message at all, or no outcome, is refused here.
  *
  * `uint32` decodes to a signed `Int`, so a batch size at or above 2^31 reaches the domain negative — which
  * is why `NegativeMaxBatch` is reachable at all.
@@ -47,13 +46,7 @@ object Inbound:
   private given Transformer[Option[WireDuration], Duration] =
     _.fold(Duration.Zero)(duration => Duration.fromSeconds(duration.seconds) + Duration.fromNanos(duration.nanos.toLong))
 
-  /** A message that does not say how to read it cannot be acted on. */
-  private given PartialTransformer[v1.Encoding, Encoding] = PartialTransformer:
-    case v1.Encoding.ENCODING_JSON     => partial.Result.fromValue(Encoding.Json)
-    case v1.Encoding.ENCODING_PROTOBUF => partial.Result.fromValue(Encoding.Protobuf)
-    case other                         => partial.Result.fromErrorString(s"unsupported encoding: ${other.name}")
-
-  /** Nor can one that does not say what the consumer decided. */
+  /** A settle that does not say what the consumer decided cannot be acted on. */
   private given PartialTransformer[v1.Outcome, Verdict] = PartialTransformer:
     case v1.Outcome.OUTCOME_DONE   => partial.Result.fromValue(Verdict.Done)
     case v1.Outcome.OUTCOME_FAILED => partial.Result.fromValue(Verdict.Failed)

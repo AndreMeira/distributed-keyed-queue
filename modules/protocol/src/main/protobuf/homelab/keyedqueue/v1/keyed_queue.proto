@@ -14,14 +14,6 @@ option (scalapb.options) = {
 };
 
 
-// How `payload` is serialised. UNSPECIFIED is rejected rather than guessed: a receiver that assumes a
-// format will one day decode garbage successfully.
-enum Encoding {
-  ENCODING_UNSPECIFIED = 0;
-  ENCODING_JSON        = 1;
-  ENCODING_PROTOBUF    = 2;
-}
-
 // The unit that travels and is stored. The queue name is NOT in here — it is the address a message was
 // sent to, not a property of the message (docs/research/redis-keyed-queue.md §3b).
 message Message {
@@ -30,7 +22,10 @@ message Message {
   // enqueue idempotent rather than a second copy. Required.
   string                    message_id   = 2;
   string                    payload_type = 3;  // stable schema name + version, never a class name
-  Encoding                  encoding     = 4;
+  // How `payload` is serialised, as a media type — `application/json`, `application/x-protobuf`, anything
+  // a consumer understands. Required: a receiver that assumes a format will one day decode garbage
+  // successfully. The queue never reads it.
+  string                    encoding     = 4;
   google.protobuf.Timestamp sent_at      = 5;  // sender clock: metrics, not decisions
   bytes                     payload      = 6;
 }

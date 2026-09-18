@@ -17,7 +17,7 @@ import java.time.Instant
  * @param messageId this message's own name: unique among those queued for its key, and what a settle or
  *                  a repeated enqueue is matched on
  * @param payloadType the payload's schema identity — a stable name and version, never a class name
- * @param encoding how `payload` is serialised
+ * @param encoding how `payload` is serialised, as a media type the queue never reads
  * @param sentAt the sender's clock: good for lag metrics, not for decisions
  * @param payload the cargo, which the queue never parses
  */
@@ -25,19 +25,7 @@ final case class Message(
   key: MessageKey,
   messageId: MessageId,
   payloadType: String,
-  encoding: Message.Encoding,
+  encoding: String,
   sentAt: Option[Instant],
   payload: Chunk[Byte],
 )
-
-
-object Message:
-
-  /**
-   * How a payload is serialised.
-   *
-   * Total by construction: a message that does not say how to read itself cannot be acted on, so that case
-   * is refused at the boundary rather than carried inwards for every later match to reject.
-   */
-  enum Encoding:
-    case Json, Protobuf

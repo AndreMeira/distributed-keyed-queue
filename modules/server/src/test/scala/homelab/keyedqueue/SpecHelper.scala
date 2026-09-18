@@ -4,7 +4,6 @@ package homelab.keyedqueue
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.lock.Claim as LockClaim
 import homelab.keyedqueue.domain.model.queue.{ Claim as QueueClaim, Grant, Message, Settlement }
-import homelab.keyedqueue.domain.model.queue.Message.Encoding
 import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
 import homelab.keyedqueue.domain.request.lock.AcquireRequest
 import homelab.keyedqueue.domain.request.queue.EnqueueRequest
@@ -67,7 +66,7 @@ object SpecHelper {
      * A message whose cargo is `body`: these tests care about order and ownership, not about content.
      */
     def message(key: MessageKey, body: String): Message =
-      Message(key, MessageId(body), "test.Text", Encoding.Json, None, Chunk.fromArray(body.getBytes("UTF-8")))
+      Message(key, MessageId(body), "test.Text", "application/json", None, Chunk.fromArray(body.getBytes("UTF-8")))
 
     /**
      * the payload of the message as a string
@@ -133,7 +132,7 @@ object SpecHelper {
         key = key,
         messageId = s"$key-$body",
         payloadType = "test.Message/v1",
-        encoding = v1.Encoding.ENCODING_JSON,
+        encoding = "application/json",
         payload = com.google.protobuf.ByteString.copyFromUtf8(body),
       )
 
@@ -153,7 +152,7 @@ object SpecHelper {
 
     /** A message as a request carries it, before anything has checked it. */
     def requestMessage(key: String, messageId: String = "m1"): EnqueueRequest.Message =
-      EnqueueRequest.Message(key, messageId, payloadType = "test.Text/v1", Encoding.Json, None, Chunk.empty)
+      EnqueueRequest.Message(key, messageId, payloadType = "test.Text/v1", "application/json", None, Chunk.empty)
 
     /**
      * Run a layout effect the way boot does: on the suite's connection.

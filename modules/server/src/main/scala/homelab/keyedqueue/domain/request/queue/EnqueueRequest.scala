@@ -1,7 +1,6 @@
 package homelab.keyedqueue.domain.request.queue
 
 
-import homelab.keyedqueue.domain.model.queue.Message.Encoding
 import homelab.keyedqueue.domain.types.{ MessageId, MessageKey }
 import zio.Chunk
 
@@ -33,7 +32,7 @@ object EnqueueRequest:
     key: String,
     messageId: String,
     payloadType: String,
-    encoding: Encoding,
+    encoding: String,
     sentAt: Option[Instant],
     payload: Chunk[Byte],
   )

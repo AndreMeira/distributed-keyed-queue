@@ -156,23 +156,24 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
   /**
    * A message the store can file: keyed, and addressable by its own name.
    *
-   * The two checks accumulate, so a message with neither comes back saying both. Everything else crosses
-   * unchanged — the payload is cargo, and `encoding` was made total at the wire.
+   * The three checks accumulate, so a message missing all of them comes back saying all three. Everything
+   * else crosses unchanged — the payload is cargo, and the queue reads neither it nor the encoding.
    *
    * `payloadType` is deliberately not checked here, matching what this service did before the parse
    * existed. An empty one is storable and meaningless, which is worth refusing one day; doing it now would
    * hide a contract change inside a refactor.
    *
    * @param message the message as it arrived
-   * @return it in domain terms; accumulates `EmptyMessageKey` and `EmptyMessageId`
+   * @return it in domain terms; accumulates `EmptyMessageKey`, `EmptyMessageId` and `EmptyEncoding`
    */
   private def message(message: EnqueueRequest.Message): Validated[Message] =
     Validation
       .validate(
         nonEmptyString(message.key, InvalidInput.EmptyMessageKey).map(MessageKey.apply),
         nonEmptyString(message.messageId, InvalidInput.EmptyMessageId).map(MessageId.apply),
+        nonEmptyString(message.encoding, InvalidInput.EmptyEncoding),
       )
-      .map((key, id) => Message(key, id, message.payloadType, message.encoding, message.sentAt, message.payload))
+      .map((key, id, encoding) => Message(key, id, message.payloadType, encoding, message.sentAt, message.payload))
 
   /**
    * The same id must not be named twice in one settle.
