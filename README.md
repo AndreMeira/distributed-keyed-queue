@@ -218,6 +218,8 @@ Known gaps:
   what it deliberately does not promise
 - [`docs/architecture/lock-mechanics.md`](docs/architecture/lock-mechanics.md) — how the lock works: three
   states, the script that performs each move, and how a waiter waits
+- [`docs/learning-material/running-the-image.md`](docs/learning-material/running-the-image.md) — pulling
+  the image and deploying it, including the grace period that must exceed `max-wait`
 - [`docs/README.md`](docs/README.md) — the full index
 
 ## Licence

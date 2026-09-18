@@ -1,12 +1,12 @@
 # CD: on push to main, run the same suite a PR runs, then build the image and push it to GHCR.
 #
-# Modelled on registration-service's build-deploy.yml, with two differences, both deliberate:
+# Modelled on the pattern the homelab's deployed services use, with two differences, both deliberate:
 #
 #   1. The image is built by `sbt server/Docker/publish`, not docker/build-push-action. This service has no
 #      hand-written Dockerfile on purpose (see build.sbt) — sbt-native-packager generates it, so the image
 #      pushed here is the one `publishLocal` gives a developer and the one the end-to-end suite composes.
-#   2. There is no config-repo bump, because there is no manifest to bump: nothing in homelab-cluster
-#      deploys this yet. When that lands, the step that follows this one is the tag write ArgoCD watches.
+#   2. There is no config-repo bump, because there is no manifest to bump: nothing deploys this yet.
+#      When that lands, the step that follows this one is the tag write ArgoCD watches.
 #
 # Tagged with the commit SHA and `latest`: the SHA is what a manifest should ever pin, `latest` is what the
 # compose files use so a developer can pull instead of build.

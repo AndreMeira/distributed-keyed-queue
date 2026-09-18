@@ -6,15 +6,21 @@
 name: tests
 
 on:
+  # Every branch but main. A merge to main runs this suite through build-deploy.yml, which gates the image
+  # push on it — triggering here as well would run it twice for one merge.
   push:
-    branches: ["**"]
+    branches-ignore: [main]
   pull_request:
-  # build-deploy.yml gates on this, so a push to main runs exactly the suite a PR ran.
+  # build-deploy.yml gates on this, so a merge to main runs exactly the suite a PR ran.
   workflow_call:
 
 # A second push to the same branch makes the first run's answer worthless.
+#
+# `github.workflow` is in the group because a called workflow reports its *caller's* name: without it a
+# direct run and a call would share a group, and `cancel-in-progress` would let one kill the other — which
+# for the call means `needs: test` never completes and the image never ships.
 concurrency:
-  group: tests-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

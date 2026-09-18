@@ -41,6 +41,8 @@ What is specific to this repo:
   - [`redis-state-walkthrough.md`](learning-material/redis-state-walkthrough.md) — every request traced
     through the structures it touches; the page for when something is stuck and you are looking at a live
     instance.
+  - [`running-the-image.md`](learning-material/running-the-image.md) — pulling the image and deploying it;
+    the grace period that must exceed `max-wait` is the part that bites.
   - [`interruption-and-lost-wakes.md`](learning-material/interruption-and-lost-wakes.md) — why a value
     returned to a dying fiber vanishes without any finalizer seeing it, and what a handover has to do
     instead.

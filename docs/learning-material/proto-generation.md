@@ -91,7 +91,7 @@ That worked, but it hand-rolled what `protoSources` already does, and it left th
 in directories named after Scala concerns. Pointing `protoSources` at the one directory and filtering does
 the same job with the plugin's own machinery, and puts the service definition beside the messages it uses.
 
-**`homelab-schemas` solves this differently**, with two top-level directories — `proto/` for messages,
+**Another homelab repo solves this differently**, with two top-level directories — `proto/` for messages,
 `proto-service/` for services — and no filters. That is the better shape when protos are the repo's whole
 purpose and nothing else lives there. Filters suit a service repo, where the protos are one part of
 something larger and a top-level directory per generator flavour would be noise.
