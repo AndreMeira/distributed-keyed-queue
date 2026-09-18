@@ -21,17 +21,9 @@ with the commit SHA and `latest`.
 docker pull ghcr.io/andremeira/distributed-keyed-queue:latest
 ```
 
-The package is meant to be public, in which case that is the whole story — no credential, unlike the Maven
-artifacts, which GitHub Packages serves only to authenticated callers whatever their visibility.
-
-If the pull is refused, the package has not been made public yet: GHCR publishes private by default and it
-is a one-time change, covered under [Letting the cluster pull](#letting-the-cluster-pull). Until then:
-
-```bash
-echo "$GITHUB_TOKEN" | docker login ghcr.io -u <your-github-user> --password-stdin
-```
-
-A classic PAT with `read:packages` is enough.
+That is the whole story: the package is public, so no credential. Worth contrasting with the Maven
+artifacts, which GitHub Packages serves only to authenticated callers whatever their visibility — a
+consumer of the contract still needs a PAT, a consumer of the image does not.
 
 **Pin the SHA for anything real.** `latest` moves on every merge, which is what a laptop wants and what a
 deployment does not.
@@ -75,10 +67,6 @@ spec:
     spec:
       # Must exceed DKQ_MAX_WAIT — see "The two numbers that must agree" below.
       terminationGracePeriodSeconds: 45
-      # Only if the package is private, which is the default. Your own `docker login` does not help here:
-      # the kubelet pulls, not you. See "Letting the cluster pull" below.
-      imagePullSecrets:
-        - name: ghcr
       containers:
         - name: dkq
           image: ghcr.io/andremeira/distributed-keyed-queue:<sha>
@@ -117,23 +105,25 @@ is a queue that forgets. Cluster mode works — every key carries its queue's `{
 
 ## Letting the cluster pull
 
-**This image is meant to be public**, like the source and the contract artifacts, so most of the time
-there is nothing to do here and `imagePullSecrets` can come out of the manifest.
+**Nothing, as things stand.** The image is public, so the manifest above needs no `imagePullSecrets` and
+the kubelet pulls it anonymously.
 
-It is not automatic, though. GHCR publishes private by default and offers no API to change it, so the
-package created by the first `build-deploy` run has to be flipped once by hand: repo → **Packages** → the
-package → **Change visibility** → Public. Every later push stays public.
+It came out that way on its own: a workflow in a public repository published it with `GITHUB_TOKEN`, so
+GHCR linked the package to the repository and it inherited that visibility. Not a rule to lean on blindly
+for other registries — GitHub's own documentation describes packages as private by default, and that is
+true of ones published without a repository link.
 
-Check which you have:
+Visibility is a package setting, so someone can change it. To see which you have:
 
 ```bash
 docker logout ghcr.io
 docker pull ghcr.io/andremeira/distributed-keyed-queue:latest
 ```
 
-If it is private, the cluster needs authenticating — the kubelet does the pulling, so a `docker login` on
-your workstation does nothing for it, and the pods sit in `ImagePullBackOff`. Give the namespace a pull
-secret:
+Refused means private, changeable under repo → **Packages** → the package → **Change visibility**. A private
+image needs the cluster authenticated — the kubelet does the pulling, so a `docker login` on your
+workstation does nothing for it, and the pods sit in `ImagePullBackOff`. That needs `imagePullSecrets:
+[{name: ghcr}]` on the pod spec, and the secret itself:
 
 ```bash
 kubectl create secret docker-registry ghcr \
