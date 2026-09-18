@@ -73,6 +73,10 @@ spec:
     spec:
       # Must exceed DKQ_MAX_WAIT — see "The two numbers that must agree" below.
       terminationGracePeriodSeconds: 45
+      # Only if the package is private, which is the default. Your own `docker login` does not help here:
+      # the kubelet pulls, not you. See "Letting the cluster pull" below.
+      imagePullSecrets:
+        - name: ghcr
       containers:
         - name: dkq
           image: ghcr.io/andremeira/distributed-keyed-queue:<sha>
@@ -108,6 +112,24 @@ share nothing but Redis.
 **Redis is required and is not in here.** dkq stores everything in it; a `Deployment` with no persistence
 is a queue that forgets. Cluster mode works — every key carries its queue's `{q:<queue>}` hash tag — but
 `DKQ_CLUSTER=true` has to say so.
+
+## Letting the cluster pull
+
+A GHCR package is private until someone makes it public, and a private one needs the cluster
+authenticated — the kubelet does the pulling, so a `docker login` on your workstation does nothing for it.
+Without this the pods sit in `ImagePullBackOff`.
+
+Either make the package public, in the repo's **Packages** settings, and drop `imagePullSecrets` from the
+manifest — reasonable for something whose source is public anyway — or give the namespace a pull secret:
+
+```bash
+kubectl create secret docker-registry ghcr \
+  --docker-server=ghcr.io \
+  --docker-username=<your-github-user> \
+  --docker-password="$GITHUB_TOKEN"     # classic PAT with read:packages
+```
+
+The secret is per namespace, so it has to exist in whichever namespace the deployment lands in.
 
 ## The two numbers that must agree
 
