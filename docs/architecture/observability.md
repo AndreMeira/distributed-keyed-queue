@@ -78,7 +78,8 @@ queue a consumer holds claims in.
 
 ## The lock's numbers
 
-The lock's three RPCs are measured the same way (`LockService.acquire`/`release`/`refresh`), and
+The lock's four RPCs are measured the same way (`LockService.acquire`/`tryAcquire`/`release`/`refresh`),
+and
 **`acquire` is `dequeue`'s sibling, caveat included**: a fair lock's acquire waits by design, up to the
 caller's `max_wait`, so on a contended lock its p99 approaches `max_wait` and that is healthy. Give it its
 own panel; alert on `release` and `refresh` only. The same two-population reading applies — grants that

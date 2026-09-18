@@ -43,8 +43,11 @@ object GrpcSpec extends ZIOSpecDefault:
         )
       },
       test("try-acquire over the wire: taken when free, refused when held, refused when queued for") {
-        // The verb that says no instead of waiting. The third case is the one a client cannot predict:
-        // the holder has gone, so the lock is free — but somebody is queued, and arrival order decides.
+        // The verb that says no instead of waiting, over the wire. `barging` asks *after* the holder let
+        // go, so what refuses it is whichever came first: the waiter's ticket still queued, or that same
+        // waiter having already won. Which one is a race, so this asserts only that it was refused — the
+        // queued-and-still-refused case is pinned deterministically in LockTryAcquireUseCaseSpec, where a
+        // ticket can be placed with nobody racing to claim it.
         for
           lock     <- ZIO.service[KeyedLockClient]
           secs      = (n: Int) => Some(ProtoDuration(n.toLong))
@@ -52,16 +55,16 @@ object GrpcSpec extends ZIOSpecDefault:
           refused  <- lock.tryAcquire(TryAcquireRequest("try", secs(30)))
           queueing <- lock.acquire(AcquireRequest("try", secs(30), secs(5))).fork
           _        <- ZIO.sleep(300.millis)
-          barging  <- lock.tryAcquire(TryAcquireRequest("try", secs(30)))
           _        <- lock.release(ReleaseRequest(taken.receipt))
+          barging  <- lock.tryAcquire(TryAcquireRequest("try", secs(30)))
           waited   <- queueing.join
           noName   <- lock.tryAcquire(TryAcquireRequest("", secs(30))).exit
         yield assertTrue(
           taken.acquired,
           taken.fence > 0L,
-          !refused.acquired,
-          !barging.acquired, // free the moment the holder released, but a ticket was ahead of it
-          waited.acquired,   // and that ticket is what got it
+          !refused.acquired, // held
+          !barging.acquired, // no longer held, and still not this caller's to take
+          waited.acquired,   // the ticket is what got it
           noName.isFailure,
         )
       },
