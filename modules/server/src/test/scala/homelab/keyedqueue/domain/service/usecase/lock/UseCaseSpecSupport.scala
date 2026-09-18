@@ -26,4 +26,15 @@ object UseCaseSpecSupport {
   lazy val layer: ZLayer[LockStore & LockReadiness, Nothing, LockAcquireUseCase] =
     ZLayer.fromFunction: (store: LockStore, readiness: LockReadiness) =>
       LockAcquireUseCase(store, LockInputValidation(limits), readiness)
+
+  /**
+   * The try-acquire use case, over the store already in the environment.
+   *
+   * No readiness: nothing here waits, so there is nothing to be woken.
+   *
+   * @return the layer
+   */
+  lazy val tryAcquireLayer: ZLayer[LockStore, Nothing, LockTryAcquireUseCase] =
+    ZLayer.fromFunction: (store: LockStore) =>
+      LockTryAcquireUseCase(store, LockInputValidation(limits))
 }

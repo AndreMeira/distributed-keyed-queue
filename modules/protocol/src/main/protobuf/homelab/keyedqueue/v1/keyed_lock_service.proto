@@ -1,4 +1,4 @@
-// The lock service: acquire (blocking), release, refresh — the sibling of KeyedQueue, on the same
+// The lock service: acquire (blocking), try-acquire, release, refresh — the sibling of KeyedQueue, on the same
 // per-key-exclusive-lease core. Design and rationale: docs/research/distributed-lock.md
 syntax = "proto3";
 
@@ -14,6 +14,10 @@ option (scalapb.options) = {
 service KeyedLock {
   // Take the named lock, blocking up to max_wait for a holder to release it.
   rpc Acquire(AcquireRequest) returns (AcquireResponse);
+
+  // Take the named lock if it is free and unqueued right now, refusing rather than waiting. Answers in the
+  // same shape as Acquire: `acquired = false` means somebody holds it, or somebody is already queued for it.
+  rpc TryAcquire(TryAcquireRequest) returns (AcquireResponse);
 
   // Release a lock this caller holds, so a waiter may take it.
   rpc Release(ReleaseRequest) returns (ReleaseResponse);

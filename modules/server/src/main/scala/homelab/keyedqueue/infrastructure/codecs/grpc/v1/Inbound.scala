@@ -95,6 +95,10 @@ object Inbound:
     /** @return the domain request; total, because validation happens in the use case, not the codec */
     def toDomain: AcquireRequest = request.transformInto[AcquireRequest]
 
+  extension (request: v1.TryAcquireRequest)
+    /** @return the domain request */
+    def toDomain: TryAcquireRequest = request.transformInto[TryAcquireRequest]
+
   extension (request: v1.ReleaseRequest)
     /** @return the domain request */
     def toDomain: ReleaseRequest = request.transformInto[ReleaseRequest]
