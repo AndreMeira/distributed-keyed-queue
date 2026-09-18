@@ -11,10 +11,9 @@
 # Tagged with the commit SHA and `latest`: the SHA is what a manifest should ever pin, `latest` is what the
 # compose files use so a developer can pull instead of build.
 #
-# THE FIRST RUN LEAVES A PRIVATE PACKAGE. GHCR publishes private by default and there is no API to change
-# it — the linked repository's permissions are inherited, its visibility is not. Flip it once by hand
-# (repo -> Packages -> the package -> Change visibility -> Public) and every later push stays public. Until
-# that is done the image exists and nobody outside can pull it, which looks like a broken push and is not.
+# The package is public without anyone asking for it: published from a public repository with GITHUB_TOKEN,
+# so GHCR links it to the repository and it inherits that visibility. There is no API to change visibility
+# if that is ever wanted — it is a setting under repo -> Packages -> the package.
 #
 # Credentials — the two halves are separate and must not be merged:
 #   - sbt RESOLVES the homelab toolkit from another repo's Maven registry, which needs read:packages.
