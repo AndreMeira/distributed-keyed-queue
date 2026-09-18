@@ -5,7 +5,6 @@ import com.google.protobuf.ByteString
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.domain.model.queue.Claim
 import homelab.keyedqueue.domain.model.queue.Message
-import homelab.keyedqueue.domain.model.queue.Message.Encoding
 import homelab.keyedqueue.domain.response.lock.{ AcquireResponse, RefreshResponse, ReleaseResponse }
 import homelab.keyedqueue.domain.response.queue.*
 import homelab.keyedqueue.domain.response.queue.SettleResponse.Applied
@@ -58,10 +57,6 @@ object Outbound:
 
   private given Transformer[Instant, Option[Timestamp]] =
     instant => Some(Timestamp(seconds = instant.getEpochSecond, nanos = instant.getNano))
-
-  private given Transformer[Encoding, v1.Encoding] =
-    case Encoding.Json     => v1.Encoding.ENCODING_JSON
-    case Encoding.Protobuf => v1.Encoding.ENCODING_PROTOBUF
 
   private given Transformer[Applied, v1.Applied] =
     case Applied.Ok    => v1.Applied.APPLIED_OK

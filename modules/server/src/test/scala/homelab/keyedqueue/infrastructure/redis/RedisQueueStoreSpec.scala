@@ -5,7 +5,6 @@ import homelab.common.error.ApplicationError
 import homelab.keyedqueue.SpecHelper
 import homelab.keyedqueue.SpecHelper.Helper
 import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Message, Settlement, Submission }
-import homelab.keyedqueue.domain.model.queue.Message.Encoding
 import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.*

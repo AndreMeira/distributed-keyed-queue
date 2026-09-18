@@ -117,7 +117,7 @@ object GrpcSpec extends ZIOSpecDefault:
       test("a message with no encoding is refused, and one with no key too") {
         for
           client  <- ZIO.service[KeyedQueueClient]
-          noCodec <- client.enqueue(EnqueueRequest("bad", Some(Helper.wireMessage("k1", "x").copy(encoding = Encoding.ENCODING_UNSPECIFIED)))).exit
+          noCodec <- client.enqueue(EnqueueRequest("bad", Some(Helper.wireMessage("k1", "x").copy(encoding = "")))).exit
           noKey   <- client.enqueue(EnqueueRequest("bad", Some(Helper.wireMessage("", "x")))).exit
         yield assertTrue(noCodec.isFailure, noKey.isFailure)
       },

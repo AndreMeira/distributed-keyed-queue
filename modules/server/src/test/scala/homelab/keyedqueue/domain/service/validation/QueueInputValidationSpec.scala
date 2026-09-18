@@ -6,7 +6,6 @@ import homelab.keyedqueue.SpecHelper.Helper
 import homelab.common.error.ValidationError
 import homelab.keyedqueue.domain.error.InvalidInput
 import homelab.keyedqueue.domain.model.queue.{ Claim, Demand, Message, Renewal, Settlement, Submission }
-import homelab.keyedqueue.domain.model.queue.Message.Encoding
 import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
 import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, SettleRequest }
 import homelab.keyedqueue.domain.request.lock.*
@@ -117,7 +116,7 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
         parsed.toEither == Right(
           Submission(
             QueueName("jobs"),
-            Message(MessageKey("k1"), MessageId("m1"), "test.Text/v1", Encoding.Json, None, Chunk.empty),
+            Message(MessageKey("k1"), MessageId("m1"), "test.Text/v1", "application/json", None, Chunk.empty),
           )
         )
       )

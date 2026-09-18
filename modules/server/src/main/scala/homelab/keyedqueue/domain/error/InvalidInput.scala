@@ -20,6 +20,9 @@ enum InvalidInput extends ValidationError.InvalidInput:
   /** A message arrived without an id. Two under one id, for one key, are one message. */
   case EmptyMessageId
 
+  /** A message arrived without an encoding. Nothing can read a payload whose format is unstated. */
+  case EmptyEncoding
+
   /** A settle named an empty id among the messages it reported on. */
   case EmptyDiscardId
 
@@ -67,6 +70,7 @@ enum InvalidInput extends ValidationError.InvalidInput:
     case EmptyQueueName     => "a queue name is required"
     case EmptyMessageKey    => "a message key is required: it is what ordering is defined by"
     case EmptyMessageId     => "a message id is required: it is what a message is addressed by"
+    case EmptyEncoding      => "an encoding is required: it is how a consumer knows to read the payload"
     case EmptyDiscardId     => "a discarded message must be named"
     case DuplicateDiscardId => "the same message was named twice to discard"
     case UnreadableReceipt  => "the receipt is not one this service issued"
