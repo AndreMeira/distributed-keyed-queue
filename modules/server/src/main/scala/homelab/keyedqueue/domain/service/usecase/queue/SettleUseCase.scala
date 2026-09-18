@@ -36,8 +36,7 @@ final class SettleUseCase(store: QueueStore, validation: QueueInputValidation):
    *         `ApplicationError` when the store fails
    */
   def apply(request: SettleRequest): IO[ApplicationError, SettleResponse] =
-    validation.parse(request).orFail.flatMap { settlement =>
-      store.settle(settlement).map { applied =>
-        SettleResponse(if applied then Applied.Ok else Applied.Stale)
-      }
-    }
+    for
+      settlement <- validation.parse(request).orFail
+      applied    <- store.settle(settlement)
+    yield SettleResponse(if applied then Applied.Ok else Applied.Stale)

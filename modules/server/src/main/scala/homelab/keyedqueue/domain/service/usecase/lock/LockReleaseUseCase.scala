@@ -29,4 +29,7 @@ final class LockReleaseUseCase(store: LockStore, validation: LockInputValidation
    *         issued, or with `ApplicationError` when the store fails
    */
   def apply(request: ReleaseRequest): IO[ApplicationError, ReleaseResponse] =
-    validation.parse(request).orFail.flatMap(claim => store.release(claim).map(ReleaseResponse.apply))
+    for
+      claim    <- validation.parse(request).orFail
+      released <- store.release(claim)
+    yield ReleaseResponse(released)

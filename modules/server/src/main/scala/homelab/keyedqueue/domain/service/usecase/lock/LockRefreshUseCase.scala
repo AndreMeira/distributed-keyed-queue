@@ -28,10 +28,7 @@ final class LockRefreshUseCase(store: LockStore, validation: LockInputValidation
    *         malformed, or with `ApplicationError` when the store fails
    */
   def apply(request: RefreshRequest): IO[ApplicationError, RefreshResponse] =
-    validation.parse(request).orFail.flatMap {
-      case (claim, ttl) =>
-        store.refresh(claim, ttl).map {
-          case (until, renewed) =>
-            if renewed then RefreshResponse.Renewed(until) else RefreshResponse.Lost
-        }
-    }
+    for
+      (claim, ttl)     <- validation.parse(request).orFail
+      (until, renewed) <- store.refresh(claim, ttl)
+    yield if renewed then RefreshResponse.Renewed(until) else RefreshResponse.Lost
