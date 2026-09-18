@@ -9,6 +9,8 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  # build-deploy.yml gates on this, so a push to main runs exactly the suite a PR ran.
+  workflow_call:
 
 # A second push to the same branch makes the first run's answer worthless.
 concurrency:

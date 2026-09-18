@@ -31,7 +31,7 @@ services:
       retries: 15
 
   dkq-a: &dkq
-    image: distributed-keyed-queue:latest # built by `sbt Docker/publishLocal`
+    image: ghcr.io/andremeira/distributed-keyed-queue:latest # `sbt server/Docker/publishLocal`, or pulled
     ports:
       - "9101:9000"
     environment:

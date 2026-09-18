@@ -1,0 +1,74 @@
+# CD: on push to main, run the same suite a PR runs, then build the image and push it to GHCR.
+#
+# Modelled on registration-service's build-deploy.yml, with two differences, both deliberate:
+#
+#   1. The image is built by `sbt server/Docker/publish`, not docker/build-push-action. This service has no
+#      hand-written Dockerfile on purpose (see build.sbt) — sbt-native-packager generates it, so the image
+#      pushed here is the one `publishLocal` gives a developer and the one the end-to-end suite composes.
+#   2. There is no config-repo bump, because there is no manifest to bump: nothing in homelab-cluster
+#      deploys this yet. When that lands, the step that follows this one is the tag write ArgoCD watches.
+#
+# Tagged with the commit SHA and `latest`: the SHA is what a manifest should ever pin, `latest` is what the
+# compose files use so a developer can pull instead of build.
+#
+# Credentials — the two halves are separate and must not be merged:
+#   - sbt RESOLVES the homelab toolkit from another repo's Maven registry, which needs read:packages.
+#   - docker PUSHES to this repo's own registry, which the built-in GITHUB_TOKEN may do given packages:write.
+# They do not collide the way the Maven publish does (see release.yml): docker/login-action writes the
+# daemon's credentials, sbt reads its own from the environment.
+name: build-deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The exact suite a PR runs; the image is gated on it.
+  test:
+    uses: ./.github/workflows/tests.yml
+    secrets: inherit
+
+  build-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write # push the image to GHCR with the built-in token
+    env:
+      # RELEASE_VERSION is what build.sbt reads for `version`, and therefore what tags the image. The SHA
+      # is immutable, which is the property a deployment wants from a tag.
+      RELEASE_VERSION: ${{ github.sha }}
+      # Read credentials for sbt: the toolkit resolves from GitHub Packages, which serves Maven only to
+      # authenticated callers. Same fallback as tests.yml.
+      GITHUB_ACTOR: ${{ github.actor }}
+      GITHUB_TOKEN: ${{ secrets.HOMELAB_PACKAGES_PAT || secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 21 because that is what the service runs on in its image (see build.sbt, dockerBaseImage).
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: sbt
+
+      # sbt is no longer preinstalled on the runner images.
+      - uses: sbt/setup-sbt@v1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # The built-in token, not the read PAT: this is a write to this repo's own registry.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushes ghcr.io/andremeira/distributed-keyed-queue at both the SHA and `latest`
+      # (dockerUpdateLatest in build.sbt).
+      - name: Build and push the image
+        run: sbt -batch -no-colors server/Docker/publish

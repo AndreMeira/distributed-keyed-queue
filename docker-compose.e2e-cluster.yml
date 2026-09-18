@@ -50,7 +50,7 @@ services:
         until valkey-cli -h valkey-0 cluster info | grep -q cluster_state:ok; do sleep 1; done
 
   dkq-a: &dkq
-    image: distributed-keyed-queue:latest # built by `sbt Docker/publishLocal`
+    image: ghcr.io/andremeira/distributed-keyed-queue:latest # `sbt server/Docker/publishLocal`, or pulled
     ports:
       - "9111:9000"
     environment:
