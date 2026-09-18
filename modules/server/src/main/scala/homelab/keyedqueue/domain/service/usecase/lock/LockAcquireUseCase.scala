@@ -131,11 +131,7 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
         patienceLeft
           .flatMap:
             case None           => ZIO.succeed(GivenUp)
-            case Some(patience) =>
-              awaitTurn(patience).map:
-                case _ -> Turn.Gone          => Demanding(waiter, patience)
-                case _ -> Turn.Granted(hold) => Granted(hold)
-                case now -> Turn.Wait(delay) => Queued(waiter, ticket, now.plus(atLeastFloor(delay)))
+            case Some(patience) => awaitTurn(patience)
           .onExit:
             case Exit.Success(_: Queued)  => ZIO.unit
             case Exit.Success(_: Granted) => ZIO.unit
@@ -150,7 +146,7 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
         Clock.instant.map: now =>
           val elapsed = Duration.fromInterval(waiter.asked, now)
           val left    = waiter.demand.patience.minus(elapsed)
-          Option.when(left.toMillis > 0)(left)
+          Option.when(left > Duration.Zero)(left)
 
       /**
        * Park until the next event or a wake, then ask whether it is this ticket's turn.
@@ -159,17 +155,20 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
        * delay counts from.
        *
        * @param patience the patience remaining, which bounds the park
-       * @return when the ask was made, and what the store answered; aborts with an `AdapterError` when the
-       *         store fails
+       * @return the state the ask leaves the wait in: the lock, a later recheck, or a fresh start when the
+       *         queue no longer knows this ticket; aborts with an `AdapterError` when the store fails
        */
-      private def awaitTurn(patience: Duration): IO[AdapterError, (Instant, Turn)] =
+      private def awaitTurn(patience: Duration): IO[AdapterError, AcquireLifecycle] =
         for
           // The shorter of the patience left and the next recheck from now.
           timeout <- Clock.instant.map(now => Duration.fromInterval(now, recheckAt) min patience)
           _       <- waiter.signal.await.timeout(timeout).unless(timeout <= Duration.Zero)
-          asking  <- Clock.instant
+          now     <- Clock.instant
           answer  <- store.ask(waiter.demand.name, waiter.demand.ttl, ticket)
-        yield asking -> answer
+        yield answer match
+          case Turn.Gone          => Demanding(waiter, patience)
+          case Turn.Granted(hold) => Granted(hold)
+          case Turn.Wait(delay)   => Queued(waiter, ticket, now.plus(atLeastFloor(delay)))
 
     /**
      * Wait for the lock from the first ask until it is held or the patience is spent.

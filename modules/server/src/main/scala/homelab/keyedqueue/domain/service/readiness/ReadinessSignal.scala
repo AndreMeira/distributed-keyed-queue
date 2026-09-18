@@ -10,7 +10,7 @@ import homelab.keyedqueue.domain.types.{ LockName, QueueName }
  * so a reader that fell off its position knows only that anything may have been missed — which its consumer
  * can act on.
  */
-enum Wake:
+enum ReadinessSignal:
 
   /**
    * A queue that may have work.
@@ -36,7 +36,7 @@ enum Wake:
   case Gap
 
 
-object Wake:
+object ReadinessSignal:
 
   /**
    * The wake an entry's two fields state.
@@ -48,7 +48,7 @@ object Wake:
    * @param name the entry's `name` field
    * @return the wake, absent when no kind goes by that token
    */
-  def read(kind: String, name: String): Option[Wake] = kind match
+  def read(kind: String, name: String): Option[ReadinessSignal] = kind match
     case "q" => Some(Queue(QueueName(name)))
     case "l" => Some(Lock(LockName(name)))
     case _   => None

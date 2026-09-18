@@ -2,7 +2,7 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.messaging.Consumer
-import homelab.keyedqueue.domain.service.readiness.Wake
+import homelab.keyedqueue.domain.service.readiness.{ ReadinessSignal, ReadinessSignalConsumer }
 import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, RedisKey }
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript
 import io.lettuce.core.XReadArgs.StreamOffset
@@ -13,8 +13,8 @@ import scala.jdk.CollectionConverters.*
 
 
 /**
- * The wake streams, as a [[Consumer.Batched]] of [[Wake]]s: everything about Redis that the wake path needs,
- * behind one `consume`.
+ * The wake streams, as a [[Consumer.Batched]] of [[ReadinessSignal]]s: everything about Redis that the
+ * wake path needs, behind one `consume`.
  *
  * One reader per partition — a blocking `XREAD` holds its connection for the whole wait and may not span
  * slots — feeding one queue that `consume` drains, so a caller sees a single intake however the streams are
@@ -34,9 +34,9 @@ final class WakeConsumer(
   connection: Connection,
   layout: KeyLayout,
   positions: Ref[Map[RedisKey, WakeConsumer.EntryId]],
-  wakes: Queue[Wake],
+  wakes: Queue[ReadinessSignal],
   block: Duration,
-) extends Consumer.Batched[RedisFailure, Wake]:
+) extends ReadinessSignalConsumer:
 
   /**
    * Take everything that has arrived, waiting for the first, and hand it over as one batch.
@@ -45,7 +45,7 @@ final class WakeConsumer(
    * @tparam E2 the widened error, admitting `logic`'s failures
    * @return noop once the batch is handled
    */
-  override def consume[E2 >: RedisFailure](logic: List[Wake] => IO[E2, Unit]): IO[E2, Unit] =
+  override def consume[E2 >: RedisFailure](logic: List[ReadinessSignal] => IO[E2, Unit]): IO[E2, Unit] =
     wakes.takeBetween(1, WakeConsumer.drain).flatMap(batch => logic(batch.distinct.toList))
 
   /**
@@ -107,7 +107,7 @@ final class WakeConsumer(
    * @return what the entries announce; one naming no known kind is dropped; aborts with `Unavailable` when
    *         the read fails
    */
-  private def read(partition: KeyLayout.Partition): IO[RedisFailure, Chunk[Wake]] =
+  private def read(partition: KeyLayout.Partition): IO[RedisFailure, Chunk[ReadinessSignal]] =
     for
       stream     = layout.wakeStream(partition)
       current   <- positions.get
@@ -227,7 +227,7 @@ object WakeConsumer:
    */
   def make(connection: Connection, layout: KeyLayout, block: Duration): ZIO[Scope, RedisFailure, WakeConsumer] =
     for
-      wakes     <- Queue.unbounded[Wake]
+      wakes     <- Queue.unbounded[ReadinessSignal]
       positions <- Ref.make(Map.empty[RedisKey, EntryId])
     yield WakeConsumer(connection, layout, positions, wakes, block)
 
@@ -240,12 +240,12 @@ object WakeConsumer:
    * @param entry one stream entry
    * @return what it announces, absent when either field cannot be read
    */
-  private def wakeOf(entry: StreamMessage[String, Array[Byte]]): Option[Wake] =
+  private def wakeOf(entry: StreamMessage[String, Array[Byte]]): Option[ReadinessSignal] =
     for
       body <- Option(entry.getBody)
       kind <- Option(body.get("kind")).map(field)
       name <- Option(body.get("name")).map(field)
-      wake <- Wake.read(kind, name)
+      wake <- ReadinessSignal.read(kind, name)
     yield wake
 
   /**

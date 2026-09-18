@@ -68,7 +68,7 @@ first consumer would wait out its whole patience beside work that was already th
 ## Where the wake comes from
 
 `WakeConsumer` blocks on `XREAD` over its partition's wake stream and hands what accumulated to
-`ReadinessProcessor`, which routes each entry by the kind it carries: queue entries to `QueueReadiness`,
+`ReadinessSignalProcessor`, which routes each entry by the kind it carries: queue entries to `QueueReadiness`,
 lock entries to `LockReadiness`. One stream feeds both, so a queue and a lock in the same partition share a
 connection and a reader.
 

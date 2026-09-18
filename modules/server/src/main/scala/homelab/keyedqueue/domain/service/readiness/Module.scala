@@ -9,8 +9,8 @@ import zio.*
 /**
  * Wiring for waiting: the two readinesses, and the routing that keeps them fed.
  *
- * Nothing here names a substrate. What reads the wakes is a [[Consumer.Batched]] of [[Wake]]s, which an
- * adapter supplies — see `docs/architecture/readiness-and-wake.md`.
+ * Nothing here names a substrate. What reads the wakes is a [[Consumer.Batched]] of
+ * [[ReadinessSignal]]s, which an adapter supplies — see `docs/architecture/readiness-and-wake.md`.
  */
 object Module:
 
@@ -18,7 +18,7 @@ object Module:
   type Provided = QueueReadiness & LockReadiness
 
   /** Where wakes come from, whichever substrate reads them. */
-  type Required = Consumer.Batched[ApplicationError.AdapterError, Wake]
+  type Required = ReadinessSignalConsumer
 
   /**
    * Start routing wakes into the two readinesses.
@@ -29,10 +29,10 @@ object Module:
    */
   def init: ZIO[Provided & Required & Scope, ApplicationError, Unit] =
     for
-      wakes      <- ZIO.service[Consumer.Batched[ApplicationError.AdapterError, Wake]]
+      wakes      <- ZIO.service[ReadinessSignalConsumer]
       queueReady <- ZIO.service[QueueReadiness]
       lockReady  <- ZIO.service[LockReadiness]
-      _          <- ReadinessProcessor(wakes, queueReady, lockReady).run.forkScoped.interruptible
+      _          <- ReadinessSignalProcessor(wakes, queueReady, lockReady).run.forkScoped.interruptible
     yield ()
 
   /**

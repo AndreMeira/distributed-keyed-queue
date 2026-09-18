@@ -3,9 +3,8 @@ package homelab.keyedqueue.infrastructure.redis
 
 import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
-import homelab.common.messaging.Consumer
 import homelab.keyedqueue.domain.service.persistence.LockStore
-import homelab.keyedqueue.domain.service.readiness.Wake
+import homelab.keyedqueue.domain.service.readiness.ReadinessSignalConsumer
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
@@ -22,11 +21,13 @@ import zio.*
 object Module:
 
   /**
-   * The ports, and the pieces [[init]] acts on: the connection it verifies over, the layout it checks, and
-   * the two readinesses the wake path feeds.
-   * Everything this module openly provides
+   * Everything this module openly provides: the two stores, and the pieces [[init]] acts on — the
+   * connection it verifies over, the layout it checks, and the consumer the wake path reads through.
+   *
+   * [[WakeConsumer]] is the readiness package's [[ReadinessSignalConsumer]], so a module requiring that
+   * port is served from here.
    */
-  type Provided = QueueStore & LockStore & Connection & KeyLayout & WakeConsumer & Consumer.Batched[ApplicationError.AdapterError, Wake]
+  type Provided = QueueStore & LockStore & Connection & KeyLayout & WakeConsumer
 
   /**
    * Everything this module needs.
@@ -79,18 +80,14 @@ object Module:
    *
    * @return the layer
    */
-  val wakes: ZLayer[
-    Connection & KeyLayout & QueueConfig,
-    ApplicationError,
-    WakeConsumer & Consumer.Batched[ApplicationError.AdapterError, Wake],
-  ] = ZLayer.scopedEnvironment:
-    for
-      connection <- ZIO.service[Connection]
-      layout     <- ZIO.service[KeyLayout]
-      config     <- ZIO.service[QueueConfig]
-      consumer   <- WakeConsumer.make(connection, layout, config.wakeBlock)
-    yield ZEnvironment[WakeConsumer](consumer) ++
-      ZEnvironment[Consumer.Batched[ApplicationError.AdapterError, Wake]](consumer)
+  val wakes: ZLayer[Connection & KeyLayout & QueueConfig, ApplicationError, WakeConsumer] =
+    ZLayer.scoped:
+      for
+        connection <- ZIO.service[Connection]
+        layout     <- ZIO.service[KeyLayout]
+        config     <- ZIO.service[QueueConfig]
+        consumer   <- WakeConsumer.make(connection, layout, config.wakeBlock)
+      yield consumer
 
   /**
    * The lock's scripts, registered at startup so a missing

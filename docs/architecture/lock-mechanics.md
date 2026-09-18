@@ -119,7 +119,7 @@ Two details make this sound rather than merely plausible:
 | `LockReadiness` | per-name mailboxes; a wake reaches **every** subscriber and is **dropped** if nobody waits |
 | `QueueReadiness` | the queue's counterpart, for contrast: one token to **one** consumer, and **kept** if nobody waits |
 | `WakeConsumer` | one blocking `XREAD` per partition, fanned into one batched intake |
-| `ReadinessProcessor` | routes each entry to one readiness by the kind it carries |
+| `ReadinessSignalProcessor` | routes each entry to one readiness by the kind it carries |
 | `LockCleanup` | the periodic `trim` — the only background pass the lock has |
 | `KeyLayout` / `LockKeys` | which partition a name falls in, and the keys that follow from it |
 
