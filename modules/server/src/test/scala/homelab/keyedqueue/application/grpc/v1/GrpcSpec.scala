@@ -42,6 +42,29 @@ object GrpcSpec extends ZIOSpecDefault:
           renewed.renewed,
         )
       },
+      test("try-acquire over the wire: taken when free, refused when held, refused when queued for") {
+        // The verb that says no instead of waiting. The third case is the one a client cannot predict:
+        // the holder has gone, so the lock is free — but somebody is queued, and arrival order decides.
+        for
+          lock     <- ZIO.service[KeyedLockClient]
+          secs      = (n: Int) => Some(ProtoDuration(n.toLong))
+          taken    <- lock.tryAcquire(TryAcquireRequest("try", secs(30)))
+          refused  <- lock.tryAcquire(TryAcquireRequest("try", secs(30)))
+          queueing <- lock.acquire(AcquireRequest("try", secs(30), secs(5))).fork
+          _        <- ZIO.sleep(300.millis)
+          barging  <- lock.tryAcquire(TryAcquireRequest("try", secs(30)))
+          _        <- lock.release(ReleaseRequest(taken.receipt))
+          waited   <- queueing.join
+          noName   <- lock.tryAcquire(TryAcquireRequest("", secs(30))).exit
+        yield assertTrue(
+          taken.acquired,
+          taken.fence > 0L,
+          !refused.acquired,
+          !barging.acquired, // free the moment the holder released, but a ticket was ahead of it
+          waited.acquired,   // and that ticket is what got it
+          noName.isFailure,
+        )
+      },
       test("enqueue, dequeue, settle — the loop a consumer writes") {
         for
           client  <- ZIO.service[KeyedQueueClient]

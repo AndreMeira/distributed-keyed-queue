@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.service.validation
 
 import homelab.keyedqueue.domain.error.InvalidInput
 import homelab.keyedqueue.domain.model.lock.Claim
-import homelab.keyedqueue.domain.request.lock.{ AcquireRequest, RefreshRequest, ReleaseRequest }
+import homelab.keyedqueue.domain.request.lock.{ AcquireRequest, RefreshRequest, ReleaseRequest, TryAcquireRequest }
 import homelab.keyedqueue.domain.types.*
 import zio.*
 import zio.test.*
@@ -33,6 +33,20 @@ object LockInputValidationSpec extends ZIOSpecDefault:
         && demand.ttl == 5.seconds
         && demand.patience == 10.seconds
       })
+    },
+    test("a well-formed try-acquire passes through unchanged") {
+      val parsed = validation.parse(TryAcquireRequest("resource", ttl = 5.seconds))
+      assertTrue(parsed.toEither.contains((LockName("resource"), 5.seconds)))
+    },
+    test("a try-acquire has no wait to check, and its ttl is clamped like an acquire's") {
+      val parsed = validation.parse(TryAcquireRequest("resource", ttl = 2.hours))
+      assertTrue(parsed.toEither.contains((LockName("resource"), 10.minutes)))
+    },
+    test("a try-acquire with two problems is refused once, naming both") {
+      val parsed = validation.parse(TryAcquireRequest("", ttl = Duration.Zero))
+      assertTrue(
+        parsed.toEither.left.exists(problems => problems.toSet == Set[InvalidInput](InvalidInput.EmptyLockName, InvalidInput.NonPositiveTtl))
+      )
     },
     test("both ceilings clamp: a ttl and a wait beyond them come back as the ceilings") {
       val parsed = validation.parse(AcquireRequest("resource", ttl = 2.hours, maxWait = 5.minutes))

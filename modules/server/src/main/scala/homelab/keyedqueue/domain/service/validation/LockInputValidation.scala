@@ -4,7 +4,7 @@ package homelab.keyedqueue.domain.service.validation
 import homelab.common.Validated
 import homelab.keyedqueue.domain.error.InvalidInput
 import homelab.keyedqueue.domain.model.lock.{ Demand, Claim }
-import homelab.keyedqueue.domain.request.lock.{ AcquireRequest, RefreshRequest, ReleaseRequest }
+import homelab.keyedqueue.domain.request.lock.{ AcquireRequest, RefreshRequest, ReleaseRequest, TryAcquireRequest }
 import homelab.keyedqueue.domain.service.validation.CommonValidation.nonEmpty as nonEmptyString
 import homelab.keyedqueue.domain.types.*
 import zio.prelude.Validation
@@ -40,6 +40,21 @@ final class LockInputValidation(config: LockInputValidation.Config):
         waiting(request.maxWait),
       )
       .map((name, ttl, patience) => Demand(name, ttl, patience))
+
+  /**
+   * Everything `TryAcquire` needs to be actionable.
+   *
+   * The name must be present and the hold positive, which is clamped to the service's ceiling. There is no
+   * wait to check. Both problems accumulate.
+   *
+   * @param request what the caller sent, untrusted
+   * @return the lock and how long to hold it; accumulates `EmptyLockName` and `NonPositiveTtl`
+   */
+  def parse(request: TryAcquireRequest): Validated[(LockName, Duration)] =
+    Validation.validate(
+      nonEmptyString(request.name, InvalidInput.EmptyLockName).map(LockName.apply),
+      holding(request.ttl),
+    )
 
   /**
    * The claim a `Release` names.

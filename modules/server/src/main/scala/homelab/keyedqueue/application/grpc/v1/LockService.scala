@@ -41,6 +41,17 @@ final class LockService(monitor: Monitor, useCases: LockUseCases) extends ZioKey
       useCases.acquire(request.toDomain).mapBoth(status, _.toProto)
 
   /**
+   * Take the named lock only if it is free right now.
+   *
+   * @param request the wire request
+   * @return the wire response; `acquired = false` when the lock is held or already queued for; aborts with
+   *         `INVALID_ARGUMENT` when the name is empty or the ttl is not positive
+   */
+  override def tryAcquire(request: v1.TryAcquireRequest): IO[StatusException, v1.AcquireResponse] =
+    monitor.measure("LockService.tryAcquire"):
+      useCases.tryAcquire(request.toDomain).mapBoth(status, _.toProto)
+
+  /**
    * Release a lock this caller holds.
    *
    * @param request the wire request

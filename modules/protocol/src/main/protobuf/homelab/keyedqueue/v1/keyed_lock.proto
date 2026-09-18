@@ -31,6 +31,12 @@ message AcquireResponse {
   google.protobuf.Timestamp lease_expires_at = 4;
 }
 
+// Take the lock only if it is free right now. No wait, so no max_wait: the answer is about this instant.
+message TryAcquireRequest {
+  string                   name = 1;  // the lock to take; empty is rejected
+  google.protobuf.Duration ttl  = 2;  // how long the hold survives without a refresh; required, > 0
+}
+
 message ReleaseRequest {
   string receipt = 1;  // the handle from Acquire
 }

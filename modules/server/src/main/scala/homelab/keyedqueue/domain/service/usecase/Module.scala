@@ -50,6 +50,7 @@ object Module:
     ZLayer.fromFunction: (store: LockStore, validation: LockInputValidation, readiness: LockReadiness) =>
       LockUseCases(
         acquire = LockAcquireUseCase(store, validation, readiness),
+        tryAcquire = LockTryAcquireUseCase(store, validation),
         release = LockReleaseUseCase(store, validation),
         refresh = LockRefreshUseCase(store, validation),
       )
