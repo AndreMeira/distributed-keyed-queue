@@ -31,7 +31,11 @@ services:
       retries: 15
 
   dkq-a: &dkq
-    image: distributed-keyed-queue:latest # built by `sbt Docker/publishLocal`
+    image: ghcr.io/andremeira/distributed-keyed-queue:latest
+    # Built by `sbt server/Docker/publishLocal`, never fetched: this stack exists to test *this* checkout,
+    # and a pulled `latest` would quietly test the last published image instead. Absent, it fails here
+    # rather than somewhere further in.
+    pull_policy: never
     ports:
       - "9101:9000"
     environment:

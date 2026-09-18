@@ -186,7 +186,7 @@ appearing or leaving is exactly an Endpoints change.
 
 ### Transport
 
-gRPC streaming, consistent with the rest of the homelab and `homelab-schemas` — each instance opens a
+gRPC streaming, consistent with the rest of the homelab — each instance opens a
 long-lived stream to each peer and pushes `(queue)` announcements. A dead peer's stream breaks and is
 dropped from the set on the next Endpoints change; a new peer's stream opens then. UDP multicast would be
 lighter but only works on one L2 segment and is a poor fit for k8s networking.

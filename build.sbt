@@ -179,6 +179,10 @@ lazy val server = project
     // Pinned rather than derived from `name`: the compose files and the cluster manifests name this image,
     // and they should not move because a module was renamed.
     Docker / packageName                      := "distributed-keyed-queue",
+    // Where `Docker/publish` pushes. This also names the image `publishLocal` builds, which is why the
+    // compose files spell it out in full: one name, whether it was built here or pulled.
+    dockerRepository                          := Some("ghcr.io"),
+    dockerUsername                            := Some("andremeira"),
     // Pinned to a JRE newer than any JDK likely to build this: class files travel forward, not back.
     dockerBaseImage                           := "eclipse-temurin:21-jre",
     dockerExposedPorts                        := Seq(9000),

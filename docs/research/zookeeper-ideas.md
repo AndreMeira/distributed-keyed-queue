@@ -44,7 +44,7 @@ than as one session record, but the consumer-facing behaviour is identical.
 **3. DKQ deliberately removed the per-consumer record the session idea would re-add.** `RenewScript` says it
 outright: *"A consumer is not a worker with a registration of its own: its claims are found by fence
 token."* The store has *"no per-connection identity and no recovery for one."* This was a chosen
-simplification — an earlier design (the homelab's `registration-service`) had worker registration, and DKQ
+simplification — an earlier homelab design had worker registration, and DKQ
 dropped it. A ZK-style session is precisely a worker registration under another name; stealing it walks back
 a decision made on purpose.
 
