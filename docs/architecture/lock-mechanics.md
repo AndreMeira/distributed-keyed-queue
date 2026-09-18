@@ -115,7 +115,7 @@ Two details make this sound rather than merely plausible:
 | piece | role |
 |---|---|
 | `LockAcquireUseCase` | the waiting: enter, hold a ticket, park until the next known event, ask again (`queued` → `awaitTurn` → `turn`) |
-| `RedisLockStore` | the adapter: one method per script, and no waiting — `enter`, `grant`, `withdraw`, `tryAcquire`, `release`, `refresh`, `trim` |
+| `RedisLockStore` | the adapter: one method per script, and no waiting — `place`, `ask`, `withdraw`, `tryAcquire`, `release`, `refresh`, `trim` |
 | `LockReadiness` | per-name mailboxes; a wake reaches **every** subscriber and is **dropped** if nobody waits |
 | `QueueReadiness` | the queue's counterpart, for contrast: one token to **one** consumer, and **kept** if nobody waits |
 | `WakeConsumer` | one blocking `XREAD` per partition, fanned into one batched intake |
