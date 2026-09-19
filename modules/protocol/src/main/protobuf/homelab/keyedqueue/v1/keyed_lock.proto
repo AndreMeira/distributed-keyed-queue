@@ -29,6 +29,10 @@ message AcquireResponse {
   // long holds, where a paused holder may lose the lock without knowing (docs/research/distributed-lock.md).
   uint64                    fence            = 3;
   google.protobuf.Timestamp lease_expires_at = 4;
+  // How long the lease runs, as granted. The service clamps a ttl longer than it allows, so this can be
+  // shorter than the request asked for; a holder times its refreshes from this, because the deadline above
+  // is on the service's clock and a holder's is its own.
+  google.protobuf.Duration  lease_ttl        = 5;
 }
 
 // Take the lock only if it is free right now. No wait, so no max_wait: the answer is about this instant.
@@ -51,4 +55,5 @@ message RefreshRequest {
 message RefreshResponse {
   bool                      renewed          = 1;  // false when the hold has been lost
   google.protobuf.Timestamp lease_expires_at = 2;
+  google.protobuf.Duration  lease_ttl        = 3;  // how long the new lease runs, as granted
 }

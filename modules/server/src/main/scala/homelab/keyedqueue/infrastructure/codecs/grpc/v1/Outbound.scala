@@ -2,6 +2,7 @@ package homelab.keyedqueue.infrastructure.codecs.grpc.v1
 
 
 import com.google.protobuf.ByteString
+import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.domain.model.queue.Claim
 import homelab.keyedqueue.domain.model.queue.Message
@@ -12,7 +13,7 @@ import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.v1
 import io.scalaland.chimney.Transformer
 import io.scalaland.chimney.dsl.*
-import zio.Chunk
+import zio.{ Chunk, Duration }
 
 import java.time.Instant
 
@@ -54,6 +55,9 @@ object Outbound:
 
   private given Transformer[Instant, Timestamp] =
     instant => Timestamp(seconds = instant.getEpochSecond, nanos = instant.getNano)
+
+  private given Transformer[Duration, ProtoDuration] =
+    duration => ProtoDuration(seconds = duration.getSeconds, nanos = duration.getNano)
 
   private given Transformer[Instant, Option[Timestamp]] =
     instant => Some(Timestamp(seconds = instant.getEpochSecond, nanos = instant.getNano))
@@ -111,9 +115,15 @@ object Outbound:
      * @return the wire response
      */
     def toProto: v1.AcquireResponse = response match
-      case AcquireResponse.Unavailable                    => v1.AcquireResponse(acquired = false)
-      case AcquireResponse.Granted(receipt, token, until) =>
-        v1.AcquireResponse(acquired = true, receipt, token, Some(until.transformInto[Timestamp]))
+      case AcquireResponse.Unavailable                         => v1.AcquireResponse(acquired = false)
+      case AcquireResponse.Granted(receipt, token, until, ttl) =>
+        v1.AcquireResponse(
+          acquired = true,
+          receipt,
+          token,
+          Some(until.transformInto[Timestamp]),
+          Some(ttl.transformInto[ProtoDuration]),
+        )
 
   extension (response: ReleaseResponse)
     /** @return the wire response */
@@ -122,5 +132,6 @@ object Outbound:
   extension (response: RefreshResponse)
     /** @return the wire response; a lost hold is `renewed = false` with no deadline */
     def toProto: v1.RefreshResponse = response match
-      case RefreshResponse.Lost           => v1.RefreshResponse(renewed = false)
-      case RefreshResponse.Renewed(until) => v1.RefreshResponse(renewed = true, Some(until.transformInto[Timestamp]))
+      case RefreshResponse.Lost                => v1.RefreshResponse(renewed = false)
+      case RefreshResponse.Renewed(until, ttl) =>
+        v1.RefreshResponse(renewed = true, Some(until.transformInto[Timestamp]), Some(ttl.transformInto[ProtoDuration]))

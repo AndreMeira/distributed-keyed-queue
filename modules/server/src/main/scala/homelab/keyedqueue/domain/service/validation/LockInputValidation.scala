@@ -101,11 +101,14 @@ final class LockInputValidation(config: LockInputValidation.Config):
    * unbounded ttl would let one caller make that arbitrarily late. A holder that needs longer refreshes.
    *
    * @param asked how long the caller wants the hold to survive
-   * @return that, or the ceiling, whichever is shorter; fails with `NonPositiveTtl` when it is not positive
+   * @return that, or the ceiling, whichever is shorter, to the millisecond the store keeps leases in;
+   *         fails with `NonPositiveTtl` when it is not positive
    */
   private def holding(asked: Duration): Validated[Duration] =
     if asked.toMillis <= 0 then Validation.fail(InvalidInput.NonPositiveTtl)
-    else Validation.succeed(if asked > config.maxTtl then config.maxTtl else asked)
+    else
+      val granted = if asked > config.maxTtl then config.maxTtl else asked
+      Validation.succeed(Duration.fromMillis(granted.toMillis))
 
 
 object LockInputValidation:

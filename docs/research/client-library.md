@@ -2,7 +2,7 @@
 title: "A client library: two layers, and what each is allowed to decide"
 type: research
 status: draft
-updated: 2026-09-18
+updated: 2026-09-19
 tags: [client, library, consumer, lock, zio-schema, api, ergonomics]
 ---
 
@@ -153,8 +153,8 @@ modules/client/src/main/scala/homelab/keyedqueue/client/
     LockClient.scala        the interface — one method per RPC
     GrpcLockClient.scala    the implementation over the generated stub
     Acquired.scala          Granted(hold) | Unavailable
-    Refreshed.scala         Renewed(leaseExpiresAt) | Lost
-    Hold.scala              receipt, fence, leaseExpiresAt
+    Refreshed.scala         Renewed(leaseExpiresAt, leaseTtl) | Lost
+    Hold.scala              receipt, fence, leaseExpiresAt, leaseTtl
     Receipt.scala           opaque String
     Fence.scala             opaque Long
   LockError.scala           what a call aborts with
@@ -182,10 +182,10 @@ enum Acquired:
   case Unavailable
 
 enum Refreshed:
-  case Renewed(leaseExpiresAt: Instant)
+  case Renewed(leaseExpiresAt: Instant, leaseTtl: Duration)
   case Lost
 
-final case class Hold(receipt: Receipt, fence: Fence, leaseExpiresAt: Instant)
+final case class Hold(receipt: Receipt, fence: Fence, leaseExpiresAt: Instant, leaseTtl: Duration)
 ```
 
 This is the service's outbound codec run backwards, and it is the layer's whole point. The wire says
@@ -193,6 +193,11 @@ This is the service's outbound codec run backwards, and it is the layer's whole 
 the transform **in** is partial for the same reason the service's is: `acquired = true` with no
 `lease_expires_at` is a message the client cannot hold, and is refused at the boundary rather than carried
 inwards as an `Option` every call site has to re-examine.
+
+`lease_ttl` was added to both responses ([#30](https://github.com/AndreMeira/distributed-keyed-queue/pull/30))
+once the managed layer needed a cadence: the service clamps a ttl past its ceiling, so the request is not
+the lease, and `lease_expires_at` is a reading of the service's clock that a holder cannot subtract its own
+from. A duration is neither — it is the one quantity both ends agree on, so the renewals are timed by it.
 
 ### Errors
 
