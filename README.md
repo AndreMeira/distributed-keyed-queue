@@ -117,9 +117,11 @@ service saw them ask, and a newcomer cannot barge past the queue. The full contr
 
 ## Using it from a service
 
-Two artifacts are published to GitHub Packages: `distributed-keyed-queue-protocol` (the message types) and
-`distributed-keyed-queue-protocol-zio-grpc` (the ZIO client and server stubs). What to depend on, how to
-authenticate to GitHub Packages, and what a consumer still has to write itself is in
+Three artifacts are published to GitHub Packages: `distributed-keyed-queue-protocol` (the message types),
+`distributed-keyed-queue-protocol-zio-grpc` (the ZIO client and server stubs), and
+`distributed-keyed-queue-client` (the lock as Scala types, with a managed form that holds the lease for
+you). What to depend on, how to authenticate to GitHub Packages, and what a consumer still has to write
+itself is in
 [`docs/learning-material/using-the-contract-as-a-dependency.md`](docs/learning-material/using-the-contract-as-a-dependency.md).
 
 Any gRPC client works — the contract ships as `.proto`, so a consumer in another language generates its own
