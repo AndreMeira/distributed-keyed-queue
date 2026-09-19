@@ -2,6 +2,7 @@ package homelab.keyedqueue.client.lock
 
 
 import homelab.keyedqueue.client.LockError
+import com.google.protobuf.duration.Duration as ProtoDuration
 import homelab.keyedqueue.client.codec.LockCodecs
 import homelab.keyedqueue.v1
 import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLockClient
@@ -29,7 +30,7 @@ final private[client] class GrpcLockClient(stub: KeyedLockClient) extends LockCl
    *         failure amounts to
    */
   override def acquire(name: String, ttl: Duration, maxWait: Duration): IO[LockError, Acquired] =
-    call(stub.acquire(v1.AcquireRequest(name, wire(ttl), wire(maxWait)))).flatMap(LockCodecs.acquired)
+    call(stub.acquire(v1.AcquireRequest(name, proto(ttl), proto(maxWait)))).map(LockCodecs.decode).absolve
 
   /**
    * One `TryAcquire` call, which carries no wait for the service to clamp.
@@ -40,7 +41,7 @@ final private[client] class GrpcLockClient(stub: KeyedLockClient) extends LockCl
    *         failure amounts to
    */
   override def tryAcquire(name: String, ttl: Duration): IO[LockError, Acquired] =
-    call(stub.tryAcquire(v1.TryAcquireRequest(name, wire(ttl)))).flatMap(LockCodecs.acquired)
+    call(stub.tryAcquire(v1.TryAcquireRequest(name, proto(ttl)))).map(LockCodecs.decode).absolve
 
   /**
    * One `Release` call, whose answer needs no reading — the wire says a boolean and so does the port.
@@ -60,7 +61,7 @@ final private[client] class GrpcLockClient(stub: KeyedLockClient) extends LockCl
    *         failure amounts to
    */
   override def refresh(receipt: Receipt, ttl: Duration): IO[LockError, Refreshed] =
-    call(stub.refresh(v1.RefreshRequest(receipt, wire(ttl)))).flatMap(LockCodecs.refreshed)
+    call(stub.refresh(v1.RefreshRequest(receipt, proto(ttl)))).map(LockCodecs.decode).absolve
 
   /**
    * Make one call, reporting a transport failure in this client's terms.
@@ -73,10 +74,10 @@ final private[client] class GrpcLockClient(stub: KeyedLockClient) extends LockCl
     rpc.mapError(LockCodecs.failure)
 
   /**
-   * A duration as the wire carries it, wrapped as the generated request expects.
+   * A duration as the proto carries it, wrapped as the generated request expects.
    *
    * @param duration how long
    * @return it, present
    */
-  private def wire(duration: Duration): Option[com.google.protobuf.duration.Duration] =
-    Some(LockCodecs.toWire(duration))
+  private def proto(duration: Duration): Option[ProtoDuration] =
+    Some(LockCodecs.encode(duration))

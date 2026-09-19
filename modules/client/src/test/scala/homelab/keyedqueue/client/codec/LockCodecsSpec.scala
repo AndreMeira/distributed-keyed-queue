@@ -27,7 +27,7 @@ object LockCodecsSpec extends ZIOSpecDefault:
       test("a grant carries the receipt, the fence and the deadline") {
         val response = v1.AcquireResponse(acquired = true, "handle", 7L, Some(until))
         LockCodecs
-          .acquired(response)
+          .decode(response)
           .map: answer =>
             assertTrue(
               answer == Acquired.Granted(
@@ -37,36 +37,28 @@ object LockCodecsSpec extends ZIOSpecDefault:
       },
       test("not acquired is an answer, and the other fields are not read") {
         val response = v1.AcquireResponse(acquired = false, "", 0L, None)
-        LockCodecs.acquired(response).map(answer => assertTrue(answer == Acquired.Unavailable))
+        assertTrue(LockCodecs.decode(response) == Right(Acquired.Unavailable))
       },
       test("a grant with no deadline is refused rather than carried inwards") {
         val response = v1.AcquireResponse(acquired = true, "handle", 7L, None)
-        LockCodecs
-          .acquired(response)
-          .exit
-          .map: exit =>
-            assertTrue(
-              exit.isFailure,
-              exit.causeOption.exists(_.failures.exists {
-                case LockError.Unreadable(_) => true
-                case _                       => false
-              }),
-            )
+        assertTrue(LockCodecs.decode(response).left.exists {
+          case LockError.Unreadable(_) => true
+          case _                       => false
+        })
       },
     ),
     suite("refreshed")(
       test("a renewal carries the new deadline") {
-        LockCodecs
-          .refreshed(v1.RefreshResponse(renewed = true, Some(until)))
-          .map(answer => assertTrue(answer == Refreshed.Renewed(Instant.ofEpochSecond(1_700_000_000L, 500))))
+        assertTrue(
+          LockCodecs.decode(v1.RefreshResponse(renewed = true, Some(until))) ==
+            Right(Refreshed.Renewed(Instant.ofEpochSecond(1_700_000_000L, 500)))
+        )
       },
       test("a lost hold is an answer") {
-        LockCodecs
-          .refreshed(v1.RefreshResponse(renewed = false, None))
-          .map(answer => assertTrue(answer == Refreshed.Lost))
+        assertTrue(LockCodecs.decode(v1.RefreshResponse(renewed = false, None)) == Right(Refreshed.Lost))
       },
       test("a renewal with no deadline is refused") {
-        LockCodecs.refreshed(v1.RefreshResponse(renewed = true, None)).exit.map(exit => assertTrue(exit.isFailure))
+        assertTrue(LockCodecs.decode(v1.RefreshResponse(renewed = true, None)).isLeft)
       },
     ),
     suite("failure")(
