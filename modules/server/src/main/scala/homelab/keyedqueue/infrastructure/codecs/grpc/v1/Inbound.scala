@@ -2,7 +2,7 @@ package homelab.keyedqueue.infrastructure.codecs.grpc.v1
 
 
 import com.google.protobuf.ByteString
-import com.google.protobuf.duration.Duration as WireDuration
+import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.domain.model.queue.Message
 import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
@@ -33,7 +33,7 @@ object Inbound:
   private given Transformer[ByteString, Chunk[Byte]] =
     bytes => Chunk.fromArray(bytes.toByteArray)
 
-  private given Transformer[WireDuration, Duration] =
+  private given Transformer[ProtoDuration, Duration] =
     duration => Duration.fromSeconds(duration.seconds) + Duration.fromNanos(duration.nanos.toLong)
 
   private given Transformer[Timestamp, Instant] = stamp => Instant.ofEpochSecond(stamp.seconds, stamp.nanos.toLong)
@@ -43,7 +43,7 @@ object Inbound:
    * wait rather than leave it to be inferred. Decoded rather than rejected here so the problem is reported
    * with the others in one pass, in the vocabulary of the domain.
    */
-  private given Transformer[Option[WireDuration], Duration] =
+  private given Transformer[Option[ProtoDuration], Duration] =
     _.fold(Duration.Zero)(duration => Duration.fromSeconds(duration.seconds) + Duration.fromNanos(duration.nanos.toLong))
 
   /** A settle that does not say what the consumer decided cannot be acted on. */

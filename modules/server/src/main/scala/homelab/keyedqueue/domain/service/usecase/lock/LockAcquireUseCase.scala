@@ -49,7 +49,7 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
         waiter  = Waiter(demand, asked, signal)
         result <- acquire(waiter, demand.patience)
       yield result match
-        case Some(hold) => AcquireResponse.Granted(hold.claim.reference, hold.claim.token, hold.leaseUntil, demand.ttl)
+        case Some(hold) => AcquireResponse.Granted(hold, demand)
         case None       => AcquireResponse.Unavailable
 
   /**

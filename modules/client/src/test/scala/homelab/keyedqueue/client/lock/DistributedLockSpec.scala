@@ -26,6 +26,7 @@ object DistributedLockSpec extends ZIOSpecDefault:
     releases: Ref[Int],
     renewed: Promise[Nothing, Unit],
     lostAfter: Int,
+    granting: Option[Duration],
   ) extends LockClient:
     override def acquire(name: String, ttl: Duration, maxWait: Duration): IO[LockError, Acquired] =
       ZIO.succeed(granted.fold(Acquired.Unavailable)(Acquired.Granted.apply))
@@ -38,14 +39,19 @@ object DistributedLockSpec extends ZIOSpecDefault:
         .updateAndGet(_ :+ ttl)
         .tap(_ => renewed.succeed(()))
         .map: asked =>
-          if asked.length > lostAfter then Refreshed.Lost else Refreshed.Renewed(Instant.EPOCH, ttl)
+          if asked.length > lostAfter then Refreshed.Lost
+          else Refreshed.Renewed(Instant.EPOCH, granting.getOrElse(ttl))
 
-  private def fake(granted: Option[Hold], lostAfter: Int = Int.MaxValue) =
+  private def fake(
+    granted: Option[Hold],
+    lostAfter: Int = Int.MaxValue,
+    granting: Option[Duration] = None,
+  ) =
     for
       refreshes <- Ref.make(Chunk.empty[Duration])
       releases  <- Ref.make(0)
       renewed   <- Promise.make[Nothing, Unit]
-    yield (Fake(granted, refreshes, releases, renewed, lostAfter), refreshes, releases, renewed)
+    yield (Fake(granted, refreshes, releases, renewed, lostAfter, granting), refreshes, releases, renewed)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("DistributedLock")(
     test("no grant means the effect never runs") {
@@ -119,6 +125,18 @@ object DistributedLockSpec extends ZIOSpecDefault:
         _                               <- fiber.join
         asked                           <- refreshes.get
       yield assertTrue(pushed.isDefined, asked.nonEmpty, asked.forall(_ == lease))
+    },
+    test("a lease that comes back shorter retimes the renewal after it") {
+      // A ceiling that moves under a running hold: the service grants less than it was asked for, so the
+      // renewal after it asks for — and is timed by — what the last one actually got.
+      for
+        (client, refreshes, _, _) <- fake(granted = Some(hold), granting = Some(15.millis))
+        finish                    <- Promise.make[Nothing, Unit]
+        fiber                     <- DistributedLock(client).acquire("n", 1.second, 1.second)(finish.await).fork
+        asked                     <- refreshes.get.repeatUntil(_.length >= 2)
+        _                         <- finish.succeed(())
+        _                         <- fiber.join
+      yield assertTrue(asked.take(2) == Chunk(lease, 15.millis))
     },
     test("a lost hold stops the renewals and leaves the effect running") {
       // The decision this form makes: it does not interrupt, because that would promise an exclusion the

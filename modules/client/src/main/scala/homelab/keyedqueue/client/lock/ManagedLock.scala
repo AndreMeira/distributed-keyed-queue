@@ -85,34 +85,21 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
    */
   private def holding(hold: Hold): ZIO[Scope, Nothing, Unit] =
     ZIO.addFinalizer(client.release(hold.receipt).ignore)
-      *> renewing(hold).forkScoped.interruptible.unit
+      *> renewing(hold.receipt, hold.leaseTtl).ignore.forkScoped.interruptible.unit
 
   /**
    * Push the lease forward for as long as the service keeps granting it.
    *
-   * The cadence comes from the lease the service granted, which is at most the hold that was asked for.
    * Each renewal falls due half a lease before the current one lapses, leaving a full half-lease of room
-   * for a slow call, and asks for that same span again. The loop ends when the hold is lost or a call
-   * fails, and the lease itself is what bounds a hold whose renewals stopped.
+   * for a slow call, and asks for the span it currently holds. Every answer carries the lease it granted,
+   * and that is what times the one after it, so a ceiling that moves under a running hold is followed.
    *
-   * @param hold the grant to keep alive, which carries the span its lease runs for
-   * @return noop when the renewals end
+   * @param receipt what the renewals name
+   * @param lease how long the lease now runs, which is what the next renewal is timed by
+   * @return noop when the hold is lost; aborts with a [[LockError]] when a call fails
    */
-  private def renewing(hold: Hold): UIO[Unit] =
-    val interval = hold.leaseTtl.dividedBy(2)
-    client
-      .refresh(hold.receipt, hold.leaseTtl)
-      .delay(interval)
-      .repeat(Schedule.spaced(interval) && Schedule.recurWhile(stillHeld))
-      .ignore
-
-  /**
-   * Whether a renewal means the hold is still this caller's.
-   *
-   * @param refreshed what the service answered
-   * @return whether to keep renewing
-   */
-  private def stillHeld(refreshed: Refreshed): Boolean =
-    refreshed match
-      case Refreshed.Renewed(_, _) => true
-      case Refreshed.Lost          => false
+  private def renewing(receipt: Receipt, lease: Duration): IO[LockError, Unit] =
+    client.refresh(receipt, lease).delay(lease.dividedBy(2)).flatMap {
+      case Refreshed.Lost                => ZIO.unit
+      case Refreshed.Renewed(_, granted) => renewing(receipt, granted)
+    }

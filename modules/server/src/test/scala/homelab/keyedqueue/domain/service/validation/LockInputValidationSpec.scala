@@ -48,6 +48,16 @@ object LockInputValidationSpec extends ZIOSpecDefault:
         parsed.toEither.left.exists(problems => problems.toSet == Set[InvalidInput](InvalidInput.EmptyLockName, InvalidInput.NonPositiveTtl))
       )
     },
+    test("the granted ttl is the store's own precision, so the answer states the lease that was written") {
+      // The lock scripts carry a ttl as whole milliseconds. A parse that kept the nanoseconds would hand
+      // back a span longer than the lease the store went on to write.
+      val acquire    = validation.parse(AcquireRequest("resource", ttl = 1500.micros, maxWait = 1.second))
+      val tryAcquire = validation.parse(TryAcquireRequest("resource", ttl = 1500.micros))
+      assertTrue(
+        acquire.toEither.exists(demand => demand.ttl == 1.milli),
+        tryAcquire.toEither.contains((LockName("resource"), 1.milli)),
+      )
+    },
     test("both ceilings clamp: a ttl and a wait beyond them come back as the ceilings") {
       val parsed = validation.parse(AcquireRequest("resource", ttl = 2.hours, maxWait = 5.minutes))
       assertTrue(parsed.toEither.exists { demand =>

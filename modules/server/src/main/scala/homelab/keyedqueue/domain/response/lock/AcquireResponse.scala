@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.response.lock
 
 
-import homelab.keyedqueue.domain.model.lock.Claim
+import homelab.keyedqueue.domain.model.lock.{ Claim, Demand, Hold }
 import homelab.keyedqueue.domain.types.Token
 import zio.Duration
 
@@ -29,3 +29,18 @@ enum AcquireResponse:
    * @param leaseTtl how long the lease runs, which is at most the hold the request asked for
    */
   case Granted(receipt: Claim.Ref, token: Token, leaseUntil: Instant, leaseTtl: Duration)
+
+
+object AcquireResponse:
+
+  object Granted:
+
+    /**
+     * The grant that a hold and the demand it answered describe.
+     *
+     * @param hold what the store granted: the claim authorising release and refresh, and when the lease ends
+     * @param demand what was asked for, whose ttl is the span the lease was granted for
+     * @return the grant to answer the caller with
+     */
+    def apply(hold: Hold, demand: Demand): AcquireResponse.Granted =
+      AcquireResponse.Granted(hold.claim.reference, hold.claim.token, hold.leaseUntil, demand.ttl)

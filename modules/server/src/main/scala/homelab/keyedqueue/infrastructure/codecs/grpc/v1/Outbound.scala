@@ -2,7 +2,7 @@ package homelab.keyedqueue.infrastructure.codecs.grpc.v1
 
 
 import com.google.protobuf.ByteString
-import com.google.protobuf.duration.Duration as WireDuration
+import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.domain.model.queue.Claim
 import homelab.keyedqueue.domain.model.queue.Message
@@ -56,8 +56,8 @@ object Outbound:
   private given Transformer[Instant, Timestamp] =
     instant => Timestamp(seconds = instant.getEpochSecond, nanos = instant.getNano)
 
-  private given Transformer[Duration, WireDuration] =
-    duration => WireDuration(seconds = duration.getSeconds, nanos = duration.getNano)
+  private given Transformer[Duration, ProtoDuration] =
+    duration => ProtoDuration(seconds = duration.getSeconds, nanos = duration.getNano)
 
   private given Transformer[Instant, Option[Timestamp]] =
     instant => Some(Timestamp(seconds = instant.getEpochSecond, nanos = instant.getNano))
@@ -122,7 +122,7 @@ object Outbound:
           receipt,
           token,
           Some(until.transformInto[Timestamp]),
-          Some(ttl.transformInto[WireDuration]),
+          Some(ttl.transformInto[ProtoDuration]),
         )
 
   extension (response: ReleaseResponse)
@@ -134,4 +134,4 @@ object Outbound:
     def toProto: v1.RefreshResponse = response match
       case RefreshResponse.Lost                => v1.RefreshResponse(renewed = false)
       case RefreshResponse.Renewed(until, ttl) =>
-        v1.RefreshResponse(renewed = true, Some(until.transformInto[Timestamp]), Some(ttl.transformInto[WireDuration]))
+        v1.RefreshResponse(renewed = true, Some(until.transformInto[Timestamp]), Some(ttl.transformInto[ProtoDuration]))
