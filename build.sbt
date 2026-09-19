@@ -183,10 +183,13 @@ lazy val client = project
   .settings(
     name := "distributed-keyed-queue-client",
     libraryDependencies ++= Seq(
-      "dev.zio" %% "zio"          % zioVersion,
-      "io.grpc"  % "grpc-netty"   % grpcVersion,
-      "dev.zio" %% "zio-test"     % zioVersion % Test,
-      "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
+      "dev.zio" %% "zio"            % zioVersion,
+      "io.grpc"  % "grpc-netty"     % grpcVersion,
+      // The transport the wire tests serve over: a real channel and real marshalling, with no port to
+      // bind and no wait for one to answer.
+      "io.grpc"  % "grpc-inprocess" % grpcVersion % Test,
+      "dev.zio" %% "zio-test"       % zioVersion  % Test,
+      "dev.zio" %% "zio-test-sbt"   % zioVersion  % Test,
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
   )
