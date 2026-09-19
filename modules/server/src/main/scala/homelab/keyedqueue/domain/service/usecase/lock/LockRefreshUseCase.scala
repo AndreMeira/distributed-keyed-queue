@@ -31,4 +31,4 @@ final class LockRefreshUseCase(store: LockStore, validation: LockInputValidation
     for
       (claim, ttl)     <- validation.parse(request).orFail
       (until, renewed) <- store.refresh(claim, ttl)
-    yield if renewed then RefreshResponse.Renewed(until) else RefreshResponse.Lost
+    yield if renewed then RefreshResponse.Renewed(until, ttl) else RefreshResponse.Lost

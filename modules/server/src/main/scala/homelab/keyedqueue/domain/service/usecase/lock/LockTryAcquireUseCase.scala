@@ -33,5 +33,5 @@ final class LockTryAcquireUseCase(store: LockStore, validation: LockInputValidat
       (name, ttl) <- validation.parse(request).orFail
       held        <- store.tryAcquire(name, ttl)
     yield held match
-      case Some(hold) => AcquireResponse.Granted(hold.claim.reference, hold.claim.token, hold.leaseUntil)
+      case Some(hold) => AcquireResponse.Granted(hold.claim.reference, hold.claim.token, hold.leaseUntil, ttl)
       case None       => AcquireResponse.Unavailable

@@ -1,5 +1,8 @@
 package homelab.keyedqueue.domain.response.lock
 
+
+import zio.Duration
+
 import java.time.Instant
 
 
@@ -16,5 +19,6 @@ enum RefreshResponse:
    * The lease was extended.
    *
    * @param leaseUntil the new deadline
+   * @param leaseTtl how long the new lease runs, which is at most the hold the request asked for
    */
-  case Renewed(leaseUntil: Instant)
+  case Renewed(leaseUntil: Instant, leaseTtl: Duration)

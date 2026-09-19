@@ -14,12 +14,15 @@ import java.time.Instant
  */
 object DistributedLockSpec extends ZIOSpecDefault:
 
-  private val hold = Hold(Receipt("handle"), Fence(1L), Instant.EPOCH)
+  /** The lease the fake service grants, which is what the renewals are timed by. */
+  private val lease = 40.millis
+
+  private val hold = Hold(Receipt("handle"), Fence(1L), Instant.EPOCH, lease)
 
   /** A client that answers as told and records what it was asked to do. */
   final private class Fake(
     granted: Option[Hold],
-    refreshes: Ref[Int],
+    refreshes: Ref[Chunk[Duration]],
     releases: Ref[Int],
     renewed: Promise[Nothing, Unit],
     lostAfter: Int,
@@ -32,14 +35,14 @@ object DistributedLockSpec extends ZIOSpecDefault:
       releases.update(_ + 1).as(true)
     override def refresh(receipt: Receipt, ttl: Duration): IO[LockError, Refreshed]               =
       refreshes
-        .updateAndGet(_ + 1)
+        .updateAndGet(_ :+ ttl)
         .tap(_ => renewed.succeed(()))
-        .map: count =>
-          if count > lostAfter then Refreshed.Lost else Refreshed.Renewed(Instant.EPOCH)
+        .map: asked =>
+          if asked.length > lostAfter then Refreshed.Lost else Refreshed.Renewed(Instant.EPOCH, ttl)
 
   private def fake(granted: Option[Hold], lostAfter: Int = Int.MaxValue) =
     for
-      refreshes <- Ref.make(0)
+      refreshes <- Ref.make(Chunk.empty[Duration])
       releases  <- Ref.make(0)
       renewed   <- Promise.make[Nothing, Unit]
     yield (Fake(granted, refreshes, releases, renewed, lostAfter), refreshes, releases, renewed)
@@ -95,13 +98,27 @@ object DistributedLockSpec extends ZIOSpecDefault:
       for
         (client, refreshes, releases, renewed) <- fake(granted = Some(hold))
         finish                                 <- Promise.make[Nothing, Unit]
-        fiber                                  <- DistributedLock(client).acquire("n", 40.millis, 1.second)(finish.await).fork
+        fiber                                  <- DistributedLock(client).acquire("n", lease, 1.second)(finish.await).fork
         _                                      <- renewed.await // a renewal happened; no guess about when
         _                                      <- finish.succeed(())
         _                                      <- fiber.join
         pushed                                 <- refreshes.get
         back                                   <- releases.get
-      yield assertTrue(pushed >= 1, back == 1)
+      yield assertTrue(pushed.nonEmpty, back == 1)
+    },
+    test("the renewals follow the lease the service granted, not the one that was asked for") {
+      // The service clamps a ttl it considers too long and says so in the grant, so a caller asking for an
+      // hour here holds a 40-millisecond lease. A renewal arriving at all is what separates the two: on
+      // the asked-for hour, the first one falls due long after this test has finished.
+      for
+        (client, refreshes, _, renewed) <- fake(granted = Some(hold))
+        finish                          <- Promise.make[Nothing, Unit]
+        fiber                           <- DistributedLock(client).acquire("n", 1.hour, 1.second)(finish.await).fork
+        pushed                          <- renewed.await.timeout(5.seconds)
+        _                               <- finish.succeed(())
+        _                               <- fiber.join
+        asked                           <- refreshes.get
+      yield assertTrue(pushed.isDefined, asked.nonEmpty, asked.forall(_ == lease))
     },
     test("a lost hold stops the renewals and leaves the effect running") {
       // The decision this form makes: it does not interrupt, because that would promise an exclusion the
@@ -109,12 +126,12 @@ object DistributedLockSpec extends ZIOSpecDefault:
       for
         (client, refreshes, releases, renewed) <- fake(granted = Some(hold), lostAfter = 0)
         finish                                 <- Promise.make[Nothing, Unit]
-        fiber                                  <- DistributedLock(client).acquire("n", 40.millis, 1.second)(finish.await.as("finished")).fork
+        fiber                                  <- DistributedLock(client).acquire("n", lease, 1.second)(finish.await.as("finished")).fork
         _                                      <- renewed.await // the first renewal answered Lost, so the loop is over
         _                                      <- finish.succeed(())
         answer                                 <- fiber.join
         pushed                                 <- refreshes.get
         back                                   <- releases.get
-      yield assertTrue(answer.contains("finished"), pushed == 1, back == 1)
+      yield assertTrue(answer.contains("finished"), pushed.length == 1, back == 1)
     },
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(30.seconds)

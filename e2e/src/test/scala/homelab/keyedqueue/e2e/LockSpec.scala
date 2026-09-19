@@ -70,6 +70,22 @@ object LockSpec extends ZIOSpecDefault:
         !staleRefresh.renewed,
       )
     },
+    test("a grant states the lease it was given, which a ttl past the ceiling is clamped to (H1)") {
+      // The ceiling is the service's, and the answer is the only place it shows. The expiry beside it is
+      // on the service's clock, so the span is what a holder times its refreshes by.
+      for
+        dkq     <- ZIO.service[Deployment]
+        name     = dkq.lock("clamped")
+        granted <- dkq.a.acquire(name, ttl = 30.minutes, patience = 1.second)
+        renewed <- dkq.a.refresh(granted.receipt, ttl = 30.minutes)
+        _       <- dkq.a.release(granted.receipt)
+      yield assertTrue(
+        granted.acquired,
+        granted.leaseTtl.map(_.seconds).contains(600L), // the configured ceiling, not the half-hour asked
+        renewed.renewed,
+        renewed.leaseTtl.map(_.seconds).contains(600L),
+      )
+    },
     test("the hold and its queue survive the instance that granted them (M1 across a death)") {
       // Kill the instance that granted the hold and hosts nothing else the test needs: the hold, the
       // waiter's place, and the receipt all live in the store, so the surviving instance serves them all.

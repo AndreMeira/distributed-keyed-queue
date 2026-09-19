@@ -198,8 +198,8 @@ object SpecHelper {
      * @return true when the lock was granted
      */
     def granted(answer: AcquireResponse): Boolean = answer match
-      case AcquireResponse.Granted(_, _, _) => true
-      case AcquireResponse.Unavailable      => false
+      case AcquireResponse.Granted(_, _, _, _) => true
+      case AcquireResponse.Unavailable         => false
 
     /**
      * The claim an acquire came back with, which is what releases it.
@@ -208,8 +208,8 @@ object SpecHelper {
      * @return the claim, or `None` when the lock was not granted
      */
     def heldBy(answer: AcquireResponse): Option[LockClaim] = answer match
-      case AcquireResponse.Granted(receipt, _, _) => LockClaim.decode(receipt)
-      case AcquireResponse.Unavailable            => None
+      case AcquireResponse.Granted(receipt, _, _, _) => LockClaim.decode(receipt)
+      case AcquireResponse.Unavailable               => None
   }
 
   object Failure {

@@ -5,8 +5,8 @@ package homelab.keyedqueue.client
  * What a call to the lock service aborts with.
  *
  * The client is the edge, so a transport's exception is wrapped here and never reaches a caller's
- * signature. The three cases are the three decisions a caller makes: fix the request, retry later, or give
- * up and report.
+ * signature. The four cases are three decisions: fix the request, retry later, or give up and report — the
+ * last of which covers both an answer this client cannot read and a failure it does not recognise.
  */
 enum LockError:
 

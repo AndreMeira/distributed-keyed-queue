@@ -23,7 +23,7 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
    * mask, so a grant always reaches the finaliser that gives it back.
    *
    * @param name the lock to take
-   * @param ttl how long each lease runs
+   * @param ttl how long to ask each lease to run, which the service may grant less of
    * @param maxWait how long to wait for a holder to release
    * @param effect what to run while holding it
    * @tparam R what `effect` needs
@@ -42,7 +42,7 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
     ZIO.uninterruptibleMask: restore =>
       restore(client.acquire(name, ttl, maxWait)).flatMap {
         case Acquired.Unavailable   => ZIO.none
-        case Acquired.Granted(hold) => holding(hold, ttl) *> restore(effect).map(Some(_))
+        case Acquired.Granted(hold) => holding(hold) *> restore(effect).map(Some(_))
       }
 
   /**
@@ -51,7 +51,7 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
    * The same scope, mask and lease handling as [[acquire]]; only the call that takes the lock differs.
    *
    * @param name the lock to take
-   * @param ttl how long each lease runs
+   * @param ttl how long to ask each lease to run, which the service may grant less of
    * @param effect what to run while holding it
    * @tparam R what `effect` needs
    * @tparam E what `effect` aborts with
@@ -68,7 +68,7 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
     ZIO.uninterruptibleMask: restore =>
       restore(client.tryAcquire(name, ttl)).flatMap {
         case Acquired.Unavailable   => ZIO.none
-        case Acquired.Granted(hold) => holding(hold, ttl) *> restore(effect).map(Some(_))
+        case Acquired.Granted(hold) => holding(hold) *> restore(effect).map(Some(_))
       }
 
   /**
@@ -81,28 +81,27 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
    * it was forked under and this runs inside a mask.
    *
    * @param hold the grant to keep alive
-   * @param ttl how long each lease runs
    * @return noop once the renewals are running and the release is registered
    */
-  private def holding(hold: Hold, ttl: Duration): ZIO[Scope, Nothing, Unit] =
+  private def holding(hold: Hold): ZIO[Scope, Nothing, Unit] =
     ZIO.addFinalizer(client.release(hold.receipt).ignore)
-      *> renewing(hold, ttl).forkScoped.interruptible.unit
+      *> renewing(hold).forkScoped.interruptible.unit
 
   /**
    * Push the lease forward for as long as the service keeps granting it.
    *
-   * Each renewal is asked for half a lease before the current one lapses, which leaves a full half-lease
-   * of room for a slow call. The loop ends when the hold is lost or a call fails, and the lease itself is
-   * what bounds a hold whose renewals stopped.
+   * The cadence comes from the lease the service granted, which is at most the hold that was asked for.
+   * Each renewal falls due half a lease before the current one lapses, leaving a full half-lease of room
+   * for a slow call, and asks for that same span again. The loop ends when the hold is lost or a call
+   * fails, and the lease itself is what bounds a hold whose renewals stopped.
    *
-   * @param hold the grant to keep alive
-   * @param ttl how long each lease runs
+   * @param hold the grant to keep alive, which carries the span its lease runs for
    * @return noop when the renewals end
    */
-  private def renewing(hold: Hold, ttl: Duration): UIO[Unit] =
-    val interval = ttl.dividedBy(2)
+  private def renewing(hold: Hold): UIO[Unit] =
+    val interval = hold.leaseTtl.dividedBy(2)
     client
-      .refresh(hold.receipt, ttl)
+      .refresh(hold.receipt, hold.leaseTtl)
       .delay(interval)
       .repeat(Schedule.spaced(interval) && Schedule.recurWhile(stillHeld))
       .ignore
@@ -115,5 +114,5 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
    */
   private def stillHeld(refreshed: Refreshed): Boolean =
     refreshed match
-      case Refreshed.Renewed(_) => true
-      case Refreshed.Lost       => false
+      case Refreshed.Renewed(_, _) => true
+      case Refreshed.Lost          => false
