@@ -161,6 +161,31 @@ lazy val protocolZioGrpc = project
 
 
 /**
+ * The client: the service's API in Scala types.
+ *
+ * Depends on `protocolZioGrpc` and never on `server`, so nothing in it can reach past the wire into the
+ * implementation it talks to — the property the end-to-end suite relies on, made structural for consumers.
+ *
+ * Unlike the contract modules it carries a transport, because dialling is what a client is for and
+ * `LockClient.scoped(Config)` has to build a channel. The `ZManagedChannel` overload keeps TLS,
+ * interceptors and in-process transports reachable.
+ */
+lazy val client = project
+  .in(file("modules/client"))
+  .dependsOn(protocolZioGrpc)
+  .settings(
+    name := "distributed-keyed-queue-client",
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio"          % zioVersion,
+      "io.grpc"  % "grpc-netty"   % grpcVersion,
+      "dev.zio" %% "zio-test"     % zioVersion % Test,
+      "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
+    ),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
+  )
+
+
+/**
  * The service: the domain, the Redis adapter, and the gRPC server that fronts them.
  *
  * This is the deployable — `sbt server/Docker/publishLocal` builds the image the compose stacks run.
@@ -236,7 +261,7 @@ lazy val server = project
  */
 lazy val root = project
   .in(file("."))
-  .aggregate(protocol, protocolZioGrpc, server)
+  .aggregate(protocol, protocolZioGrpc, server, client)
   .settings(
     name           := "distributed-keyed-queue",
     publish / skip := true,
