@@ -39,6 +39,13 @@ object LockCodecsSpec extends ZIOSpecDefault:
         val response = v1.AcquireResponse(acquired = false, "", 0L, None)
         assertTrue(LockCodecs.decode(response) == Right(Acquired.Unavailable))
       },
+      test("a grant with no receipt is refused: nothing could release or renew it") {
+        val response = v1.AcquireResponse(acquired = true, "", 7L, Some(until))
+        assertTrue(LockCodecs.decode(response).left.exists {
+          case LockError.Unreadable(_) => true
+          case _                       => false
+        })
+      },
       test("a grant with no deadline is refused rather than carried inwards") {
         val response = v1.AcquireResponse(acquired = true, "handle", 7L, None)
         assertTrue(LockCodecs.decode(response).left.exists {

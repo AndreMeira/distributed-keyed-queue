@@ -36,10 +36,12 @@ private[client] object LockCodecs:
    * A grant, or the news that somebody else has it.
    *
    * @param response what the service answered
-   * @return the answer, or `Unreadable` when `acquired` is set without the rest of a grant
+   * @return the answer, or `Unreadable` when `acquired` is set without a receipt or a deadline — a grant
+   *         missing either is one nothing could release or renew
    */
   def decode(response: v1.AcquireResponse): Either[LockError, Acquired] =
     if !response.acquired then Right(Acquired.Unavailable)
+    else if response.receipt.isEmpty then Left(LockError.Unreadable("a grant arrived with no receipt, so nothing could release it"))
     else
       response.leaseExpiresAt
         .toRight(LockError.Unreadable("a grant arrived with no lease deadline"))

@@ -19,7 +19,8 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
    * Wait for the lock, then run `effect` under it.
    *
    * The scope opened here is what the renewals and the release are registered on, so both end when
-   * `effect` does, however it ends.
+   * `effect` does, however it ends. Taking the lock and registering its release happen together, under a
+   * mask, so a grant always reaches the finaliser that gives it back.
    *
    * @param name the lock to take
    * @param ttl how long each lease runs
@@ -38,15 +39,16 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
   )(
     effect: ZIO[R, E, A]
   ): ZIO[R, LockError | E, Option[A]] = ZIO.scoped:
-    client.acquire(name, ttl, maxWait).flatMap {
-      case Acquired.Unavailable   => ZIO.none
-      case Acquired.Granted(hold) => holding(hold, ttl) *> effect.map(Some(_))
-    }
+    ZIO.uninterruptibleMask: restore =>
+      restore(client.acquire(name, ttl, maxWait)).flatMap {
+        case Acquired.Unavailable   => ZIO.none
+        case Acquired.Granted(hold) => holding(hold, ttl) *> restore(effect).map(Some(_))
+      }
 
   /**
    * Take the lock if it is free now, then run `effect` under it.
    *
-   * The same scope and the same lease handling as [[acquire]]; only the call that takes the lock differs.
+   * The same scope, mask and lease handling as [[acquire]]; only the call that takes the lock differs.
    *
    * @param name the lock to take
    * @param ttl how long each lease runs
@@ -63,18 +65,20 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
   )(
     effect: ZIO[R, E, A]
   ): ZIO[R, LockError | E, Option[A]] = ZIO.scoped:
-    client.tryAcquire(name, ttl).flatMap {
-      case Acquired.Unavailable   => ZIO.none
-      case Acquired.Granted(hold) => holding(hold, ttl) *> effect.map(Some(_))
-    }
+    ZIO.uninterruptibleMask: restore =>
+      restore(client.tryAcquire(name, ttl)).flatMap {
+        case Acquired.Unavailable   => ZIO.none
+        case Acquired.Granted(hold) => holding(hold, ttl) *> restore(effect).map(Some(_))
+      }
 
   /**
    * Keep the hold alive for the rest of the scope, and give the lock back when the scope ends.
    *
    * Both are scope finalizers, and they run last-registered-first: the renewals stop, then the lock goes
-   * back, so a caller's final refresh never races its own release. Registering the release on the scope
-   * rather than on this effect is what carries it past a failure or an interruption inside the caller's
-   * own work.
+   * back, so a caller's final refresh never races its own release. The release sits on the scope, so it
+   * runs on whatever ends the caller's work — an answer, a failure, an interruption. The renewals are
+   * forked interruptible so the finaliser that stops them can, since a fiber inherits the interruptibility
+   * it was forked under and this runs inside a mask.
    *
    * @param hold the grant to keep alive
    * @param ttl how long each lease runs
@@ -82,7 +86,7 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
    */
   private def holding(hold: Hold, ttl: Duration): ZIO[Scope, Nothing, Unit] =
     ZIO.addFinalizer(client.release(hold.receipt).ignore)
-      *> renewing(hold, ttl).forkScoped.unit
+      *> renewing(hold, ttl).forkScoped.interruptible.unit
 
   /**
    * Push the lease forward for as long as the service keeps granting it.
