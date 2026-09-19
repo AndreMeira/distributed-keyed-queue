@@ -8,7 +8,7 @@
 val scala3Version         = "3.8.3"
 val zioVersion            = "2.1.23"
 val zioPreludeVersion     = "1.0.0-RC47"    // the toolkit's version; Validation is a domain-level type here
-val toolkitVersion        = "0.0.3"
+val toolkitVersion        = "0.0.4"
 val otelAgentVersion      = "2.20.1"        // the OpenTelemetry Java agent; in the image, off unless asked for
 val scalapbVersion        = "0.11.17"       // keep in sync with compilerplugin in project/plugins.sbt
 val zioGrpcVersion        = "0.6.3"
