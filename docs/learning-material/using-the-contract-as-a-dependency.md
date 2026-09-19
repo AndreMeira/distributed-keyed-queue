@@ -2,8 +2,8 @@
 title: "Talking to dkq from another service"
 type: learning-material
 status: current
-updated: 2026-08-30
-tags: [sbt, dependencies, github-packages, grpc, client, pat]
+updated: 2026-09-20
+tags: [sbt, dependencies, github-packages, grpc, client, lock, pat]
 ---
 
 # Talking to dkq from another service
@@ -18,24 +18,45 @@ Releases are cut as GitHub Releases tagged `vX.Y.Z`; the artifact version is the
 current one is whatever the [Releases page](https://github.com/AndreMeira/distributed-keyed-queue/releases)
 shows at the top — this page does not name a version, so that it cannot go stale.
 
-Both artifacts are released together and share a version. **Pin them to the same one**: mixing a `protocol`
-with a `protocol-zio-grpc` from a different release is neither tested nor supported.
+All three artifacts are released together and share a version. **Pin them to the same one**: mixing a
+`protocol` with a `protocol-zio-grpc` from a different release is neither tested nor supported, and the
+client is built against the contract of its own release.
 
 ## What you can depend on
 
-Two artifacts, and which you want depends on how much you need:
+Three artifacts, and which you want depends on how much you need:
 
 | artifact | what it is | what it drags in |
 |---|---|---|
 | `distributed-keyed-queue-protocol` | the message types | `scalapb-runtime`, and nothing else |
 | `distributed-keyed-queue-protocol-zio-grpc` | the RPC stubs, ZIO-native | the above, plus `zio-grpc-core` and `zio` |
+| `distributed-keyed-queue-client` | the lock as Scala types | the above, plus `grpc-netty` |
 
 **Take the smaller one if you only handle the data** — building a message, reading one out of somewhere
 else, writing a test fixture. It has no effect system and no transport, deliberately. Only a service
 actually calling dkq needs the stubs.
 
-Neither carries a transport. That is not an omission: whether you dial over netty, in-process, or something
-else is yours to choose.
+**Take the client if you want the lock** rather than the four RPCs it is made of. It is two layers, and the
+upper one is what most callers want:
+
+```scala
+ZIO.scoped:
+  for
+    client <- LockClient.scoped(LockClient.Config("dkq", 9000))
+    answer <- DistributedLock(client).acquire("the-key", ttl = 30.seconds, maxWait = 5.seconds):
+                doTheWorkThatNeedsExclusivity
+  yield answer // None when the wait elapsed with somebody else holding it
+```
+
+`acquire` keeps the lease alive while your effect runs and gives the lock back however the effect ends — an
+answer, a failure, an interruption. `LockClient` underneath it is the four RPCs one for one, and hands you
+the fencing token, which is what you need if you are stamping downstream writes.
+
+The two contract artifacts carry no transport. That is not an omission: whether you dial over netty,
+in-process, or something else is yours to choose. The client does carry `grpc-netty`, because
+`LockClient.scoped(config)` dials for you and a channel needs a provider at runtime. To use a different
+transport — or TLS, or interceptors, or an in-process channel for tests — build the channel yourself and
+hand it to `LockClient.scoped(channel)`, excluding `grpc-netty` from the dependency.
 
 ## Getting them
 
@@ -79,6 +100,12 @@ libraryDependencies ++= Seq(
 )
 ```
 
+For the lock, one line replaces both — the client brings the stubs and a transport with it:
+
+```scala
+libraryDependencies += "com.andremeira.homelab" %% "distributed-keyed-queue-client" % dkqVersion
+```
+
 > **Pin Netty to what your `grpc-netty` was built against.** `grpc-netty` reaches into Netty's HTTP/2
 > internals, and mixing versions produces corrupt HPACK header blocks once several requests are in flight —
 > the client reports `Incomplete header block fragment`, the server reports a truncated request, and neither
@@ -87,8 +114,9 @@ libraryDependencies ++= Seq(
 
 ## What the contract does not give you
 
-**A client.** There is no client module: the generated stub is a stub. Everything about *using* the queue
-correctly is yours to write, and two parts of it are easy to get wrong:
+**A queue client.** The lock has one — see the table above — but the queue does not: for `Dequeue`,
+`Settle` and `Heartbeat` the generated stub is a stub, and everything about *using* the queue correctly is
+yours to write. Two parts of it are easy to get wrong:
 
 - **Heartbeating while you work.** A claim expires unless renewed, and a handler that outlives its lease has
   its claim revoked underneath it — its settles refused, its work possibly redone by someone else.

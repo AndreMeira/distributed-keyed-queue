@@ -1,14 +1,15 @@
-# Publishes the contract module to this repo's GitHub Packages Maven registry when a GitHub Release is
-# published.
+# Publishes the contract and client modules to this repo's GitHub Packages Maven registry when a GitHub
+# Release is published.
 #
 # The trigger is `release`, not `push: tags`, because a release created in the GitHub UI creates its tag
 # internally and emits the release webhook only — a tag-filtered workflow never runs for it. So publishing
 # is driven by the Release, and `workflow_dispatch` is there to re-run one by hand if a publish fails after
 # the release already exists.
 #
-# Two artifacts go out — `protocol` (the message types) and `protocol-zio-grpc` (the RPC stubs). `server`
-# ships as a Docker image and `root`/`e2e` build nothing a consumer wants, so all three set `publish / skip`
-# in build.sbt.
+# Three artifacts go out — `protocol` (the message types), `protocol-zio-grpc` (the RPC stubs) and `client`
+# (the lock in Scala types). `server` ships as a Docker image and `root`/`e2e` build nothing a consumer
+# wants, so all three set `publish / skip` in build.sbt. Nothing here names the modules: `sbt publish` at
+# the root publishes what has not opted out, so a new module is published by existing, not by being listed.
 name: release
 
 on:

@@ -47,6 +47,13 @@ ThisBuild / publishMavenStyle := true
 
 ThisBuild / publishTo := Some(GitHubPackages.registry)
 
+// A resolver is this build's business, not a consumer's. sbt copies `resolvers` into every POM it writes,
+// so without this a consumer of any of these artifacts inherits a registry they hold no credential for —
+// and GitHub Packages serves Maven only to authenticated callers, whatever the package's visibility.
+// Nothing published resolves from it anyway: only `server` depends on the toolkit, and `server` does not
+// publish.
+ThisBuild / pomIncludeRepository := { _ => false }
+
 
 // One gRPC version and one Netty version across the whole build, including the end-to-end project.
 //
