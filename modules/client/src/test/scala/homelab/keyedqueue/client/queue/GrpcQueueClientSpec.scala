@@ -76,7 +76,7 @@ object GrpcQueueClientSpec extends ZIOSpecDefault:
       for
         seen   <- Ref.make(Chunk.empty[Any])
         client <- served(Recording(seen))
-        message = Message.Outgoing("k1", MessageId("m1"), "order.v2", "application/json", Chunk(9.toByte))
+        message = Message.Outgoing(MessageKey("k1"), MessageId("m1"), "order.v2", "application/json", Chunk(9.toByte))
         answer <- client.enqueue("orders", message)
         sent   <- seen.get
         request = sent.collectFirst { case request: v1.EnqueueRequest => request }

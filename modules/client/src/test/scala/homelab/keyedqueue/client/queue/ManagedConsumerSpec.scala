@@ -26,7 +26,7 @@ object ManagedConsumerSpec extends ZIOSpecDefault:
   private val order   = Order("o-1")
 
   private def message(attempt: Int = 1, payload: Chunk[Byte] = encoder.encode(order)): Message.Incoming =
-    Message.Incoming("k1", MessageId("m1"), "order.v1", encoder.encoding, payload, Instant.EPOCH, attempt)
+    Message.Incoming(MessageKey("k1"), MessageId("m1"), "order.v1", encoder.encoding, payload, Instant.EPOCH, attempt)
 
   private def claim(of: Message.Incoming): Dequeued =
     Dequeued.Claimed(Claim(Receipt("r1"), NonEmptyChunk(of), Instant.EPOCH, lease, backlogDepth = 0))

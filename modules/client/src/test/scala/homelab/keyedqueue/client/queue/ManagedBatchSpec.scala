@@ -29,7 +29,7 @@ object ManagedBatchSpec extends ZIOSpecDefault:
   private def order(id: String): Order = Order(id)
 
   private def message(id: String, payload: Chunk[Byte], attempt: Int = 1): Message.Incoming =
-    Message.Incoming("k1", MessageId(id), "order.v1", encoder.encoding, payload, Instant.EPOCH, attempt)
+    Message.Incoming(MessageKey("k1"), MessageId(id), "order.v1", encoder.encoding, payload, Instant.EPOCH, attempt)
 
   private def readable(id: String): Message.Incoming =
     message(id, encoder.encode(order(id)))

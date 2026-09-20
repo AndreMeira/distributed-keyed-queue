@@ -3,7 +3,7 @@ package homelab.keyedqueue.client.queue
 
 import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.messaging.{ Consumer, Producer }
-import homelab.keyedqueue.client.queue.Provider.{ BatchConsumerConfig, ConsumerConfig }
+import homelab.keyedqueue.client.queue.Provider.{ BatchConsumerConfig, ConsumerConfig, Partition }
 import zio.*
 
 
@@ -47,13 +47,41 @@ trait Provider:
   ): URIO[Scope, Consumer.Batched[AdapterError, A]]
 
   /**
-   * A producer for one queue.
+   * A producer for one queue, naming each message from the value it sends.
+   *
+   * The id and the key come from the value because `emit` carries neither: an id derived from what is
+   * being sent makes a retried emit the same message rather than a second one, and a key derived the same
+   * way is what puts related messages in one order.
+   *
+   * The payload type is stated here rather than per message, since one producer sends one kind, and it is
+   * not the encoder's to know — a schema knows its structure, not the name an organisation agreed on.
    *
    * @param name which queue to send to
+   * @param payloadType the schema name and version every message of this producer states
+   * @param parts what names a value: its id, and the key whose order it takes its place in
    * @tparam A what it sends
    * @return the producer
    */
-  def producer[A: MessageEncoder](name: String): UIO[Producer[AdapterError, A]]
+  def producer[A: MessageEncoder](
+    name: String,
+    payloadType: String,
+  )(
+    parts: A => (MessageId, MessageKey)
+  ): UIO[Producer[AdapterError, A]]
+
+  /**
+   * The same, for a type that says how it is named.
+   *
+   * @param name which queue to send to
+   * @param payloadType the schema name and version every message of this producer states
+   * @tparam A what it sends, which needs a [[Provider.Partition]] in scope to name it
+   * @return the producer
+   */
+  def producer[A: {MessageEncoder, Partition as partition}](
+    name: String,
+    payloadType: String,
+  ): UIO[Producer[AdapterError, A]] =
+    producer(name, payloadType)(value => partition.messageId(value) -> partition.messageKey(value))
 
 
 object Provider:
@@ -132,3 +160,39 @@ object Provider:
      * @param attempts how many deliveries to allow before discarding
      */
     case DiscardAfter(attempts: Int)
+
+  /**
+   * How a value says what to call it and where it belongs.
+   *
+   * The two things `emit` cannot carry, for a caller that would rather state them once for a type than at
+   * every producer it builds.
+   *
+   * @tparam A what it names
+   */
+  trait Partition[A]:
+
+    /**
+     * What a settle will name this message by, and what makes a repeated send one message rather than two.
+     *
+     * @param value what is being sent
+     * @return its id
+     */
+    def messageId(value: A): MessageId
+
+    /**
+     * The key whose order this message takes its place in.
+     *
+     * @param value what is being sent
+     * @return its key
+     */
+    def messageKey(value: A): MessageKey
+
+  object Partition:
+
+    /**
+     * The naming a caller has in scope for a type.
+     *
+     * @tparam A what it names, which needs a partition in scope
+     * @return that naming
+     */
+    def apply[A: Partition as partition]: Partition[A] = partition

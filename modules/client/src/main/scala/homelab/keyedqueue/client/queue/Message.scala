@@ -16,7 +16,7 @@ import java.time.Instant
 sealed trait Message:
 
   /** @return the key whose order this message takes its place in */
-  def key: String
+  def key: MessageKey
 
   /** @return what a settle names it by */
   def id: MessageId
@@ -43,7 +43,7 @@ object Message:
    * @param payload the payload, as it travels
    */
   final case class Outgoing(
-    key: String,
+    key: MessageKey,
     id: MessageId,
     payloadType: String,
     encoding: String,
@@ -65,7 +65,7 @@ object Message:
      * @return the message to enqueue
      */
     def apply[A: MessageEncoder as encoder](
-      key: String,
+      key: MessageKey,
       id: MessageId,
       payloadType: String,
       value: A,
@@ -84,7 +84,7 @@ object Message:
    * @param attempt how many times it has been delivered; 1 on the first
    */
   final case class Incoming(
-    key: String,
+    key: MessageKey,
     id: MessageId,
     payloadType: String,
     encoding: String,

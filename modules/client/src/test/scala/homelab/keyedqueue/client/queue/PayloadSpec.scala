@@ -24,7 +24,7 @@ object PayloadSpec extends ZIOSpecDefault:
   private val order = Order("o-1", 3)
 
   private def arrived(payload: Chunk[Byte], encoding: String, payloadType: String): Message.Incoming =
-    Message.Incoming("k1", MessageId("m1"), payloadType, encoding, payload, Instant.EPOCH, attempt = 1)
+    Message.Incoming(MessageKey("k1"), MessageId("m1"), payloadType, encoding, payload, Instant.EPOCH, attempt = 1)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("payloads")(
     test("a value written by the schema encoder is read back by the schema decoder") {
@@ -34,7 +34,7 @@ object PayloadSpec extends ZIOSpecDefault:
     },
     test("an outgoing message states the encoding the encoder wrote, never one the caller chose") {
       given MessageEncoder[Order] = MessageEncoder.derive[Order]
-      val outgoing                = Message.Outgoing("k1", MessageId("m1"), "order.v2", order)
+      val outgoing                = Message.Outgoing(MessageKey("k1"), MessageId("m1"), "order.v2", order)
       assertTrue(
         outgoing.encoding == MessageEncoder.protobuf,
         outgoing.payload.nonEmpty,
@@ -59,7 +59,7 @@ object PayloadSpec extends ZIOSpecDefault:
     test("with both autos imported, a caller states the value and nothing about how it travels") {
       import MessageDecoder.auto.given
       import MessageEncoder.auto.given
-      val outgoing = Message.Outgoing("k1", MessageId("m1"), "order.v2", order)
+      val outgoing = Message.Outgoing(MessageKey("k1"), MessageId("m1"), "order.v2", order)
       val message  = arrived(outgoing.payload, outgoing.encoding, outgoing.payloadType)
       assertTrue(MessageDecoder[Order].decode(message) == Right(order))
     },

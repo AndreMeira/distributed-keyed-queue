@@ -45,7 +45,15 @@ final private[client] class ManagedProvider(client: QueueClient) extends Provide
 
   /**
    * @param name which queue to send to
+   * @param payloadType the schema name and version every message of this producer states
+   * @param parts what names a value: its id, and the key whose order it takes its place in
    * @tparam A what it sends
    * @return the producer
    */
-  override def producer[A: MessageEncoder](name: String): UIO[Producer[AdapterError, A]] = ???
+  override def producer[A: MessageEncoder](
+    name: String,
+    payloadType: String,
+  )(
+    parts: A => (MessageId, MessageKey)
+  ): UIO[Producer[AdapterError, A]] =
+    ZIO.succeed(ManagedProducer(client, name, payloadType, parts))

@@ -50,7 +50,7 @@ object QueueCodecsSpec extends ZIOSpecDefault:
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueCodecs")(
     suite("enqueue")(
       test("a message goes out as an envelope around bytes, stamped with the moment it was sent") {
-        val outgoing = Message.Outgoing("k1", MessageId("m1"), "order.v2", "application/json", Chunk(1.toByte))
+        val outgoing = Message.Outgoing(MessageKey("k1"), MessageId("m1"), "order.v2", "application/json", Chunk(1.toByte))
         val request  = QueueCodecs.encode("orders", outgoing, moment)
         assertTrue(
           request.queue == "orders",

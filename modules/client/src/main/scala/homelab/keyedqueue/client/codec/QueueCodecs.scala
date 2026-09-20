@@ -130,7 +130,7 @@ private[client] object QueueCodecs:
       carried <- delivery.message.toRight(ServiceError.Unreadable("a delivery arrived with no message"))
       sentAt  <- Protos.deadline(carried.sentAt, "a delivery")
     yield Message.Incoming(
-      key = carried.key,
+      key = MessageKey(carried.key),
       id = MessageId(delivery.messageId),
       payloadType = carried.payloadType,
       encoding = carried.encoding,
