@@ -1,42 +1,117 @@
 package homelab.keyedqueue.client.queue
 
-import zio.Chunk
+
+import zio.schema.Schema
+import zio.schema.codec.{ BinaryCodec, DecodeError, ProtobufCodec }
 
 
 /**
  * How an arrived message becomes a value.
  *
- * It reads whole messages rather than bytes because it is the only thing that sees the encoding a sender
- * stated, and refusing a message written in a format it does not read is its job — that refusal is what
- * the field is for, since bytes in the wrong format can decode into something wrong rather than fail.
+ * It reads whole messages rather than bytes because it is the only thing that sees what a sender said it
+ * wrote — the encoding and the payload type. Whether to hold a message to those is the caller's choice:
+ * [[MessageDecoder.derive]] reads whatever arrives, [[MessageDecoder.expecting]] refuses anything a
+ * sender labelled as something else.
  *
  * @tparam A what it reads
  */
 trait MessageDecoder[A]:
 
-  /** @return the media type it reads, such as `application/json` */
-  def encoding: String
-
   /**
-   * Read a payload this decoder has already accepted the encoding of.
-   *
-   * @param payload the bytes as they travelled
-   * @return the value, or why the bytes are not one
-   */
-  protected def read(payload: Chunk[Byte]): Either[String, A]
-
-  /**
-   * Read an arrived message, if it is written in the format this reads.
+   * Read an arrived message.
    *
    * @param message what arrived
    * @return the value it carries, or why this decoder cannot produce one
    */
-  final def decode(message: Message.Incoming): Either[MessageDecoder.Failure, A] =
-    if message.encoding != encoding then Left(MessageDecoder.Failure.WrongEncoding(expected = encoding, found = message.encoding))
-    else read(message.payload).left.map(MessageDecoder.Failure.Unreadable.apply)
+  def decode(message: Message.Incoming): Either[MessageDecoder.Failure, A]
 
 
 object MessageDecoder:
+
+  /**
+   * A decoder for one payload type, over that type's schema.
+   *
+   * What a consumer of a single kind of message wants: it reads the schema's own format and refuses
+   * anything a sender labelled as something else. [[derive]] is the same without the refusal.
+   *
+   * The encoding is the schema codec's own rather than an argument, so the format this accepts and the
+   * format it reads are the same statement.
+   *
+   * @param payloadType the schema name and version to accept
+   * @tparam A what it reads
+   * @return the decoder
+   */
+  def expecting[A: Schema](payloadType: String): MessageDecoder[A] =
+    Verifying(MessageEncoder.protobuf, payloadType, ProtobufCodec.protobufCodec[A])
+
+  /**
+   * The same, over a codec this client did not derive.
+   *
+   * The encoding is stated here because only the caller knows what its codec writes; stating one the codec
+   * does not write is what this refusal exists to catch elsewhere.
+   *
+   * @param payloadType the schema name and version to accept
+   * @param encoding the media type the codec reads, which is what this accepts
+   * @tparam A what it reads
+   * @return the decoder
+   */
+  def expecting[A: BinaryCodec as codec](payloadType: String, encoding: String): MessageDecoder[A] =
+    Verifying(encoding, payloadType, codec)
+
+  /**
+   * A decoder over a type's schema, reading protobuf.
+   *
+   * Reads the bytes and says nothing about what the sender claimed they are; [[expecting]] is the same
+   * reading with that refusal in front of it.
+   *
+   * @tparam A what it reads
+   * @return the decoder
+   */
+  def derive[A: Schema]: MessageDecoder[A] =
+    Decoding(ProtobufCodec.protobufCodec[A])
+
+  /**
+   * What a failure to read amounts to, as a value the reading answers with.
+   *
+   * @param error what the codec said was wrong
+   * @return the failure
+   */
+  private def unreadable(error: DecodeError): Failure =
+    Failure.Unreadable(error.message)
+
+  /**
+   * A decoder over a codec that has already been derived.
+   *
+   * @param codec what turns bytes into a value
+   * @tparam A what it reads
+   */
+  final private class Decoding[A](codec: BinaryCodec[A]) extends MessageDecoder[A]:
+
+    /**
+     * @param message what arrived
+     * @return the value its payload carries, or why the bytes are not one
+     */
+    override def decode(message: Message.Incoming): Either[Failure, A] =
+      codec.decode(message.payload).left.map(unreadable)
+
+  /**
+   * A decoder that checks what a sender claimed before reading anything.
+   *
+   * @param encoding the media type to accept
+   * @param payloadType the schema name and version to accept
+   * @param codec what reads the bytes once they are accepted
+   * @tparam A what it reads
+   */
+  final private class Verifying[A](encoding: String, payloadType: String, codec: BinaryCodec[A]) extends MessageDecoder[A]:
+
+    /**
+     * @param message what arrived
+     * @return the value it carries, or why this decoder will not read it
+     */
+    override def decode(message: Message.Incoming): Either[Failure, A] =
+      if message.encoding != encoding then Left(Failure.WrongEncoding(encoding, message.encoding))
+      else if message.payloadType != payloadType then Left(Failure.WrongType(payloadType, message.payloadType))
+      else codec.decode(message.payload).left.map(unreadable)
 
   /**
    * Why a message did not become a value.
@@ -53,6 +128,14 @@ object MessageDecoder:
      * @param found what the message says it is
      */
     case WrongEncoding(expected: String, found: String)
+
+    /**
+     * The sender wrote something this decoder is not for.
+     *
+     * @param expected what this decoder reads
+     * @param found what the message says it is
+     */
+    case WrongType(expected: String, found: String)
 
     /**
      * The format was right and the bytes were not a value.
