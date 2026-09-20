@@ -45,6 +45,13 @@ object PayloadSpec extends ZIOSpecDefault:
       val message = arrived(Chunk(9.toByte, 9.toByte), MessageEncoder.protobuf, "order.v2")
       assertTrue(MessageDecoder.derive[Order].decode(message).isLeft)
     },
+    test("with both autos imported, a caller states the value and nothing about how it travels") {
+      import MessageDecoder.auto.given
+      import MessageEncoder.auto.given
+      val outgoing = Message.Outgoing("k1", MessageId("m1"), "order.v2", order)
+      val message  = arrived(outgoing.payload, outgoing.encoding, outgoing.payloadType)
+      assertTrue(summon[MessageDecoder[Order]].decode(message) == Right(order))
+    },
     test("a decoder over another codec states the format that codec reads") {
       // The schema case cannot disagree with itself, because it does not take the encoding. This one does
       // take it, for a codec this client did not derive, and is the only place the two could part.

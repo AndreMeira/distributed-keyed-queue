@@ -143,3 +143,19 @@ object MessageDecoder:
      * @param reason what the reading said was wrong
      */
     case Unreadable(reason: String)
+
+  /**
+   * A decoder for anything with a schema, summoned rather than named.
+   *
+   * Imported with `import MessageDecoder.auto.given`, so it is a caller's choice rather than something in
+   * scope by default. What it hands over is [[derive]]: it reads what arrives and says nothing about what
+   * the sender called it, so a consumer that wants a message refused for being something else names
+   * [[expecting]] instead.
+   */
+  object auto:
+
+    /**
+     * @tparam A what it reads, which needs a schema in scope
+     * @return the decoder over that schema's own format
+     */
+    given [A: Schema]: MessageDecoder[A] = MessageDecoder.derive

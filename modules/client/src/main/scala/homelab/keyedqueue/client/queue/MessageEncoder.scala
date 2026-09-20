@@ -46,6 +46,20 @@ object MessageEncoder:
     Encoding(ProtobufCodec.protobufCodec[A])
 
   /**
+   * An encoder for anything with a schema, summoned rather than named.
+   *
+   * Imported with `import MessageEncoder.auto.given`. Building a [[Message.Outgoing]] from a value asks
+   * for one of these, so this is what lets a caller pass the value and nothing else.
+   */
+  object auto:
+
+    /**
+     * @tparam A what it writes, which needs a schema in scope
+     * @return the encoder over that schema's own format
+     */
+    given [A: Schema]: MessageEncoder[A] = MessageEncoder.derive
+
+  /**
    * An encoder over a codec that has already been derived.
    *
    * @param codec what turns a value into bytes
