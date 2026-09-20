@@ -61,17 +61,14 @@ object Message:
      * @param id what a settle will name it by
      * @param payloadType the schema name and version, stated by the caller
      * @param value what to send
-     * @param encoder what writes it, and what names the format it was written in
-     * @tparam A what is being sent
+     * @tparam A what is being sent, which needs an encoder in scope to write it and name its format
      * @return the message to enqueue
      */
-    def apply[A](
+    def apply[A: MessageEncoder as encoder](
       key: String,
       id: MessageId,
       payloadType: String,
       value: A,
-    )(using
-      encoder: MessageEncoder[A]
     ): Outgoing =
       Outgoing(key, id, payloadType, encoder.encoding, encoder.encode(value))
 

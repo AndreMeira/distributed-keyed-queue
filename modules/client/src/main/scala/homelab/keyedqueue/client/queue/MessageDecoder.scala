@@ -29,6 +29,17 @@ trait MessageDecoder[A]:
 object MessageDecoder:
 
   /**
+   * The decoder a caller has in scope for a type.
+   *
+   * Saves naming the instance where one is already there to be found: `MessageDecoder[Order]` rather than
+   * the value it was bound to.
+   *
+   * @tparam A what it reads, which needs a decoder in scope
+   * @return that decoder
+   */
+  def apply[A: MessageDecoder as decoder]: MessageDecoder[A] = decoder
+
+  /**
    * A decoder for one payload type, over that type's schema.
    *
    * What a consumer of a single kind of message wants: it reads the schema's own format and refuses

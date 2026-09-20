@@ -31,6 +31,17 @@ trait MessageEncoder[A]:
 
 object MessageEncoder:
 
+  /**
+   * The encoder a caller has in scope for a type.
+   *
+   * Saves naming the instance where one is already there to be found: `MessageEncoder[Order]` rather than
+   * the value it was bound to.
+   *
+   * @tparam A what it writes, which needs an encoder in scope
+   * @return that encoder
+   */
+  def apply[A: MessageEncoder as encoder]: MessageEncoder[A] = encoder
+
   /** What a schema-derived encoder states its bytes are. */
   val protobuf: String = "application/x-protobuf"
 

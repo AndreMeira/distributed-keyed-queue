@@ -50,7 +50,7 @@ object PayloadSpec extends ZIOSpecDefault:
       import MessageEncoder.auto.given
       val outgoing = Message.Outgoing("k1", MessageId("m1"), "order.v2", order)
       val message  = arrived(outgoing.payload, outgoing.encoding, outgoing.payloadType)
-      assertTrue(summon[MessageDecoder[Order]].decode(message) == Right(order))
+      assertTrue(MessageDecoder[Order].decode(message) == Right(order))
     },
     test("a decoder over another codec states the format that codec reads") {
       // The schema case cannot disagree with itself, because it does not take the encoding. This one does
