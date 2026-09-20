@@ -59,3 +59,18 @@ jobs:
       # Compiled, never run: it keeps the end-to-end suite honest without paying for it on every commit.
       - name: Compile the end-to-end suite
         run: sbt -batch e2e/Test/compile
+
+      # The client is the module whose docs somebody other than us reads, and scaladoc otherwise runs once
+      # a release — so a link that stopped resolving reaches a published artifact before anything says a
+      # word. That happened at 0.0.5, from a package move the compiler was perfectly happy with.
+      #
+      # Grepped rather than made fatal because scaladoc's link warnings are not the compiler's: neither
+      # `-Wconf:...:error` nor `-Xfatal-warnings` promotes them, and `doc` exits 0 with a dead link in it.
+      - name: Generate the client's docs
+        run: |
+          set -o pipefail
+          sbt -batch -no-colors client/doc | tee doc.log
+          if grep -q "Couldn't resolve a member for the given link query" doc.log; then
+            echo "::error::a scaladoc link in the client does not resolve"
+            exit 1
+          fi
