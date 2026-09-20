@@ -3,8 +3,9 @@ package homelab.keyedqueue.client.queue.managed
 
 import homelab.common.messaging.Producer
 import homelab.keyedqueue.client.ServiceError
+import homelab.keyedqueue.client.queue.MessageEncoder
 import homelab.keyedqueue.client.queue.QueueClient
-import homelab.keyedqueue.client.queue.model.{ Message, MessageEncoder, MessageId, MessageKey }
+import homelab.keyedqueue.client.queue.model.{ Message, MessageId, MessageKey }
 import zio.*
 
 
@@ -35,4 +36,4 @@ final private[queue] class ManagedProducer[A: MessageEncoder as encoder](
    */
   override def emit(value: A): IO[ServiceError, Unit] =
     val (id, key) = parts(value)
-    client.enqueue(queue, Message.Outgoing(key, id, value)).unit
+    client.enqueue(queue, MessageEncoder.message(key, id, value)).unit

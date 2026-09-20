@@ -1,6 +1,7 @@
-package homelab.keyedqueue.client.queue.model
+package homelab.keyedqueue.client.queue
 
 
+import homelab.keyedqueue.client.queue.model.{ Message, MessageId, MessageKey }
 import zio.Chunk
 import zio.schema.Schema
 import zio.schema.codec.{ BinaryCodec, ProtobufCodec }
@@ -33,6 +34,21 @@ trait MessageEncoder[A]:
 
 
 object MessageEncoder:
+
+  /**
+   * A message carrying a value this encoder wrote.
+   *
+   * The encoder states the encoding and the payload type as well as the bytes, so the three agree by
+   * construction. A caller naming those itself builds the message directly.
+   *
+   * @param key the key whose order it takes its place in
+   * @param id what a settle will name it by
+   * @param value what to send
+   * @tparam A what is being sent, which needs an encoder in scope
+   * @return the message to enqueue
+   */
+  def message[A: MessageEncoder as encoder](key: MessageKey, id: MessageId, value: A): Message.Outgoing =
+    Message.Outgoing(key, id, encoder.payloadType, encoder.encoding, encoder.encode(value))
 
   /**
    * The encoder a caller has in scope for a type.
@@ -85,7 +101,7 @@ object MessageEncoder:
   /**
    * An encoder for anything with a schema, summoned rather than named.
    *
-   * Imported with `import MessageEncoder.auto.given`. Building a [[Message.Outgoing]] from a value asks
+   * Imported with `import MessageEncoder.auto.given`. Building a [[model.Message.Outgoing]] from a value asks
    * for one of these, so this is what lets a caller pass the value and nothing else.
    */
   object auto:

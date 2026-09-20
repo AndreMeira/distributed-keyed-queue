@@ -1,7 +1,9 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.managed
 
 
+import homelab.keyedqueue.client.queue.{ Provider, QueueClient }
 import homelab.keyedqueue.client.ServiceError
+import homelab.keyedqueue.client.queue.{ MessageDecoder, MessageEncoder }
 import homelab.keyedqueue.client.queue.model.*
 import zio.*
 import zio.schema.{ DeriveSchema, Schema }

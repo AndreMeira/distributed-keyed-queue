@@ -1,6 +1,7 @@
-package homelab.keyedqueue.client.queue.model
+package homelab.keyedqueue.client.queue
 
 
+import homelab.keyedqueue.client.queue.model.Message
 import zio.schema.Schema
 import zio.schema.codec.{ BinaryCodec, DecodeError, ProtobufCodec }
 

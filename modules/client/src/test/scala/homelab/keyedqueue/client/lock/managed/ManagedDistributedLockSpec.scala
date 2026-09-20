@@ -1,6 +1,7 @@
-package homelab.keyedqueue.client.lock
+package homelab.keyedqueue.client.lock.managed
 
 
+import homelab.keyedqueue.client.lock.{ DistributedLock, LockClient }
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.lock.model.{ Acquired, Fence, Hold, Receipt, Refreshed }
 import zio.*
@@ -13,7 +14,7 @@ import java.time.Instant
  * What the managed form promises beyond the client: the lease is kept alive while the caller's effect
  * runs, and the lock comes back on every exit.
  */
-object DistributedLockSpec extends ZIOSpecDefault:
+object ManagedDistributedLockSpec extends ZIOSpecDefault:
 
   /** The lease the fake service grants, which is what the renewals are timed by. */
   private val lease = 40.millis

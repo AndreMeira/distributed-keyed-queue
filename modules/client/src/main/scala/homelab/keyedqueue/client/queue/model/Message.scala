@@ -50,22 +50,6 @@ object Message:
     payload: Chunk[Byte],
   ) extends Message
 
-  object Outgoing:
-
-    /**
-     * One to send, carrying a value the encoder writes.
-     *
-     * The encoder states the encoding as well as the bytes, so the two agree by construction.
-     *
-     * @param key the key whose order it takes its place in
-     * @param id what a settle will name it by
-     * @param value what to send
-     * @tparam A what is being sent, which needs an encoder in scope to write it and to say what it is
-     * @return the message to enqueue
-     */
-    def apply[A: MessageEncoder as encoder](key: MessageKey, id: MessageId, value: A): Outgoing =
-      Outgoing(key, id, encoder.payloadType, encoder.encoding, encoder.encode(value))
-
   /**
    * One that arrived, with what only a delivery knows.
    *

@@ -4,7 +4,7 @@ package homelab.keyedqueue.e2e
 import homelab.keyedqueue.client.{ Endpoint, ServiceError }
 import homelab.keyedqueue.client.lock.{ DistributedLock, LockClient }
 import homelab.keyedqueue.client.queue.model.*
-import homelab.keyedqueue.client.queue.{ Provider, QueueClient }
+import homelab.keyedqueue.client.queue.{ MessageDecoder, MessageEncoder, Provider, QueueClient }
 import zio.*
 import zio.schema.{ DeriveSchema, Schema }
 import zio.test.*

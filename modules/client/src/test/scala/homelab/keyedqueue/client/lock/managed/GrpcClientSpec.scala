@@ -1,8 +1,9 @@
-package homelab.keyedqueue.client.lock
+package homelab.keyedqueue.client.lock.managed
 
 
 import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
+import homelab.keyedqueue.client.lock.LockClient
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.lock.model.{ Acquired, Fence, Hold, Receipt, Refreshed }
 import homelab.keyedqueue.v1
@@ -23,7 +24,7 @@ import java.time.Instant
  * back. The codec specs above it work on messages that were handed to them, so a request built wrong, or a
  * status read wrong, would pass everything else in this module.
  */
-object GrpcLockClientSpec extends ZIOSpecDefault:
+object GrpcClientSpec extends ZIOSpecDefault:
 
   private val until   = Timestamp(1_700_000_000L, 0)
   private val moment  = Instant.ofEpochSecond(1_700_000_000L)

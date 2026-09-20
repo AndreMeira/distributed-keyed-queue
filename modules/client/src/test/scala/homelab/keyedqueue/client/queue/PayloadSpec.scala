@@ -1,7 +1,8 @@
 package homelab.keyedqueue.client.queue
 
 
-import homelab.keyedqueue.client.queue.model.{ Message, MessageDecoder, MessageEncoder, MessageId, MessageKey }
+import homelab.keyedqueue.client.queue.{ MessageDecoder, MessageEncoder }
+import homelab.keyedqueue.client.queue.model.{ Message, MessageId, MessageKey }
 import zio.*
 import zio.schema.codec.{ BinaryCodec, ProtobufCodec }
 import zio.schema.{ DeriveSchema, Schema }
@@ -35,7 +36,7 @@ object PayloadSpec extends ZIOSpecDefault:
     },
     test("an outgoing message states the encoding the encoder wrote, never one the caller chose") {
       given MessageEncoder[Order] = MessageEncoder.deriveAs[Order]("order.v2")
-      val outgoing                = Message.Outgoing(MessageKey("k1"), MessageId("m1"), order)
+      val outgoing                = MessageEncoder.message(MessageKey("k1"), MessageId("m1"), order)
       assertTrue(
         outgoing.encoding == MessageEncoder.protobuf,
         outgoing.payload.nonEmpty,
@@ -60,7 +61,7 @@ object PayloadSpec extends ZIOSpecDefault:
     test("with both autos imported, a caller states the value and nothing about how it travels") {
       import MessageDecoder.auto.given
       import MessageEncoder.auto.given
-      val outgoing = Message.Outgoing(MessageKey("k1"), MessageId("m1"), order)
+      val outgoing = MessageEncoder.message(MessageKey("k1"), MessageId("m1"), order)
       val message  = arrived(outgoing.payload, outgoing.encoding, outgoing.payloadType)
       assertTrue(MessageDecoder[Order].decode(message) == Right(order))
     },

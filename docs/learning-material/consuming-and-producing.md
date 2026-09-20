@@ -49,7 +49,7 @@ home.
 
 ```scala
 import homelab.keyedqueue.client.Endpoint
-import homelab.keyedqueue.client.queue.{ Provider, QueueClient }
+import homelab.keyedqueue.client.queue.{ MessageDecoder, MessageEncoder, Partition, Provider, QueueClient }
 import homelab.keyedqueue.client.queue.model.*
 import zio.schema.{ DeriveSchema, Schema }
 
@@ -82,7 +82,7 @@ own, so a message sent without one is ordered against nothing.
 If a type always names itself the same way, say so once with a `Partition` and use the shorter call:
 
 ```scala
-given Provider.Partition[Order] with
+given Partition[Order] with
   override def messageId(order: Order): MessageId   = MessageId(order.id)
   override def messageKey(order: Order): MessageKey = MessageKey(order.customer)
 

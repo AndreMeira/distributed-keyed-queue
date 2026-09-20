@@ -1,20 +1,10 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.managed
 
 
+import homelab.keyedqueue.client.queue.{ Provider, QueueClient }
 import homelab.keyedqueue.client.ServiceError
-import homelab.keyedqueue.client.queue.model.{
-  Dequeued,
-  Enqueued,
-  Message,
-  MessageDecoder,
-  MessageEncoder,
-  MessageId,
-  MessageKey,
-  Receipt,
-  Renewed,
-  Settled,
-  Verdict,
-}
+import homelab.keyedqueue.client.queue.{ MessageDecoder, MessageEncoder, Partition }
+import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, MessageId, MessageKey, Receipt, Renewed, Settled, Verdict }
 import zio.*
 import zio.schema.{ DeriveSchema, Schema }
 import zio.test.*
@@ -36,7 +26,7 @@ object ManagedProducerSpec extends ZIOSpecDefault:
   private val order = Order("o-1", "c-9")
 
   /** Names an order by its own id, and orders it against the customer it belongs to. */
-  private given Provider.Partition[Order] with
+  private given Partition[Order] with
     override def messageId(value: Order): MessageId   = MessageId(value.id)
     override def messageKey(value: Order): MessageKey = MessageKey(value.customer)
 

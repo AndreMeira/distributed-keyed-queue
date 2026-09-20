@@ -1,21 +1,10 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.managed
 
 
+import homelab.keyedqueue.client.queue.{ Provider, QueueClient }
 import homelab.keyedqueue.client.ServiceError
-import homelab.keyedqueue.client.queue.model.{
-  Claim,
-  Dequeued,
-  Enqueued,
-  Message,
-  MessageDecoder,
-  MessageEncoder,
-  MessageId,
-  MessageKey,
-  Receipt,
-  Renewed,
-  Settled,
-  Verdict,
-}
+import homelab.keyedqueue.client.queue.{ MessageDecoder, MessageEncoder }
+import homelab.keyedqueue.client.queue.model.{ Claim, Dequeued, Enqueued, Message, MessageId, MessageKey, Receipt, Renewed, Settled, Verdict }
 import zio.*
 import zio.schema.{ DeriveSchema, Schema }
 import zio.test.*
@@ -33,7 +22,7 @@ object ManagedConsumerSpec extends ZIOSpecDefault:
 
   private given Schema[Order] = DeriveSchema.gen[Order]
 
-  import homelab.keyedqueue.client.queue.model.MessageDecoder.auto.given
+  import homelab.keyedqueue.client.queue.MessageDecoder.auto.given
 
   private val lease   = 40.millis
   private val encoder = MessageEncoder.derive[Order]
