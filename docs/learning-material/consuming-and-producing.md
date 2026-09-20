@@ -152,6 +152,66 @@ _   <- raw.consume(handleOrDrop).forever
 The last two are the reason this is a consumer of messages rather than a consumer of values: a fixed set
 of policies could express the first three and never the rest.
 
+Each of those, written out. They all start from a decoder built once rather than per message:
+
+```scala
+private val orders  = MessageDecoder.deriveAs[Order]("order.v2")
+private val refunds = MessageDecoder.deriveAs[Refund]("refund.v1")
+
+private def unreadable(message: Message.Incoming)(failure: MessageDecoder.Failure): ServiceError =
+  ServiceError.Unreadable(s"${message.id} said it was ${message.payloadType}: $failure")
+```
+
+**It comes back** — the reading fails, so the handler fails, so the message settles failed:
+
+```scala
+def retrying(message: Message.Incoming): IO[ServiceError | MyError, Unit] =
+  ZIO.fromEither(orders.decode(message)).mapError(unreadable(message)).flatMap(handle)
+```
+
+**It is gone** — answer for it, and the claim settles done:
+
+```scala
+def dropping(message: Message.Incoming): IO[MyError, Unit] =
+  orders.decode(message) match
+    case Right(order) => handle(order)
+    case Left(_)      => ZIO.unit
+```
+
+**A few times, then gone** — the delivery says how often it has been tried:
+
+```scala
+def dropAfter(tries: Int)(message: Message.Incoming): IO[ServiceError | MyError, Unit] =
+  orders.decode(message) match
+    case Right(order)                        => handle(order)
+    case Left(_) if message.attempt >= tries  => ZIO.unit
+    case Left(failure)                        => ZIO.fail(unreadable(message)(failure))
+```
+
+**Somewhere else** — a dead letter queue is a producer, so this is two lines rather than a feature:
+
+```scala
+def deadLettering(rejects: Producer[ServiceError, Rejected])(
+  message: Message.Incoming
+): IO[ServiceError | MyError, Unit] =
+  orders.decode(message) match
+    case Right(order) => handle(order)
+    case Left(_)      => rejects.emit(Rejected(message.id, message.payloadType, message.encoding))
+```
+
+**Several kinds on one queue** — what the sender called it is on the message, so match on it:
+
+```scala
+def dispatching(message: Message.Incoming): IO[ServiceError | MyError, Unit] =
+  message.payloadType match
+    case "order.v2"  => ZIO.fromEither(orders.decode(message)).mapError(unreadable(message)).flatMap(handle)
+    case "refund.v1" => ZIO.fromEither(refunds.decode(message)).mapError(unreadable(message)).flatMap(refund)
+    case _           => ZIO.unit
+```
+
+Any of them goes into `raw.consume(...)`, and `consumer[A]` is the first one with the decoder supplied for
+you.
+
 ## Taking a key's messages together
 
 ```scala

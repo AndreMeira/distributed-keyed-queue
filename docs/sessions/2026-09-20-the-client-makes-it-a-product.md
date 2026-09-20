@@ -24,8 +24,11 @@ code and in the notes beside this one.
 | [#32](https://github.com/AndreMeira/distributed-keyed-queue/pull/32) | the wire test nothing else covered: request shapes and status mapping over a real channel |
 | [#33](https://github.com/AndreMeira/distributed-keyed-queue/pull/33) | `lease_ttl` on the queue's wire, and the queue's four RPCs in Scala types |
 | [#34](https://github.com/AndreMeira/distributed-keyed-queue/pull/34) | the consumer that heartbeats and settles, the batch, the producer, and a page for each half |
+| [#39](https://github.com/AndreMeira/distributed-keyed-queue/pull/39) | the consumer delivering messages, with the typed one composed over it |
 
-72 client tests, 103 server, 17 end to end.
+0.0.5 carries everything up to #34; #39 lands after it and goes out with the next release.
+
+71 client tests, 103 server, 17 end to end.
 
 ## The line the client draws
 
@@ -34,10 +37,18 @@ service cannot enforce and the stubs do not mention:
 
 - **the lease** — renewed while the caller's work runs, on a cadence taken from what the service granted
 - **the settle** — on an answer, a failure *and* an interruption, so nothing taken is left owed
-- **the payload** — a value in and a value out, with what will not decode handled by a stated policy
+- **the payload** — a value in and a value out, for the consumer that wants one
 
 Everything layer 2 decides is reachable by dropping to layer 1. That rule held through the whole build and
 is what settled most arguments: per-message outcomes, the fencing token, the batch size.
+
+The third took a turn worth recording. The consumer first delivered values and kept an enum for the
+messages that would not become one — retry it, drop it, drop it after so many tries. That enum was
+`mapZIO` written out by hand, which the toolkit's NATS consumer had already noticed: it delivers messages
+and lets a caller `map` them, so one policy about handler failures covers decoding too. dkq now does the
+same, and `consumer[A]` is a consumer of messages plus a reading. Two things a fixed set of policies could
+never express came with it — a dead letter, because that is a producer, and a queue carrying several
+kinds, because `payloadType` is there to match on.
 
 ## Two things the wire owed the client
 
@@ -74,7 +85,8 @@ Nothing blocking, in rough order of what would pay:
   first. The fallback is load-bearing now rather than incidental.
 - **The decoder's no-argument `derive` checks nothing**, not even the encoding, while `deriveAs` checks
   both. Unlike the payload type, the format is always derivable from the codec, so an unconditional
-  encoding check may be the better default.
+  encoding check may be the better default. Reading being the caller's now makes this a smaller question
+  than it was, not a settled one.
 - Tests do not mirror the new `model`/`managed` subpackages, and the two payload typeclasses sit in
   `model` while being behaviour rather than data.
 - Older, unchanged: duplicate CI runs awaiting branch protection, and `LockAcquireUseCaseSpec`'s sleeps

@@ -61,7 +61,8 @@ final private[queue] class ManagedBatch(
   ): IO[E2, Unit] =
     ZIO.uninterruptibleMask: restore =>
       val messages = claim.messages.toList
-      heartbeat.hold(claim) *> restore(logic(messages)).onExit(exit => settle(claim, worked(exit, messages)))
+      heartbeat.hold(claim) *> restore(logic(messages))
+        .onExit(exit => settle(claim, worked(exit, messages)))
 
   /**
    * What became of the messages the logic was given.
