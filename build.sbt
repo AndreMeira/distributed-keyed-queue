@@ -309,9 +309,10 @@ lazy val demo = project
 
 lazy val e2e = project
   .in(file("e2e"))
-  // the contract, not `server`: these tests are a *consumer*, and depending on the contract alone is the
-  // property worth keeping — nothing here can reach past the wire into the implementation it is testing.
-  .dependsOn(protocolZioGrpc)
+  // the contract and the client, never `server`: these tests are a *consumer*, and what matters is that
+  // nothing here can reach past the wire into the implementation it is testing. The client is on this
+  // side of the wire, so driving it here is a consumer doing what a consumer does.
+  .dependsOn(protocolZioGrpc, client)
   .settings(
     name           := "distributed-keyed-queue-e2e",
     publish / skip := true,
