@@ -12,7 +12,7 @@ import zio.*
  *
  * The managed form of [[LockClient]]. It keeps the lease alive for as long as the caller's effect runs and
  * releases on every exit, so the receipt and the fence stay out of the caller's way. A caller that stamps
- * its writes with the fence wants [[LockClient]] instead, which hands the [[Hold]] over.
+ * its writes with the fence wants [[LockClient]] instead, which hands the [[model.Hold]] over.
  */
 trait DistributedLock:
 
