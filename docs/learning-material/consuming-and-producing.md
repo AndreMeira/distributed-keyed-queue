@@ -13,7 +13,33 @@ The queue half of `distributed-keyed-queue-client`, from the outside. What it is
 problem.
 
 If you want the RPCs instead — per-message outcomes, the backlog depth, a batch you settle by hand — that
-is `QueueClient` underneath, and everything below is built on it in public.
+is `QueueClient` underneath, and everything below is built on it in public. The lock half is
+[`taking-a-lock.md`](taking-a-lock.md).
+
+## Depending on it
+
+```scala
+resolvers ++= Seq(
+  "distributed-keyed-queue" at "https://maven.pkg.github.com/AndreMeira/distributed-keyed-queue",
+  "homelab-toolkit-zio"     at "https://maven.pkg.github.com/AndreMeira/homelab-toolkit-zio",
+)
+
+libraryDependencies += "com.andremeira.homelab" %% "distributed-keyed-queue-client" % dkqVersion
+```
+
+One artifact, and it brings the stubs, a transport, `zio-schema` for the payload codecs, and
+`homelab-common` for the messaging ports a consumer and a producer are.
+
+**Two resolvers, not one.** `homelab-common` lives in the toolkit's own registry, and a published pom does
+not name where its dependencies came from — so a build that lists only the first resolver fails to resolve
+the second artifact with nothing to say why. Both registries also need a credential: GitHub Packages
+serves Maven only to authenticated callers, whatever a package's visibility, and one classic PAT with
+`read:packages` covers every package on the account. The recipe is in
+[`using-the-contract-as-a-dependency.md`](using-the-contract-as-a-dependency.md#getting-them).
+
+**Taking the lock and nothing else still pulls all of it.** The two halves ship in one artifact; if that
+matters to you, the contract modules and the generated stubs are the smaller dependency, and the same
+page says what they cost.
 
 ## Sending
 
@@ -29,8 +55,8 @@ import zio.schema.{ DeriveSchema, Schema }
 
 final case class Order(id: String, customer: String, lines: Int)
 
-given Schema[Order]          = DeriveSchema.gen[Order]
-given MessageEncoder[Order]  = MessageEncoder.deriveAs[Order]("order.v2")
+given Schema[Order]          = DeriveSchema.gen
+given MessageEncoder[Order]  = MessageEncoder.deriveAs("order.v2")
 
 ZIO.scoped:
   for

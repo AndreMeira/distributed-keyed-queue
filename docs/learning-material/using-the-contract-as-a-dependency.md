@@ -54,7 +54,9 @@ the fencing token, which is what you need if you are stamping downstream writes.
 
 The queue half is the same shape: `QueueClient` is its four RPCs, and a `Provider` above it hands out
 consumers that heartbeat and settle for you and producers that name each message from the value being
-sent. That one has a page of its own —
+sent.
+
+Each half has a page of its own: [`taking-a-lock.md`](taking-a-lock.md) and
 [`consuming-and-producing.md`](consuming-and-producing.md).
 
 The two contract artifacts carry no transport. That is not an omission: whether you dial over netty,
@@ -105,11 +107,17 @@ libraryDependencies ++= Seq(
 )
 ```
 
-For the lock, one line replaces both — the client brings the stubs and a transport with it:
+For the lock or the queue, one line replaces both — the client brings the stubs and a transport with it,
+and a second resolver because its messaging ports come from the toolkit's registry:
 
 ```scala
+resolvers += "homelab-toolkit-zio" at "https://maven.pkg.github.com/AndreMeira/homelab-toolkit-zio"
+
 libraryDependencies += "com.andremeira.homelab" %% "distributed-keyed-queue-client" % dkqVersion
 ```
+
+A published pom does not name where its dependencies came from, so without that second resolver the build
+fails on `homelab-common` with nothing to say why.
 
 > **Pin Netty to what your `grpc-netty` was built against.** `grpc-netty` reaches into Netty's HTTP/2
 > internals, and mixing versions produces corrupt HPACK header blocks once several requests are in flight —
