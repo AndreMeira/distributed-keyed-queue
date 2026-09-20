@@ -61,7 +61,7 @@ final private[queue] class ManagedBatch[A: MessageDecoder as decoder](
     ZIO.uninterruptibleMask: restore =>
       heartbeat.hold(claim) *> {
         val messages = claim.messages.toList
-        decoded(claim) match
+        decoded(messages) match
           case Left(unreadable) => settling(claim, refused(unreadable.toSet, messages))
           case Right(values)    => restore(logic(values)).onExit(exit => settling(claim, processed(exit, messages)))
       }
@@ -72,19 +72,15 @@ final private[queue] class ManagedBatch[A: MessageDecoder as decoder](
    * All or nothing, like the outcome: a batch is answered for together, so one message nobody can read
    * keeps the whole claim from the logic rather than handing over the part of it that read.
    *
-   * @param claim what was granted
-   * @return the values in the order they were handed over, or the name of every message that did not
-   *         read
+   * @param messages the claim's messages, in the order they were handed over
+   * @return the values in that order, or the name of every message that did not read
    */
-  private def decoded(claim: Claim): Either[NonEmptyChunk[MessageId], List[A]] =
-    Validation
-      .validateAll(
-        claim.messages.toList.map: message =>
-          decoder.decode(message) match
-            case Right(value) => Validation.succeed(value)
-            case Left(_)      => Validation.fail(message.id)
-      )
-      .toEither
+  private def decoded(messages: List[Message.Incoming]): Either[List[MessageId], List[A]] =
+    val (left, right) = messages.partitionMap: message =>
+      decoder.decode(message) match
+        case Right(value) => Right(value)
+        case Left(_)      => Left(message.id)
+    if left.nonEmpty then Left(left) else Right(right)
 
   /**
    * What became of the messages the logic was given.
