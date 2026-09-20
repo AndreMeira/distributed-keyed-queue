@@ -1,9 +1,10 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.managed
 
 
 import com.google.protobuf.ByteString
 import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
+import homelab.keyedqueue.client.queue.QueueClient
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, MessageId, MessageKey, Receipt, Settled, Verdict }
 import homelab.keyedqueue.v1
@@ -22,7 +23,7 @@ import zio.test.*
  * back. The codec spec beside it works on messages handed straight to it, so a request built wrong, or a
  * status read wrong, would pass everything else in this module.
  */
-object GrpcQueueClientSpec extends ZIOSpecDefault:
+object GrpcClientSpec extends ZIOSpecDefault:
 
   private val stamp = Timestamp(1_700_000_000L, 0)
   private val span  = ProtoDuration(30L, 0)

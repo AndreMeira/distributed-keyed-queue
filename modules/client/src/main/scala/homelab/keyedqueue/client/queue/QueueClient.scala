@@ -2,7 +2,7 @@ package homelab.keyedqueue.client.queue
 
 
 import homelab.keyedqueue.client.queue.managed.GrpcClient
-import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, MessageDecoder, MessageEncoder, Receipt, Renewed, Settled, Verdict }
+import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, Receipt, Renewed, Settled, Verdict }
 import homelab.keyedqueue.client.{ Endpoint, ServiceError }
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
 import io.grpc.ManagedChannelBuilder
@@ -15,7 +15,7 @@ import zio.*
  *
  * One method per RPC and nothing withheld: outcomes are reported per message rather than per claim, the
  * retry delay is the caller's, and the batch size is stated rather than inferred. Payloads are bytes here
- * — [[model.MessageEncoder]] and [[model.MessageDecoder]] are what turn them into values, beside this
+ * — [[MessageEncoder]] and [[MessageDecoder]] are what turn them into values, beside this
  * inside it, so a claim with one unreadable message among ten is a thing a caller handles rather than a
  * shape this has to invent.
  */
