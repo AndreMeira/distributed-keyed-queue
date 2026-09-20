@@ -2,6 +2,8 @@ package homelab.keyedqueue.client.lock
 
 
 import homelab.keyedqueue.client.ServiceError
+import homelab.keyedqueue.client.lock.managed.GrpcClient
+import homelab.keyedqueue.client.lock.model.{ Acquired, Hold, Receipt, Refreshed }
 import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLockClient
 import io.grpc.ManagedChannelBuilder
 import scalapb.zio_grpc.ZManagedChannel
@@ -85,7 +87,7 @@ object LockClient:
    * @return the client; aborts when the stub cannot be built
    */
   def scoped(channel: ZManagedChannel): ZIO[Scope, Throwable, LockClient] =
-    KeyedLockClient.scoped(channel).map(GrpcLockClient(_))
+    KeyedLockClient.scoped(channel).map(GrpcClient(_))
 
   /**
    * The channel a [[Config]] describes.

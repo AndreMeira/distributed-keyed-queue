@@ -1,5 +1,8 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.managed
 
+
+import homelab.keyedqueue.client.queue.QueueClient
+import homelab.keyedqueue.client.queue.model.{ Claim, Receipt, Renewed }
 import zio.*
 
 

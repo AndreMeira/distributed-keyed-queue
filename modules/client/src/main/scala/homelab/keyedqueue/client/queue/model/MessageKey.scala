@@ -1,4 +1,4 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.model
 
 /**
  * What a message is ordered within: the one thing a claim owns, and the reason two consumers never work

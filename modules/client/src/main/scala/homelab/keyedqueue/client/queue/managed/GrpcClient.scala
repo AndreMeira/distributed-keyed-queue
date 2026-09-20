@@ -1,8 +1,10 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.managed
 
 
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.codec.{ Protos, QueueCodecs }
+import homelab.keyedqueue.client.queue.QueueClient
+import homelab.keyedqueue.client.queue.model.*
 import homelab.keyedqueue.v1
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
 import io.grpc.StatusException
@@ -17,7 +19,7 @@ import zio.*
  *
  * @param stub the generated client, already dialled
  */
-final private[client] class GrpcQueueClient(stub: KeyedQueueClient) extends QueueClient:
+final private[client] class GrpcClient(stub: KeyedQueueClient) extends QueueClient:
 
   /**
    * One `Enqueue` call, stamped with the moment it was sent.

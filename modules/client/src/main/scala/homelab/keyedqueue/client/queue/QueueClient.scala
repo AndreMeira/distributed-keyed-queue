@@ -1,6 +1,8 @@
 package homelab.keyedqueue.client.queue
 
 
+import homelab.keyedqueue.client.queue.managed.GrpcClient
+import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, MessageDecoder, MessageEncoder, Receipt, Renewed, Settled, Verdict }
 import homelab.keyedqueue.client.{ Endpoint, ServiceError }
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
 import io.grpc.ManagedChannelBuilder
@@ -78,7 +80,7 @@ object QueueClient:
    * @return the client; aborts when the stub cannot be built
    */
   def scoped(channel: ZManagedChannel): ZIO[Scope, Throwable, QueueClient] =
-    KeyedQueueClient.scoped(channel).map(GrpcQueueClient(_))
+    KeyedQueueClient.scoped(channel).map(GrpcClient(_))
 
   /**
    * The channel an endpoint describes.

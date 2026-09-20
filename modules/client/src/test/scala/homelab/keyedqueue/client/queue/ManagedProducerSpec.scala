@@ -2,6 +2,19 @@ package homelab.keyedqueue.client.queue
 
 
 import homelab.keyedqueue.client.ServiceError
+import homelab.keyedqueue.client.queue.model.{
+  Dequeued,
+  Enqueued,
+  Message,
+  MessageDecoder,
+  MessageEncoder,
+  MessageId,
+  MessageKey,
+  Receipt,
+  Renewed,
+  Settled,
+  Verdict,
+}
 import zio.*
 import zio.schema.{ DeriveSchema, Schema }
 import zio.test.*

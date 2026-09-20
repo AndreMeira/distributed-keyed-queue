@@ -4,6 +4,8 @@ package homelab.keyedqueue.client.queue
 import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.messaging.{ Consumer, Producer }
 import homelab.keyedqueue.client.queue.Provider.{ BatchConsumerConfig, ConsumerConfig, Partition }
+import homelab.keyedqueue.client.queue.managed.ManagedProvider
+import homelab.keyedqueue.client.queue.model.{ MessageDecoder, MessageEncoder, MessageId, MessageKey }
 import zio.*
 
 

@@ -2,6 +2,8 @@ package homelab.keyedqueue.client.lock
 
 
 import homelab.keyedqueue.client.ServiceError
+import homelab.keyedqueue.client.lock.managed.ManagedDistributedLock
+import homelab.keyedqueue.client.lock.model.Hold
 import zio.*
 
 
@@ -70,4 +72,4 @@ object DistributedLock:
    * @param client what it takes the lock with
    * @return the lock
    */
-  def apply(client: LockClient): DistributedLock = ManagedLock(client)
+  def apply(client: LockClient): DistributedLock = ManagedDistributedLock(client)

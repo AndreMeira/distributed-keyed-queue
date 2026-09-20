@@ -1,8 +1,10 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.managed
 
 
 import homelab.common.messaging.Producer
 import homelab.keyedqueue.client.ServiceError
+import homelab.keyedqueue.client.queue.QueueClient
+import homelab.keyedqueue.client.queue.model.{ Message, MessageEncoder, MessageId, MessageKey }
 import zio.*
 
 

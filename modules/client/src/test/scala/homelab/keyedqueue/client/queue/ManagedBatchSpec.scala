@@ -2,6 +2,19 @@ package homelab.keyedqueue.client.queue
 
 
 import homelab.keyedqueue.client.ServiceError
+import homelab.keyedqueue.client.queue.model.{
+  Claim,
+  Dequeued,
+  Enqueued,
+  Message,
+  MessageEncoder,
+  MessageId,
+  MessageKey,
+  Receipt,
+  Renewed,
+  Settled,
+  Verdict,
+}
 import zio.*
 import zio.schema.{ DeriveSchema, Schema }
 import zio.test.*
@@ -21,7 +34,7 @@ object ManagedBatchSpec extends ZIOSpecDefault:
 
   private given Schema[Order] = DeriveSchema.gen[Order]
 
-  import MessageDecoder.auto.given
+  import homelab.keyedqueue.client.queue.model.MessageDecoder.auto.given
 
   private val lease   = 40.millis
   private val encoder = MessageEncoder.derive[Order]

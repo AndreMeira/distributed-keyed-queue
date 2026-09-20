@@ -5,6 +5,7 @@ import com.google.protobuf.ByteString
 import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.client.ServiceError
+import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, MessageId, MessageKey, Receipt, Settled, Verdict }
 import homelab.keyedqueue.v1
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueue
 import io.grpc.inprocess.{ InProcessChannelBuilder, InProcessServerBuilder }
@@ -71,7 +72,7 @@ object GrpcQueueClientSpec extends ZIOSpecDefault:
       client <- QueueClient.scoped(ZManagedChannel(InProcessChannelBuilder.forName(name).directExecutor()))
     yield client
 
-  def spec: Spec[TestEnvironment & Scope, Any] = suite("GrpcQueueClient")(
+  def spec: Spec[TestEnvironment & Scope, Any] = suite("GrpcClient")(
     test("an enqueue carries the envelope, the bytes, and when it was sent") {
       for
         seen   <- Ref.make(Chunk.empty[Any])

@@ -1,4 +1,4 @@
-package homelab.keyedqueue.client.lock
+package homelab.keyedqueue.client.lock.model
 
 
 import zio.Duration

@@ -1,9 +1,11 @@
-package homelab.keyedqueue.client.lock
+package homelab.keyedqueue.client.lock.managed
 
 
-import homelab.keyedqueue.client.ServiceError
 import com.google.protobuf.duration.Duration as ProtoDuration
+import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.codec.{ LockCodecs, Protos }
+import homelab.keyedqueue.client.lock.LockClient
+import homelab.keyedqueue.client.lock.model.{ Acquired, Receipt, Refreshed }
 import homelab.keyedqueue.v1
 import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLockClient
 import io.grpc.StatusException
@@ -18,7 +20,7 @@ import zio.*
  *
  * @param stub the generated client, already dialled
  */
-final private[client] class GrpcLockClient(stub: KeyedLockClient) extends LockClient:
+final private[client] class GrpcClient(stub: KeyedLockClient) extends LockClient:
 
   /**
    * One `Acquire` call.

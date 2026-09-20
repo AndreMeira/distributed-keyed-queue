@@ -2,6 +2,7 @@ package homelab.keyedqueue.client.lock
 
 
 import homelab.keyedqueue.client.ServiceError
+import homelab.keyedqueue.client.lock.model.{ Acquired, Fence, Hold, Receipt, Refreshed }
 import zio.*
 import zio.test.*
 

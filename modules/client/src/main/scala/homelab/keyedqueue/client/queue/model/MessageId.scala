@@ -1,4 +1,4 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.model
 
 /**
  * What a message is named by within its key: what a settle echoes back, and what makes a repeated enqueue

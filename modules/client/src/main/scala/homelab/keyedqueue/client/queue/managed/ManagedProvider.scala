@@ -1,9 +1,11 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.managed
 
 
 import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.messaging.{ Consumer, Producer }
 import homelab.keyedqueue.client.queue
+import homelab.keyedqueue.client.queue.model.{ MessageDecoder, MessageEncoder, MessageId, MessageKey }
+import homelab.keyedqueue.client.queue.{ Provider, QueueClient }
 import zio.*
 
 
