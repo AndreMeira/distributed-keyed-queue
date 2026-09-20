@@ -15,7 +15,7 @@ import zio.*
  *
  * One method per RPC and nothing withheld: outcomes are reported per message rather than per claim, the
  * retry delay is the caller's, and the batch size is stated rather than inferred. Payloads are bytes here
- * — [[MessageEncoder]] and [[MessageDecoder]] are what turn them into values, beside this rather than
+ * — [[model.MessageEncoder]] and [[model.MessageDecoder]] are what turn them into values, beside this
  * inside it, so a claim with one unreadable message among ten is a thing a caller handles rather than a
  * shape this has to invent.
  */
