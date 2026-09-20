@@ -59,18 +59,12 @@ object Message:
      *
      * @param key the key whose order it takes its place in
      * @param id what a settle will name it by
-     * @param payloadType the schema name and version, stated by the caller
      * @param value what to send
-     * @tparam A what is being sent, which needs an encoder in scope to write it and name its format
+     * @tparam A what is being sent, which needs an encoder in scope to write it and to say what it is
      * @return the message to enqueue
      */
-    def apply[A: MessageEncoder as encoder](
-      key: MessageKey,
-      id: MessageId,
-      payloadType: String,
-      value: A,
-    ): Outgoing =
-      Outgoing(key, id, payloadType, encoder.encoding, encoder.encode(value))
+    def apply[A: MessageEncoder as encoder](key: MessageKey, id: MessageId, value: A): Outgoing =
+      Outgoing(key, id, encoder.payloadType, encoder.encoding, encoder.encode(value))
 
   /**
    * One that arrived, with what only a delivery knows.

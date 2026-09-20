@@ -18,7 +18,7 @@ object ManagedProducerSpec extends ZIOSpecDefault:
 
   private given Schema[Order] = DeriveSchema.gen[Order]
 
-  import MessageEncoder.auto.given
+  private given MessageEncoder[Order] = MessageEncoder.deriveAs[Order]("order.v2")
 
   private val order = Order("o-1", "c-9")
 
@@ -52,7 +52,7 @@ object ManagedProducerSpec extends ZIOSpecDefault:
     test("a value is sent under the name and key it gives for itself") {
       for
         client   <- fake
-        producer <- Provider(client).producer[Order]("orders", "order.v2")(value => MessageId(value.id) -> MessageKey(value.customer))
+        producer <- Provider(client).producerWith[Order]("orders")(value => MessageId(value.id) -> MessageKey(value.customer))
         _        <- producer.emit(order)
         sent     <- client.sent.get
       yield assertTrue(
@@ -66,7 +66,7 @@ object ManagedProducerSpec extends ZIOSpecDefault:
     test("the same value sends the same id, so a repeated emit is one message rather than two") {
       for
         client   <- fake
-        producer <- Provider(client).producer[Order]("orders", "order.v2")
+        producer <- Provider(client).producer[Order]("orders")
         _        <- producer.emit(order) *> producer.emit(order)
         sent     <- client.sent.get
       yield assertTrue(sent.map(_._2.id).distinct == Chunk(MessageId("o-1")), sent.length == 2)
@@ -74,7 +74,7 @@ object ManagedProducerSpec extends ZIOSpecDefault:
     test("the bytes are the encoder's, and read back as the value") {
       for
         client   <- fake
-        producer <- Provider(client).producer[Order]("orders", "order.v2")
+        producer <- Provider(client).producer[Order]("orders")
         _        <- producer.emit(order)
         sent     <- client.sent.get
         arrived   = sent.map(outgoing =>
@@ -93,7 +93,7 @@ object ManagedProducerSpec extends ZIOSpecDefault:
     test("emitMany sends each in order") {
       for
         client   <- fake
-        producer <- Provider(client).producer[Order]("orders", "order.v2")
+        producer <- Provider(client).producer[Order]("orders")
         _        <- producer.emitMany(List(order, Order("o-2", "c-9")))
         sent     <- client.sent.get
       yield assertTrue(sent.map(_._2.id) == Chunk(MessageId("o-1"), MessageId("o-2")))

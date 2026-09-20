@@ -53,18 +53,15 @@ trait Provider:
    * being sent makes a retried emit the same message rather than a second one, and a key derived the same
    * way is what puts related messages in one order.
    *
-   * The payload type is stated here rather than per message, since one producer sends one kind, and it is
-   * not the encoder's to know — a schema knows its structure, not the name an organisation agreed on.
+   * What its messages are called is the encoder's, which states a name or states that nobody gave one.
    *
    * @param name which queue to send to
-   * @param payloadType the schema name and version every message of this producer states
    * @param parts what names a value: its id, and the key whose order it takes its place in
    * @tparam A what it sends
    * @return the producer
    */
-  def producer[A: MessageEncoder](
-    name: String,
-    payloadType: String,
+  def producerWith[A: MessageEncoder](
+    name: String
   )(
     parts: A => (MessageId, MessageKey)
   ): UIO[Producer[AdapterError, A]]
@@ -73,15 +70,11 @@ trait Provider:
    * The same, for a type that says how it is named.
    *
    * @param name which queue to send to
-   * @param payloadType the schema name and version every message of this producer states
    * @tparam A what it sends, which needs a [[Provider.Partition]] in scope to name it
    * @return the producer
    */
-  def producer[A: {MessageEncoder, Partition as partition}](
-    name: String,
-    payloadType: String,
-  ): UIO[Producer[AdapterError, A]] =
-    producer(name, payloadType)(value => partition.messageId(value) -> partition.messageKey(value))
+  def producer[A: {MessageEncoder, Partition as partition}](name: String): UIO[Producer[AdapterError, A]] =
+    producerWith(name)(value => partition.messageId(value) -> partition.messageKey(value))
 
 
 object Provider:
