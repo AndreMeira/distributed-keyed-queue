@@ -3,7 +3,7 @@ package homelab.keyedqueue.client.queue
 
 import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.messaging.{ Consumer, Producer }
-import homelab.keyedqueue.client.queue.Provider.ConsumerConfig
+import homelab.keyedqueue.client.queue.Provider.{ BatchConsumerConfig, ConsumerConfig }
 import zio.*
 
 
@@ -29,6 +29,22 @@ trait Provider:
    * @return the consumer
    */
   def consumer[A: MessageDecoder as decoder](config: ConsumerConfig): URIO[Scope, Consumer[AdapterError, A]]
+
+  /**
+   * A consumer of one queue that takes a key's messages together.
+   *
+   * Every message of a batch shares one outcome — the logic answered, so all are done, or it did not, so
+   * all come back. A caller that needs them settled apart takes [[QueueClient]] underneath, where an
+   * outcome is stated per message.
+   *
+   * @param config which queue to take from, how many of its messages to take at once, and what this
+   *               consumer does about waiting, retrying and messages it cannot read
+   * @tparam A what its messages read as
+   * @return the consumer
+   */
+  def batched[A: MessageDecoder as decoder](
+    config: BatchConsumerConfig
+  ): URIO[Scope, Consumer.Batched[AdapterError, A]]
 
   /**
    * A producer for one queue.
@@ -65,6 +81,26 @@ object Provider:
    */
   final case class ConsumerConfig(
     queue: String,
+    patience: Duration = 20.seconds,
+    retryAfter: Duration = Duration.Zero,
+    heartbeat: Duration = 5.seconds,
+    policy: DecodingPolicy = DecodingPolicy.DiscardAfter(3),
+  )
+
+  /**
+   * What one batched consumer does, beyond which queue it reads.
+   *
+   * @param queue which queue to take from
+   * @param size the most messages to take at once, which the service may lower to its own ceiling
+   * @param patience how long a call blocks for work before answering with nothing
+   * @param retryAfter how long a key waits before anything this consumer failed is delivered again
+   * @param heartbeat how often to beat before a claim has stated a lease to go by; once one has, the
+   *                  lease it granted is what times the beats, and this no longer applies
+   * @param policy what to do with a message that cannot be read
+   */
+  final case class BatchConsumerConfig(
+    queue: String,
+    size: Int,
     patience: Duration = 20.seconds,
     retryAfter: Duration = Duration.Zero,
     heartbeat: Duration = 5.seconds,

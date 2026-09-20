@@ -30,6 +30,20 @@ final private[client] class ManagedProvider(client: QueueClient) extends Provide
     yield ManagedConsumer(client, heartbeat, config)
 
   /**
+   * @param config which queue to take from, how many at once, and how this consumer waits, retries and
+   *               refuses
+   * @tparam A what its messages read as
+   * @return the consumer, beating for what it holds until the scope closes
+   */
+  override def batched[A: MessageDecoder as decoder](
+    config: Provider.BatchConsumerConfig
+  ): URIO[Scope, Consumer.Batched[AdapterError, A]] =
+    for
+      heartbeat <- Heartbeat.make(client, config.heartbeat)
+      _         <- heartbeat.start.forkScoped
+    yield ManagedBatch(client, heartbeat, config)
+
+  /**
    * @param name which queue to send to
    * @tparam A what it sends
    * @return the producer
