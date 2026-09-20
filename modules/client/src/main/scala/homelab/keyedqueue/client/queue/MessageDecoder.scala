@@ -53,7 +53,7 @@ object MessageDecoder:
    * @return the decoder
    */
   def expecting[A: Schema](payloadType: String): MessageDecoder[A] =
-    Verifying(MessageEncoder.protobuf, payloadType, ProtobufCodec.protobufCodec[A])
+    MessageDecoder.Verifying(MessageEncoder.protobuf, payloadType, ProtobufCodec.protobufCodec[A])
 
   /**
    * The same, over a codec this client did not derive.
@@ -67,7 +67,7 @@ object MessageDecoder:
    * @return the decoder
    */
   def expecting[A: BinaryCodec as codec](payloadType: String, encoding: String): MessageDecoder[A] =
-    Verifying(encoding, payloadType, codec)
+    MessageDecoder.Verifying(encoding, payloadType, codec)
 
   /**
    * A decoder over a type's schema, reading protobuf.
@@ -79,7 +79,7 @@ object MessageDecoder:
    * @return the decoder
    */
   def derive[A: Schema]: MessageDecoder[A] =
-    Decoding(ProtobufCodec.protobufCodec[A])
+    MessageDecoder.Trusting(ProtobufCodec.protobufCodec[A])
 
   /**
    * What a failure to read amounts to, as a value the reading answers with.
@@ -92,12 +92,12 @@ object MessageDecoder:
     Failure.Unreadable(error.message, message.encoding, message.payloadType)
 
   /**
-   * A decoder over a codec that has already been derived.
+   * A decoder that takes the sender's word for what the bytes are.
    *
    * @param codec what turns bytes into a value
    * @tparam A what it reads
    */
-  final private class Decoding[A](codec: BinaryCodec[A]) extends MessageDecoder[A]:
+  final private class Trusting[A](codec: BinaryCodec[A]) extends MessageDecoder[A]:
 
     /**
      * @param message what arrived
