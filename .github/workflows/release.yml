@@ -83,8 +83,10 @@ jobs:
           # above — the same arrangement the toolkit publishes under. No PAT, so a leaked or over-scoped
           # personal token is never what stands between this repo and its own artifacts.
           #
-          # This step resolves nothing from the toolkit: only `server` depends on it and `server` sets
-          # `publish / skip`. Were that to change, the Test step above has already warmed the coursier
-          # cache on this runner.
+          # This step DOES resolve from the toolkit — `client` depends on `homelab-common` and publishes —
+          # and the built-in token can read it because those packages are public and GitHub Packages asks
+          # only that a caller be somebody. The Test step above has also already pulled it onto this
+          # runner, so the cache covers a day when that stops being true. If the toolkit ever goes
+          # private, this step needs the PAT the Test step uses.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: sbt -batch -no-colors publish
