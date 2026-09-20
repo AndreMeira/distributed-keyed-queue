@@ -1,6 +1,7 @@
 package homelab.keyedqueue.client.queue
 
 
+import homelab.keyedqueue.client.queue.model.{ Message, MessageDecoder, MessageEncoder, MessageId, MessageKey }
 import zio.*
 import zio.schema.codec.{ BinaryCodec, ProtobufCodec }
 import zio.schema.{ DeriveSchema, Schema }
@@ -24,7 +25,7 @@ object PayloadSpec extends ZIOSpecDefault:
   private val order = Order("o-1", 3)
 
   private def arrived(payload: Chunk[Byte], encoding: String, payloadType: String): Message.Incoming =
-    Message.Incoming("k1", MessageId("m1"), payloadType, encoding, payload, Instant.EPOCH, attempt = 1)
+    Message.Incoming(MessageKey("k1"), MessageId("m1"), payloadType, encoding, payload, Instant.EPOCH, attempt = 1)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("payloads")(
     test("a value written by the schema encoder is read back by the schema decoder") {
@@ -33,8 +34,8 @@ object PayloadSpec extends ZIOSpecDefault:
       assertTrue(MessageDecoder.derive[Order].decode(message) == Right(order))
     },
     test("an outgoing message states the encoding the encoder wrote, never one the caller chose") {
-      given MessageEncoder[Order] = MessageEncoder.derive[Order]
-      val outgoing                = Message.Outgoing("k1", MessageId("m1"), "order.v2", order)
+      given MessageEncoder[Order] = MessageEncoder.deriveAs[Order]("order.v2")
+      val outgoing                = Message.Outgoing(MessageKey("k1"), MessageId("m1"), order)
       assertTrue(
         outgoing.encoding == MessageEncoder.protobuf,
         outgoing.payload.nonEmpty,
@@ -59,7 +60,7 @@ object PayloadSpec extends ZIOSpecDefault:
     test("with both autos imported, a caller states the value and nothing about how it travels") {
       import MessageDecoder.auto.given
       import MessageEncoder.auto.given
-      val outgoing = Message.Outgoing("k1", MessageId("m1"), "order.v2", order)
+      val outgoing = Message.Outgoing(MessageKey("k1"), MessageId("m1"), order)
       val message  = arrived(outgoing.payload, outgoing.encoding, outgoing.payloadType)
       assertTrue(MessageDecoder[Order].decode(message) == Right(order))
     },
@@ -67,13 +68,13 @@ object PayloadSpec extends ZIOSpecDefault:
       // The schema case cannot disagree with itself, because it does not take the encoding. This one does
       // take it, for a codec this client did not derive, and is the only place the two could part.
       given BinaryCodec[Order] = ProtobufCodec.protobufCodec[Order]
-      val decoder              = MessageDecoder.expecting[Order]("order.v2", "application/x-protobuf")
+      val decoder              = MessageDecoder.deriveAs[Order]("order.v2", "application/x-protobuf")
       val message              = arrived(MessageEncoder.derive[Order].encode(order), "application/x-protobuf", "order.v2")
       assertTrue(decoder.decode(message) == Right(order))
     },
     test("a verifying decoder refuses what the sender says is something else") {
       val encoder  = MessageEncoder.derive[Order]
-      val decoder  = MessageDecoder.expecting[Order]("order.v2")
+      val decoder  = MessageDecoder.deriveAs[Order]("order.v2")
       val right    = arrived(encoder.encode(order), MessageEncoder.protobuf, "order.v2")
       val asJson   = arrived(encoder.encode(order), "application/json", "order.v2")
       val asAnItem = arrived(encoder.encode(order), MessageEncoder.protobuf, "item.v1")

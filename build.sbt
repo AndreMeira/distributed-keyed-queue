@@ -19,7 +19,7 @@ val typesafeConfigVersion = "1.4.9"
 val pureconfigVersion     = "0.17.10"
 val chimneyVersion        = "1.10.0"
 val testcontainersVersion = "1.20.6"
-val zioSchemaVersion      = "1.8.6" // 1.9.0 is built on Scala 3.9 and its TASTy is ahead of this compiler
+val zioSchemaVersion      = "1.8.6"         // 1.9.0 is built on Scala 3.9 and its TASTy is ahead of this compiler
 
 ThisBuild / scalaVersion := scala3Version
 ThisBuild / organization := "com.andremeira.homelab"
@@ -184,16 +184,17 @@ lazy val client = project
   .settings(
     name := "distributed-keyed-queue-client",
     libraryDependencies ++= Seq(
-      "dev.zio" %% "zio"                 % zioVersion,
-      "io.grpc"  % "grpc-netty"          % grpcVersion,
-      "dev.zio" %% "zio-prelude"         % zioPreludeVersion,
-      "dev.zio" %% "zio-schema"          % zioSchemaVersion,
-      "dev.zio" %% "zio-schema-protobuf" % zioSchemaVersion,
+      "dev.zio"                %% "zio"                 % zioVersion,
+      "io.grpc"                 % "grpc-netty"          % grpcVersion,
+      "dev.zio"                %% "zio-prelude"         % zioPreludeVersion,
+      "dev.zio"                %% "zio-schema"          % zioSchemaVersion,
+      "dev.zio"                %% "zio-schema-protobuf" % zioSchemaVersion,
+      "com.andremeira.homelab" %% "homelab-common"      % toolkitVersion,
       // The transport the wire tests serve over: a real channel and real marshalling, with no port to
       // bind and no wait for one to answer.
-      "io.grpc"  % "grpc-inprocess"      % grpcVersion % Test,
-      "dev.zio" %% "zio-test"            % zioVersion  % Test,
-      "dev.zio" %% "zio-test-sbt"        % zioVersion  % Test,
+      "io.grpc"                 % "grpc-inprocess"      % grpcVersion % Test,
+      "dev.zio"                %% "zio-test"            % zioVersion  % Test,
+      "dev.zio"                %% "zio-test-sbt"        % zioVersion  % Test,
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
   )

@@ -1,4 +1,4 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.model
 
 /**
  * What accepting a message answered.

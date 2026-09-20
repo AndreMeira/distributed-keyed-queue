@@ -50,6 +50,10 @@ What is specific to this repo:
     instead.
   - [`using-the-contract-as-a-dependency.md`](learning-material/using-the-contract-as-a-dependency.md) —
     what another service depends on to talk to dkq, and what it still has to write itself.
+  - [`taking-a-lock.md`](learning-material/taking-a-lock.md) — holding a named lock while something runs,
+    what the managed form does around it, and when a caller needs the fence instead.
+  - [`consuming-and-producing.md`](learning-material/consuming-and-producing.md) — sending typed messages
+    and working them, what happens around a handler, and what becomes of one that will not decode.
   - [`proto-generation.md`](learning-material/proto-generation.md) — how two published artifacts are
     generated from one set of `.proto` files, and what breaks if that is rearranged.
   - [`querying-observability-tools.md`](learning-material/querying-observability-tools.md) — asking

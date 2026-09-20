@@ -1,6 +1,8 @@
 package homelab.keyedqueue.client.queue
 
 
+import homelab.keyedqueue.client.queue.managed.GrpcClient
+import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, MessageDecoder, MessageEncoder, Receipt, Renewed, Settled, Verdict }
 import homelab.keyedqueue.client.{ Endpoint, ServiceError }
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
 import io.grpc.ManagedChannelBuilder
@@ -66,19 +68,32 @@ object QueueClient:
    * Dial a deployment, closed with the scope.
    *
    * @param endpoint where it answers
-   * @return the client; aborts when the channel cannot be built
+   * @return the client; aborts with `Failed` when the channel cannot be built
    */
-  def scoped(endpoint: Endpoint): ZIO[Scope, Throwable, QueueClient] =
-    scoped(ZManagedChannel(channel(endpoint)))
+  def scoped(endpoint: Endpoint): ZIO[Scope, ServiceError, QueueClient] =
+    scoped(ZManagedChannel(channel(endpoint)), endpoint.patience)
 
   /**
    * Dial over a channel the caller built, for TLS, interceptors or an in-process transport.
    *
    * @param channel the channel to talk over, closed with the scope
-   * @return the client; aborts when the stub cannot be built
+   * @param patience how long a call may take beyond what it was asked to wait for
+   * @return the client; aborts with `Failed` when the stub cannot be built
    */
-  def scoped(channel: ZManagedChannel): ZIO[Scope, Throwable, QueueClient] =
-    KeyedQueueClient.scoped(channel).map(GrpcQueueClient(_))
+  def scoped(channel: ZManagedChannel, patience: Duration = 10.seconds): ZIO[Scope, ServiceError, QueueClient] =
+    KeyedQueueClient.scoped(channel).map(GrpcClient(_, patience)).mapError(dialling)
+
+  /**
+   * What a failure to dial amounts to in this client's terms.
+   *
+   * The transport raises before any call is made, so there is no status to read: what a caller can do
+   * about it is look at the cause.
+   *
+   * @param cause what the transport raised
+   * @return the error to report
+   */
+  private def dialling(cause: Throwable): ServiceError =
+    ServiceError.Failed(cause)
 
   /**
    * The channel an endpoint describes.

@@ -1,4 +1,4 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.model
 
 
 import zio.schema.Schema
@@ -10,7 +10,7 @@ import zio.schema.codec.{ BinaryCodec, DecodeError, ProtobufCodec }
  *
  * It reads whole messages rather than bytes because it is the only thing that sees what a sender said it
  * wrote — the encoding and the payload type. Whether to hold a message to those is the caller's choice:
- * [[MessageDecoder.derive]] reads whatever arrives, [[MessageDecoder.expecting]] refuses anything a
+ * [[MessageDecoder.derive]] reads whatever arrives, MessageDecoder.derive refuses anything a
  * sender labelled as something else.
  *
  * @tparam A what it reads
@@ -43,16 +43,18 @@ object MessageDecoder:
    * A decoder for one payload type, over that type's schema.
    *
    * What a consumer of a single kind of message wants: it reads the schema's own format and refuses
-   * anything a sender labelled as something else. [[derive]] is the same without the refusal.
+   * anything a sender labelled as something else. The no-argument `derive` is the same without the
+   * refusal.
    *
    * The encoding is the schema codec's own rather than an argument, so the format this accepts and the
-   * format it reads are the same statement.
+   * format it reads are the same statement. Pass [[MessageEncoder.unnamed]] to accept exactly what an
+   * encoder that names nothing writes.
    *
    * @param payloadType the schema name and version to accept
    * @tparam A what it reads
    * @return the decoder
    */
-  def expecting[A: Schema](payloadType: String): MessageDecoder[A] =
+  def deriveAs[A: Schema](payloadType: String): MessageDecoder[A] =
     MessageDecoder.Verifying(MessageEncoder.protobuf, payloadType, ProtobufCodec.protobufCodec[A])
 
   /**
@@ -66,13 +68,13 @@ object MessageDecoder:
    * @tparam A what it reads
    * @return the decoder
    */
-  def expecting[A: BinaryCodec as codec](payloadType: String, encoding: String): MessageDecoder[A] =
+  def deriveAs[A: BinaryCodec as codec](payloadType: String, encoding: String): MessageDecoder[A] =
     MessageDecoder.Verifying(encoding, payloadType, codec)
 
   /**
    * A decoder over a type's schema, reading protobuf.
    *
-   * Reads the bytes and says nothing about what the sender claimed they are; [[expecting]] is the same
+   * Reads the bytes and says nothing about what the sender claimed they are; [[deriveAs]] is the same
    * reading with that refusal in front of it.
    *
    * @tparam A what it reads
@@ -152,8 +154,8 @@ object MessageDecoder:
     /**
      * The bytes were not a value.
      *
-     * What the sender said they were comes with it, because a decoder that checks neither will most often
-     * fail here for exactly that reason, and a log of the reason alone would not say so.
+     * What the sender said they were comes with it, because a decoder that checks neither most often fails
+     * here for exactly that reason, and the reason alone does not say which it was.
      *
      * @param reason what the reading said was wrong
      * @param encoding the media type the message said its payload was in
@@ -167,7 +169,7 @@ object MessageDecoder:
    * Imported with `import MessageDecoder.auto.given`, so it is a caller's choice rather than something in
    * scope by default. What it hands over is [[derive]]: it reads what arrives and says nothing about what
    * the sender called it, so a consumer that wants a message refused for being something else names
-   * [[expecting]] instead.
+   * [[deriveAs]] instead.
    */
   object auto:
 

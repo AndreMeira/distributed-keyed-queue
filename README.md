@@ -222,6 +222,10 @@ Known gaps:
   states, the script that performs each move, and how a waiter waits
 - [`docs/learning-material/running-the-image.md`](docs/learning-material/running-the-image.md) — pulling
   the image and deploying it, including the grace period that must exceed `max-wait`
+- [`docs/learning-material/taking-a-lock.md`](docs/learning-material/taking-a-lock.md) — holding a lock
+  from Scala, and when a caller needs the fence
+- [`docs/learning-material/consuming-and-producing.md`](docs/learning-material/consuming-and-producing.md)
+  — sending and working typed messages, with the heartbeat and the settle taken care of
 - [`docs/README.md`](docs/README.md) — the full index
 
 ## Licence

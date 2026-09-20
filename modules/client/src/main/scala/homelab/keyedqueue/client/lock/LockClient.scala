@@ -1,7 +1,9 @@
 package homelab.keyedqueue.client.lock
 
 
-import homelab.keyedqueue.client.ServiceError
+import homelab.keyedqueue.client.{ Endpoint, ServiceError }
+import homelab.keyedqueue.client.lock.managed.GrpcClient
+import homelab.keyedqueue.client.lock.model.{ Acquired, Hold, Receipt, Refreshed }
 import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLockClient
 import io.grpc.ManagedChannelBuilder
 import scalapb.zio_grpc.ZManagedChannel
@@ -61,38 +63,42 @@ trait LockClient:
 object LockClient:
 
   /**
-   * Where a deployment answers, and how to reach it.
-   *
-   * @param host where it listens
-   * @param port the port it serves on
-   * @param plaintext whether to dial without TLS, which is the homelab's arrangement inside a cluster
-   */
-  final case class Config(host: String, port: Int, plaintext: Boolean = true)
-
-  /**
    * Dial a deployment, closed with the scope.
    *
-   * @param config where it answers
-   * @return the client; aborts when the channel cannot be built
+   * @param endpoint where it answers
+   * @return the client; aborts with `Failed` when the channel cannot be built
    */
-  def scoped(config: Config): ZIO[Scope, Throwable, LockClient] =
-    scoped(ZManagedChannel(channel(config)))
+  def scoped(endpoint: Endpoint): ZIO[Scope, ServiceError, LockClient] =
+    scoped(ZManagedChannel(channel(endpoint)), endpoint.patience)
 
   /**
    * Dial over a channel the caller built, for TLS, interceptors or an in-process transport.
    *
    * @param channel the channel to talk over, closed with the scope
-   * @return the client; aborts when the stub cannot be built
+   * @param patience how long a call may take beyond what it was asked to wait for
+   * @return the client; aborts with `Failed` when the stub cannot be built
    */
-  def scoped(channel: ZManagedChannel): ZIO[Scope, Throwable, LockClient] =
-    KeyedLockClient.scoped(channel).map(GrpcLockClient(_))
+  def scoped(channel: ZManagedChannel, patience: Duration = 10.seconds): ZIO[Scope, ServiceError, LockClient] =
+    KeyedLockClient.scoped(channel).map(GrpcClient(_, patience)).mapError(dialling)
 
   /**
-   * The channel a [[Config]] describes.
+   * What a failure to dial amounts to in this client's terms.
    *
-   * @param config where the deployment answers
+   * The transport raises before any call is made, so there is no status to read: what a caller can do
+   * about it is look at the cause.
+   *
+   * @param cause what the transport raised
+   * @return the error to report
+   */
+  private def dialling(cause: Throwable): ServiceError =
+    ServiceError.Failed(cause)
+
+  /**
+   * The channel an endpoint describes.
+   *
+   * @param endpoint where the deployment answers
    * @return the builder, ready to dial
    */
-  private def channel(config: Config): ManagedChannelBuilder[?] =
-    val builder = ManagedChannelBuilder.forAddress(config.host, config.port)
-    if config.plaintext then builder.usePlaintext() else builder
+  private def channel(endpoint: Endpoint): ManagedChannelBuilder[?] =
+    val builder = ManagedChannelBuilder.forAddress(endpoint.host, endpoint.port)
+    if endpoint.plaintext then builder.usePlaintext() else builder

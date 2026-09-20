@@ -30,19 +30,19 @@ Three artifacts, and which you want depends on how much you need:
 |---|---|---|
 | `distributed-keyed-queue-protocol` | the message types | `scalapb-runtime`, and nothing else |
 | `distributed-keyed-queue-protocol-zio-grpc` | the RPC stubs, ZIO-native | the above, plus `zio-grpc-core` and `zio` |
-| `distributed-keyed-queue-client` | the lock as Scala types | the above, plus `grpc-netty` |
+| `distributed-keyed-queue-client` | the lock and the queue as Scala types | the above, plus `grpc-netty`, `zio-schema` and `homelab-common` |
 
 **Take the smaller one if you only handle the data** — building a message, reading one out of somewhere
 else, writing a test fixture. It has no effect system and no transport, deliberately. Only a service
 actually calling dkq needs the stubs.
 
-**Take the client if you want the lock** rather than the four RPCs it is made of. It is two layers, and the
-upper one is what most callers want:
+**Take the client if you want the lock or the queue** rather than the RPCs they are made of. Each half is
+two layers, and the upper one is what most callers want:
 
 ```scala
 ZIO.scoped:
   for
-    client <- LockClient.scoped(LockClient.Config("dkq", 9000))
+    client <- LockClient.scoped(Endpoint("dkq", 9000))
     answer <- DistributedLock(client).acquire("the-key", ttl = 30.seconds, maxWait = 5.seconds):
                 doTheWorkThatNeedsExclusivity
   yield answer // None when the wait elapsed with somebody else holding it
@@ -51,6 +51,13 @@ ZIO.scoped:
 `acquire` keeps the lease alive while your effect runs and gives the lock back however the effect ends — an
 answer, a failure, an interruption. `LockClient` underneath it is the four RPCs one for one, and hands you
 the fencing token, which is what you need if you are stamping downstream writes.
+
+The queue half is the same shape: `QueueClient` is its four RPCs, and a `Provider` above it hands out
+consumers that heartbeat and settle for you and producers that name each message from the value being
+sent.
+
+Each half has a page of its own: [`taking-a-lock.md`](taking-a-lock.md) and
+[`consuming-and-producing.md`](consuming-and-producing.md).
 
 The two contract artifacts carry no transport. That is not an omission: whether you dial over netty,
 in-process, or something else is yours to choose. The client does carry `grpc-netty`, because
@@ -100,11 +107,17 @@ libraryDependencies ++= Seq(
 )
 ```
 
-For the lock, one line replaces both — the client brings the stubs and a transport with it:
+For the lock or the queue, one line replaces both — the client brings the stubs and a transport with it,
+and a second resolver because its messaging ports come from the toolkit's registry:
 
 ```scala
+resolvers += "homelab-toolkit-zio" at "https://maven.pkg.github.com/AndreMeira/homelab-toolkit-zio"
+
 libraryDependencies += "com.andremeira.homelab" %% "distributed-keyed-queue-client" % dkqVersion
 ```
+
+A published pom does not name where its dependencies came from, so without that second resolver the build
+fails on `homelab-common` with nothing to say why.
 
 > **Pin Netty to what your `grpc-netty` was built against.** `grpc-netty` reaches into Netty's HTTP/2
 > internals, and mixing versions produces corrupt HPACK header blocks once several requests are in flight —
@@ -114,18 +127,16 @@ libraryDependencies += "com.andremeira.homelab" %% "distributed-keyed-queue-clie
 
 ## What the contract does not give you
 
-**A queue client.** The lock has one — see the table above — but the queue does not: for `Dequeue`,
-`Settle` and `Heartbeat` the generated stub is a stub, and everything about *using* the queue correctly is
-yours to write. Two parts of it are easy to get wrong:
+**Anything above the stubs, if you only take the contract.** The generated stub is a stub: for `Dequeue`,
+`Settle` and `Heartbeat` the correctness is yours, and two parts of it are easy to get wrong —
+heartbeating while you work, and settling on success, failure *and* interruption. A claim that outlives
+its lease is revoked underneath its handler; a claim that is never settled holds its key until the lease
+lapses.
 
-- **Heartbeating while you work.** A claim expires unless renewed, and a handler that outlives its lease has
-  its claim revoked underneath it — its settles refused, its work possibly redone by someone else.
-- **Settling on every path.** Success, failure, and interruption. A claim that is never settled holds its
-  key until the lease lapses.
-
-Read [`../architecture/guarantees.md`](../architecture/guarantees.md) before writing that loop. Its
-Exclusivity section in particular says what the service will and will not do for you — including the one
-obligation that is yours alone: **stop working a key the moment you can no longer renew it**, because
+The client artifact is what takes those on, so a consumer built with it writes neither. Read
+[`../architecture/guarantees.md`](../architecture/guarantees.md) before writing either yourself. Its
+Exclusivity section says what the service will and will not do for you — including the one obligation that
+stays yours whatever you build on: **stop working a key the moment you can no longer renew it**, because
 nothing on the server side can stop your code from running.
 
 **Anything for a non-Scala consumer.** The `.proto` files under `modules/protocol/src/main/protobuf/` are

@@ -1,4 +1,4 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.model
 
 /**
  * What a consumer did with one message of its claim.

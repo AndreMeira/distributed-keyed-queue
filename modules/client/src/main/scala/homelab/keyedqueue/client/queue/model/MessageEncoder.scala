@@ -1,4 +1,4 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.model
 
 
 import zio.Chunk
@@ -16,6 +16,9 @@ import zio.schema.codec.{ BinaryCodec, ProtobufCodec }
  * @tparam A what it writes
  */
 trait MessageEncoder[A]:
+
+  /** @return the schema name and version the messages it writes state, or [[MessageEncoder.unnamed]] */
+  def payloadType: String
 
   /** @return the media type the bytes it writes are in, such as `application/x-protobuf` */
   def encoding: String
@@ -46,15 +49,38 @@ object MessageEncoder:
   val protobuf: String = "application/x-protobuf"
 
   /**
-   * An encoder over a type's schema, writing protobuf.
+   * What a message states when nobody has named what it carries.
    *
-   * The codec is derived once, here, rather than per message.
+   * The service never reads the field, so this costs nothing on the wire — but a consumer reading it will
+   * learn only that the sender did not say. A decoder built to expect this literal accepts exactly these
+   * messages and no others, which is what makes the pair agree without either side matching wildcards.
+   */
+  val unnamed: String = "*"
+
+  /**
+   * An encoder over a type's schema, writing protobuf, naming nothing.
+   *
+   * What it writes states [[unnamed]] as its payload type, so a consumer learns the format and not the
+   * contract. [[deriveAs]] is the same encoder with a name.
    *
    * @tparam A what it writes
    * @return the encoder
    */
   def derive[A: Schema]: MessageEncoder[A] =
-    Encoding(ProtobufCodec.protobufCodec[A])
+    deriveAs(unnamed)
+
+  /**
+   * An encoder over a type's schema, writing protobuf under a name.
+   *
+   * The name is stated here rather than derived because a schema knows its structure and not what an
+   * organisation agreed to call it, and because the same type may travel under different names.
+   *
+   * @param payloadType the schema name and version its messages state
+   * @tparam A what it writes
+   * @return the encoder
+   */
+  def deriveAs[A: Schema](payloadType: String): MessageEncoder[A] =
+    Encoding(payloadType, ProtobufCodec.protobufCodec[A])
 
   /**
    * An encoder for anything with a schema, summoned rather than named.
@@ -73,10 +99,11 @@ object MessageEncoder:
   /**
    * An encoder over a codec that has already been derived.
    *
+   * @param payloadType the schema name and version its messages state
    * @param codec what turns a value into bytes
    * @tparam A what it writes
    */
-  final private class Encoding[A](codec: BinaryCodec[A]) extends MessageEncoder[A]:
+  final private class Encoding[A](override val payloadType: String, codec: BinaryCodec[A]) extends MessageEncoder[A]:
 
     /** @return the media type a schema-derived codec writes */
     override def encoding: String = protobuf

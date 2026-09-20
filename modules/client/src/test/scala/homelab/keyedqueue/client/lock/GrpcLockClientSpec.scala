@@ -4,6 +4,7 @@ package homelab.keyedqueue.client.lock
 import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.client.ServiceError
+import homelab.keyedqueue.client.lock.model.{ Acquired, Fence, Hold, Receipt, Refreshed }
 import homelab.keyedqueue.v1
 import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLock
 import io.grpc.inprocess.{ InProcessChannelBuilder, InProcessServerBuilder }
@@ -56,7 +57,7 @@ object GrpcLockClientSpec extends ZIOSpecDefault:
    * @param service what answers the calls
    * @return a client talking to it over an in-process channel
    */
-  private def served(service: KeyedLock): ZIO[Scope, Throwable, LockClient] =
+  private def served(service: KeyedLock): ZIO[Scope, Throwable | ServiceError, LockClient] =
     val name = InProcessServerBuilder.generateName()
     for
       _      <- ScopedServer.fromServiceList(
@@ -72,13 +73,13 @@ object GrpcLockClientSpec extends ZIOSpecDefault:
    * @param status what every call comes back with
    * @return what the client made of a refused acquire
    */
-  private def refusedBy(status: Status): ZIO[Scope, Throwable, Either[ServiceError, Acquired]] =
+  private def refusedBy(status: Status): ZIO[Scope, Throwable | ServiceError, Either[ServiceError, Acquired]] =
     for
       client <- served(Refusing(status))
       answer <- client.acquire("a-key", 1.second, 1.second).either
     yield answer
 
-  def spec: Spec[TestEnvironment & Scope, Any] = suite("GrpcLockClient")(
+  def spec: Spec[TestEnvironment & Scope, Any] = suite("GrpcClient")(
     test("an acquire carries the name and both spans, and a grant reads back as a hold") {
       for
         seen   <- Ref.make(Chunk.empty[Any])

@@ -5,6 +5,7 @@ import com.google.protobuf.ByteString
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.queue.*
+import homelab.keyedqueue.client.queue.model.{ Claim, Dequeued, Enqueued, Message, MessageId, MessageKey, Receipt, Renewed, Settled, Verdict }
 import homelab.keyedqueue.v1
 import zio.*
 
@@ -130,7 +131,7 @@ private[client] object QueueCodecs:
       carried <- delivery.message.toRight(ServiceError.Unreadable("a delivery arrived with no message"))
       sentAt  <- Protos.deadline(carried.sentAt, "a delivery")
     yield Message.Incoming(
-      key = carried.key,
+      key = MessageKey(carried.key),
       id = MessageId(delivery.messageId),
       payloadType = carried.payloadType,
       encoding = carried.encoding,

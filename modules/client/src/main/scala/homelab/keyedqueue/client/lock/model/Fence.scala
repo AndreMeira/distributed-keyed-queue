@@ -1,4 +1,4 @@
-package homelab.keyedqueue.client.lock
+package homelab.keyedqueue.client.lock.model
 
 /**
  * The fencing token a grant runs under: a number that only ever rises.

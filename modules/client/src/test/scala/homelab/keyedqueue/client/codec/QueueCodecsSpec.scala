@@ -6,6 +6,7 @@ import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.queue.*
+import homelab.keyedqueue.client.queue.model.{ Claim, Dequeued, Enqueued, Message, MessageId, MessageKey, Receipt, Renewed, Settled, Verdict }
 import homelab.keyedqueue.v1
 import zio.*
 import zio.test.*
@@ -50,7 +51,7 @@ object QueueCodecsSpec extends ZIOSpecDefault:
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueCodecs")(
     suite("enqueue")(
       test("a message goes out as an envelope around bytes, stamped with the moment it was sent") {
-        val outgoing = Message.Outgoing("k1", MessageId("m1"), "order.v2", "application/json", Chunk(1.toByte))
+        val outgoing = Message.Outgoing(MessageKey("k1"), MessageId("m1"), "order.v2", "application/json", Chunk(1.toByte))
         val request  = QueueCodecs.encode("orders", outgoing, moment)
         assertTrue(
           request.queue == "orders",

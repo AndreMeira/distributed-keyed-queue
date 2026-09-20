@@ -5,6 +5,7 @@ import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.lock.*
+import homelab.keyedqueue.client.lock.model.{ Acquired, Fence, Hold, Receipt, Refreshed }
 import homelab.keyedqueue.v1
 import io.grpc.Status
 import zio.*

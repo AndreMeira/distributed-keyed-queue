@@ -1,4 +1,4 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.queue.model
 
 
 import zio.Chunk
@@ -16,7 +16,7 @@ import java.time.Instant
 sealed trait Message:
 
   /** @return the key whose order this message takes its place in */
-  def key: String
+  def key: MessageKey
 
   /** @return what a settle names it by */
   def id: MessageId
@@ -43,7 +43,7 @@ object Message:
    * @param payload the payload, as it travels
    */
   final case class Outgoing(
-    key: String,
+    key: MessageKey,
     id: MessageId,
     payloadType: String,
     encoding: String,
@@ -59,18 +59,12 @@ object Message:
      *
      * @param key the key whose order it takes its place in
      * @param id what a settle will name it by
-     * @param payloadType the schema name and version, stated by the caller
      * @param value what to send
-     * @tparam A what is being sent, which needs an encoder in scope to write it and name its format
+     * @tparam A what is being sent, which needs an encoder in scope to write it and to say what it is
      * @return the message to enqueue
      */
-    def apply[A: MessageEncoder as encoder](
-      key: String,
-      id: MessageId,
-      payloadType: String,
-      value: A,
-    ): Outgoing =
-      Outgoing(key, id, payloadType, encoder.encoding, encoder.encode(value))
+    def apply[A: MessageEncoder as encoder](key: MessageKey, id: MessageId, value: A): Outgoing =
+      Outgoing(key, id, encoder.payloadType, encoder.encoding, encoder.encode(value))
 
   /**
    * One that arrived, with what only a delivery knows.
@@ -84,7 +78,7 @@ object Message:
    * @param attempt how many times it has been delivered; 1 on the first
    */
   final case class Incoming(
-    key: String,
+    key: MessageKey,
     id: MessageId,
     payloadType: String,
     encoding: String,

@@ -1,7 +1,7 @@
-package homelab.keyedqueue.client.queue
+package homelab.keyedqueue.client.lock.model
 
 /**
- * The opaque handle a claim is settled and renewed by, and nothing a caller reads.
+ * The opaque handle a holder carries: what releasing and refreshing name, and nothing a caller reads.
  */
 type Receipt = Receipt.Type
 

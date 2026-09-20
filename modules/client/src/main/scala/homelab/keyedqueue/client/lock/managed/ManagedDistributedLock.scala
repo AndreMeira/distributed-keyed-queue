@@ -1,7 +1,9 @@
-package homelab.keyedqueue.client.lock
+package homelab.keyedqueue.client.lock.managed
 
 
 import homelab.keyedqueue.client.ServiceError
+import homelab.keyedqueue.client.lock.model.{ Acquired, Hold, Receipt, Refreshed }
+import homelab.keyedqueue.client.lock.{ DistributedLock, LockClient }
 import zio.*
 
 
@@ -13,7 +15,7 @@ import zio.*
  *
  * @param client what it takes the lock with
  */
-final private[client] class ManagedLock(client: LockClient) extends DistributedLock:
+final private[client] class ManagedDistributedLock(client: LockClient) extends DistributedLock:
 
   /**
    * Wait for the lock, then run `effect` under it.
