@@ -1,7 +1,7 @@
 package homelab.keyedqueue.client.lock
 
 
-import homelab.keyedqueue.client.LockError
+import homelab.keyedqueue.client.ServiceError
 import zio.*
 
 
@@ -30,7 +30,7 @@ trait DistributedLock:
    * @tparam E what `effect` aborts with
    * @tparam A what `effect` answers
    * @return what `effect` answered, or `None` when the wait elapsed with the lock still held; aborts with
-   *         `effect`'s own error, or with a [[LockError]] when the service could not be reached
+   *         `effect`'s own error, or with a [[ServiceError]] when the service could not be reached
    */
   def acquire[R, E, A](
     name: String,
@@ -38,7 +38,7 @@ trait DistributedLock:
     maxWait: Duration,
   )(
     effect: ZIO[R, E, A]
-  ): ZIO[R, LockError | E, Option[A]]
+  ): ZIO[R, ServiceError | E, Option[A]]
 
   /**
    * Run `effect` holding the named lock, only if it is free and unqueued right now.
@@ -52,14 +52,14 @@ trait DistributedLock:
    * @tparam E what `effect` aborts with
    * @tparam A what `effect` answers
    * @return what `effect` answered, or `None` when somebody holds the lock or is queued for it; aborts
-   *         with `effect`'s own error, or with a [[LockError]] when the service could not be reached
+   *         with `effect`'s own error, or with a [[ServiceError]] when the service could not be reached
    */
   def tryAcquire[R, E, A](
     name: String,
     ttl: Duration,
   )(
     effect: ZIO[R, E, A]
-  ): ZIO[R, LockError | E, Option[A]]
+  ): ZIO[R, ServiceError | E, Option[A]]
 
 
 object DistributedLock:

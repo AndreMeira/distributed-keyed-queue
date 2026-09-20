@@ -61,13 +61,13 @@ message DequeueResponse {
   // The rest of the batch, if more than one was asked for, in producer order after `head`.
   repeated Delivery         tail             = 3;
   google.protobuf.Timestamp lease_expires_at = 4;  // when the whole claim lapses unless renewed
+  // How many more were queued for this key behind the batch. A lower bound: producers may append while the
+  // claim is held, and nothing else may take from it.
+  uint32                    backlog_depth    = 5;
   // How long the lease runs. The deadline above is a reading of this service's clock, which a consumer
   // cannot subtract its own from; this is the span it times its heartbeats by. Set whenever a claim was
   // granted.
   google.protobuf.Duration  lease_ttl        = 6;
-  // How many more were queued for this key behind the batch. A lower bound: producers may append while the
-  // claim is held, and nothing else may take from it.
-  uint32                    backlog_depth    = 5;
 }
 
 message Delivery {
