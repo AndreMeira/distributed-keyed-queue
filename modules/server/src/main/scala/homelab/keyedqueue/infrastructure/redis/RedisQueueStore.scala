@@ -40,7 +40,7 @@ final class RedisQueueStore(
   connection: Connection,
   scripts: QueueScripts,
   layout: KeyLayout,
-  leaseTtl: Duration,
+  val leaseTtl: Duration,
 ) extends QueueStore:
 
   /**
@@ -135,7 +135,7 @@ final class RedisQueueStore(
    * @return the claim, as the port promises it
    */
   private def granted(keys: QueueKeys, claimed: ClaimScript.Claimed): Grant =
-    Grant(Claim(keys.queue, claimed.key, claimed.token), claimed.batch, claimed.deadline, claimed.backlog)
+    Grant(Claim(keys.queue, claimed.key, claimed.token), claimed.batch, claimed.deadline, leaseTtl, claimed.backlog)
 
   /**
    * Match the keys a beat could not renew back to the claims it was sent with.

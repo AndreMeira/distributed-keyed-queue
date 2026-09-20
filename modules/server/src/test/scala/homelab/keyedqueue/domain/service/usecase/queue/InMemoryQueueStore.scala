@@ -19,8 +19,9 @@ import java.time.Instant
  * no messages, ownership or leases: a spec about those belongs against the real store.
  *
  * @param pending the grants still to be handed out
+ * @param leaseTtl the span it reports its leases run for
  */
-final class InMemoryQueueStore(pending: Ref[Chunk[Grant]]) extends QueueStore:
+final class InMemoryQueueStore(pending: Ref[Chunk[Grant]], val leaseTtl: Duration = 30.seconds) extends QueueStore:
 
   /**
    * Make a grant available to the next claim.

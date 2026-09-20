@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.response.queue
 
 import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Message }
 import homelab.keyedqueue.domain.types.MessageId
-import zio.Chunk
+import zio.{ Chunk, Duration }
 
 import java.time.Instant
 
@@ -28,6 +28,7 @@ enum DequeueResponse:
    *             the batch is empty
    * @param tail the rest of the batch, in producer order after `head`
    * @param leaseExpiresAt when the whole claim lapses unless renewed
+   * @param leaseTtl how long the lease runs, which a consumer times its heartbeats by
    * @param backlogDepth how many more were queued for this key behind the batch
    */
   case NonEmpty(
@@ -35,6 +36,7 @@ enum DequeueResponse:
     head: DequeueResponse.Delivery,
     tail: Chunk[DequeueResponse.Delivery],
     leaseExpiresAt: Instant,
+    leaseTtl: Duration,
     backlogDepth: Int,
   )
 
@@ -69,5 +71,6 @@ object DequeueResponse:
       deliveries.head,
       Chunk.fromIterable(deliveries.tail),
       grant.leaseExpiresAt,
+      grant.leaseTtl,
       grant.backlogDepth,
     )
