@@ -7,6 +7,7 @@ import homelab.keyedqueue.client.queue.model.{
   Dequeued,
   Enqueued,
   Message,
+  MessageDecoder,
   MessageEncoder,
   MessageId,
   MessageKey,
@@ -77,12 +78,9 @@ object ManagedConsumerSpec extends ZIOSpecDefault:
       beaten  <- Promise.make[Nothing, Chunk[Receipt]]
     yield Fake(answers, settled, beaten)
 
-  private def consumerOver(
-    client: QueueClient,
-    policy: Provider.DecodingPolicy = Provider.DecodingPolicy.Retry,
-  ) =
+  private def consumerOver(client: QueueClient) =
     Provider(client).consumer[Order](
-      Provider.ConsumerConfig("orders", patience = 1.second, heartbeat = 10.millis, policy = policy)
+      Provider.ConsumerConfig("orders", patience = 1.second, heartbeat = 10.millis)
     )
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("ManagedConsumer")(
@@ -117,30 +115,33 @@ object ManagedConsumerSpec extends ZIOSpecDefault:
         verdicts <- client.settled.get
       yield assertTrue(!started, verdicts.isEmpty)
     },
-    test("a message that will not read never reaches the logic, and is settled as the policy says") {
+    test("a message that will not read fails the call and comes back") {
+      // Reading is the caller's, so a message it cannot take fails the reading — a handler failure like
+      // any other, settled the way one is.
       for
         client   <- fake(claim(message(payload = Chunk(9.toByte))))
-        consumer <- consumerOver(client, Provider.DecodingPolicy.Discard)
+        consumer <- consumerOver(client)
         ran      <- Ref.make(false)
-        _        <- consumer.consume(_ => ran.set(true))
+        outcome  <- consumer.consume(_ => ran.set(true)).either
         started  <- ran.get
         verdicts <- client.settled.get
-      yield assertTrue(!started, verdicts == Chunk(Verdict(MessageId("m1"), Verdict.Outcome.Done)))
-    },
-    test("discard-after keeps a bad message coming back until it has been tried enough") {
-      for
-        early    <- fake(claim(message(attempt = 1, payload = Chunk(9.toByte))))
-        first    <- consumerOver(early, Provider.DecodingPolicy.DiscardAfter(3))
-        _        <- first.consume(_ => ZIO.unit)
-        earlyOut <- early.settled.get
-        late     <- fake(claim(message(attempt = 3, payload = Chunk(9.toByte))))
-        third    <- consumerOver(late, Provider.DecodingPolicy.DiscardAfter(3))
-        _        <- third.consume(_ => ZIO.unit)
-        lateOut  <- late.settled.get
       yield assertTrue(
-        earlyOut == Chunk(Verdict(MessageId("m1"), Verdict.Outcome.Failed)),
-        lateOut == Chunk(Verdict(MessageId("m1"), Verdict.Outcome.Done)),
+        !started,
+        outcome.left.exists(_.isInstanceOf[ServiceError.Unreadable]),
+        verdicts == Chunk(Verdict(MessageId("m1"), Verdict.Outcome.Failed)),
       )
+    },
+    test("a caller that answers for an unreadable message drops it instead") {
+      // What `Discard` used to be, composed: the reading answers, so the message settles done and is
+      // gone. `DiscardAfter` is the same edit with a look at the attempt the delivery carries.
+      for
+        client   <- fake(claim(message(payload = Chunk(9.toByte))))
+        raw      <- Provider(client).messages(
+                      Provider.ConsumerConfig("orders", patience = 1.second, heartbeat = 10.millis)
+                    )
+        _        <- raw.consume(dropping)
+        verdicts <- client.settled.get
+      yield assertTrue(verdicts == Chunk(Verdict(MessageId("m1"), Verdict.Outcome.Done)))
     },
     test("the claim is renewed while the logic is still working") {
       for
@@ -165,3 +166,7 @@ object ManagedConsumerSpec extends ZIOSpecDefault:
       yield assertTrue(verdicts == Chunk(Verdict(MessageId("m1"), Verdict.Outcome.Failed)))
     },
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(30.seconds)
+
+  /** A caller's own reading, which answers for a message it cannot take rather than failing. */
+  private def dropping(message: Message.Incoming): UIO[Unit] =
+    ZIO.succeed(MessageDecoder[Order].decode(message)).unit

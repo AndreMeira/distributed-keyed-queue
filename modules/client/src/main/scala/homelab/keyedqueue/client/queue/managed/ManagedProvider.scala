@@ -4,7 +4,7 @@ package homelab.keyedqueue.client.queue.managed
 import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.messaging.{ Consumer, Producer }
 import homelab.keyedqueue.client.queue
-import homelab.keyedqueue.client.queue.model.{ MessageDecoder, MessageEncoder, MessageId, MessageKey }
+import homelab.keyedqueue.client.queue.model.{ Message, MessageEncoder, MessageId, MessageKey }
 import homelab.keyedqueue.client.queue.{ Provider, QueueClient }
 import zio.*
 
@@ -21,25 +21,24 @@ import zio.*
 final private[client] class ManagedProvider(client: QueueClient) extends Provider:
 
   /**
-   * @param config which queue to take from, and how this consumer waits, retries and refuses
-   * @tparam A what its messages read as
+   * @param config which queue to take from, and how this consumer waits and retries
    * @return the consumer, beating for what it holds until the scope closes
    */
-  override def consumer[A: MessageDecoder as decoder](config: Provider.ConsumerConfig): URIO[Scope, Consumer[AdapterError, A]] =
+  override def messages(
+    config: Provider.ConsumerConfig
+  ): URIO[Scope, Consumer[AdapterError, Message.Incoming]] =
     for
       heartbeat <- Heartbeat.make(client, config.heartbeat)
       _         <- heartbeat.start.forkScoped
     yield ManagedConsumer(client, heartbeat, config)
 
   /**
-   * @param config which queue to take from, how many at once, and how this consumer waits, retries and
-   *               refuses
-   * @tparam A what its messages read as
+   * @param config which queue to take from, how many at once, and how this consumer waits and retries
    * @return the consumer, beating for what it holds until the scope closes
    */
-  override def batched[A: MessageDecoder as decoder](
+  override def batchedMessages(
     config: Provider.BatchConsumerConfig
-  ): URIO[Scope, Consumer.Batched[AdapterError, A]] =
+  ): URIO[Scope, Consumer.Batched[AdapterError, Message.Incoming]] =
     for
       heartbeat <- Heartbeat.make(client, config.heartbeat)
       _         <- heartbeat.start.forkScoped

@@ -3,7 +3,7 @@ package homelab.keyedqueue.client.queue.managed
 
 import homelab.common.messaging.Consumer
 import homelab.keyedqueue.client.ServiceError
-import homelab.keyedqueue.client.queue.model.MessageDecoder
+import homelab.keyedqueue.client.queue.model.Message
 import homelab.keyedqueue.client.queue.{ Provider, QueueClient }
 import zio.*
 
@@ -17,17 +17,16 @@ import zio.*
  *
  * @param client what the calls are made through
  * @param heartbeat what keeps the claim alive while the logic runs
- * @param conf which queue it reads, and how it waits, retries and refuses
- * @tparam A what the logic is given
+ * @param conf which queue it reads, and how it waits and retries
  */
-final private[queue] class ManagedConsumer[A: MessageDecoder](
+final private[queue] class ManagedConsumer(
   client: QueueClient,
   heartbeat: Heartbeat,
   conf: Provider.ConsumerConfig,
-) extends Consumer[ServiceError, A]:
+) extends Consumer[ServiceError, Message.Incoming]:
 
   /** The claim this reads through, which takes one message at a time. */
-  private val batch = ManagedBatch[A](
+  private val batch = ManagedBatch(
     client,
     heartbeat,
     Provider.BatchConsumerConfig(
@@ -36,28 +35,31 @@ final private[queue] class ManagedConsumer[A: MessageDecoder](
       patience = conf.patience,
       retryAfter = conf.retryAfter,
       heartbeat = conf.heartbeat,
-      policy = conf.policy,
     ),
   )
 
   /**
    * Claim one message and work it, or answer with nothing when none became ready.
    *
-   * @param logic what to run on the value
+   * @param logic what to run on the message
    * @tparam E2 what the logic aborts with, alongside this client's own failures
    * @return noop once the message is settled, or once the wait elapsed with nothing to take; aborts with
    *         what the logic aborted with, or with a [[ServiceError]] when a call does not land
    */
-  override def consume[E2 >: ServiceError](logic: A => IO[E2, Unit]): IO[E2, Unit] =
+  override def consume[E2 >: ServiceError](logic: Message.Incoming => IO[E2, Unit]): IO[E2, Unit] =
     batch.consume(each(logic))
 
   /**
    * The logic over what a claim of one holds.
    *
-   * @param logic what to run on the value
-   * @param values what the claim read as, which a batch of one holds a single one of
+   * @param logic what to run on the message
+   * @param messages what the claim holds, which a batch of one holds a single one of
    * @tparam E2 what the logic aborts with
    * @return what the logic answered
    */
-  private def each[E2 >: ServiceError](logic: A => IO[E2, Unit])(values: List[A]): IO[E2, Unit] =
-    ZIO.foreachDiscard(values)(logic)
+  private def each[E2 >: ServiceError](
+    logic: Message.Incoming => IO[E2, Unit]
+  )(
+    messages: List[Message.Incoming]
+  ): IO[E2, Unit] =
+    ZIO.foreachDiscard(messages)(logic)

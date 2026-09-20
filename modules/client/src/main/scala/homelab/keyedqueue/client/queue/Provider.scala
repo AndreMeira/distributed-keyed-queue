@@ -5,7 +5,8 @@ import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.messaging.{ Consumer, Producer }
 import homelab.keyedqueue.client.queue.Provider.{ BatchConsumerConfig, ConsumerConfig, Partition }
 import homelab.keyedqueue.client.queue.managed.ManagedProvider
-import homelab.keyedqueue.client.queue.model.{ MessageDecoder, MessageEncoder, MessageId, MessageKey }
+import homelab.keyedqueue.client.ServiceError
+import homelab.keyedqueue.client.queue.model.{ Message, MessageDecoder, MessageEncoder, MessageId, MessageKey }
 import zio.*
 
 
@@ -19,34 +20,64 @@ import zio.*
 trait Provider:
 
   /**
-   * A consumer of one queue, renewing what it holds for as long as the scope is open.
+   * A consumer of one queue's messages, renewing what it holds for as long as the scope is open.
+   *
+   * Messages arrive as they travelled. Reading one is the caller's, through `map` or `mapZIO`, which is
+   * what puts the decision about a message that will not read where it can be made — retried by letting
+   * the failure through, dropped by catching it, sent somewhere else, or counted. [[consumer]] is that
+   * composition for the common case.
    *
    * The beat belongs to the scope rather than to a call, because one renewal covers everything this
    * consumer holds. Closing the scope stops it: anything still claimed then lapses on its own lease and
    * is delivered again.
    *
-   * @param config which queue to take from, and what this consumer does about waiting, retrying and
-   *               messages it cannot read
-   * @tparam A what its messages read as
+   * @param config which queue to take from, and what this consumer does about waiting and retrying
    * @return the consumer
    */
-  def consumer[A: MessageDecoder as decoder](config: ConsumerConfig): URIO[Scope, Consumer[AdapterError, A]]
+  def messages(config: ConsumerConfig): URIO[Scope, Consumer[AdapterError, Message.Incoming]]
 
   /**
-   * A consumer of one queue that takes a key's messages together.
+   * A consumer of one queue's messages that takes a key's together.
    *
    * Every message of a batch shares one outcome — the logic answered, so all are done, or it did not, so
    * all come back. A caller that needs them settled apart takes [[QueueClient]] underneath, where an
    * outcome is stated per message.
    *
    * @param config which queue to take from, how many of its messages to take at once, and what this
-   *               consumer does about waiting, retrying and messages it cannot read
+   *               consumer does about waiting and retrying
+   * @return the consumer
+   */
+  def batchedMessages(config: BatchConsumerConfig): URIO[Scope, Consumer.Batched[AdapterError, Message.Incoming]]
+
+  /**
+   * The same, reading each message as an `A`.
+   *
+   * A message that will not read fails the call the way the caller's own logic failing would: it is
+   * settled failed and comes back, and the error says what the sender claimed it was. A consumer wanting
+   * anything else — dropping it, dead-lettering it, dispatching on what it says it is — composes that
+   * over [[messages]] itself.
+   *
+   * @param config which queue to take from, and what this consumer does about waiting and retrying
+   * @tparam A what its messages read as
+   * @return the consumer
+   */
+  def consumer[A: MessageDecoder as decoder](config: ConsumerConfig): URIO[Scope, Consumer[AdapterError, A]] =
+    messages(config).map(_.mapZIO(Provider.reading(decoder)))
+
+  /**
+   * The same as [[batchedMessages]], reading each message as an `A`.
+   *
+   * All or nothing, like the outcome: one message nobody can read fails the batch, because a batch handed
+   * over in part is a batch answered for in part.
+   *
+   * @param config which queue to take from, how many at once, and what it does about waiting and retrying
    * @tparam A what its messages read as
    * @return the consumer
    */
   def batched[A: MessageDecoder as decoder](
     config: BatchConsumerConfig
-  ): URIO[Scope, Consumer.Batched[AdapterError, A]]
+  ): URIO[Scope, Consumer[AdapterError, List[A]]] =
+    batchedMessages(config).map(_.mapZIO(Provider.readingAll(decoder)))
 
   /**
    * A producer for one queue, naming each message from the value it sends.
@@ -82,6 +113,38 @@ trait Provider:
 object Provider:
 
   /**
+   * One message read as an `A`, for the typed consumers.
+   *
+   * @param decoder what turns a message into a value
+   * @param message what arrived
+   * @tparam A what it reads as
+   * @return the value; aborts with `Unreadable` when the message is not one
+   */
+  private def reading[A](decoder: MessageDecoder[A])(message: Message.Incoming): IO[ServiceError, A] =
+    ZIO.fromEither(decoder.decode(message)).mapError(unreadable(message))
+
+  /**
+   * A batch read as values, all of them or none.
+   *
+   * @param decoder what turns a message into a value
+   * @param messages what the claim held
+   * @tparam A what they read as
+   * @return the values in order; aborts with `Unreadable` when any message is not one
+   */
+  private def readingAll[A](decoder: MessageDecoder[A])(messages: List[Message.Incoming]): IO[ServiceError, List[A]] =
+    ZIO.foreach(messages)(reading(decoder))
+
+  /**
+   * What a failure to read amounts to in this client's terms.
+   *
+   * @param message what would not read, which says what its sender claimed it was
+   * @param failure what the decoder objected to
+   * @return the error to report
+   */
+  private def unreadable(message: Message.Incoming)(failure: MessageDecoder.Failure): ServiceError =
+    ServiceError.Unreadable(s"a message of ${message.payloadType} in ${message.encoding} did not read: $failure")
+
+  /**
    * The messaging ports over a client.
    *
    * Nothing is configured here: what a consumer waits, retries and refuses is a property of the queue it
@@ -100,14 +163,12 @@ object Provider:
    * @param retryAfter how long a key waits before anything this consumer failed is delivered again
    * @param heartbeat how often to beat before a claim has stated a lease to go by; once one has, the
    *                  lease it granted is what times the beats, and this no longer applies
-   * @param policy what to do with a message that cannot be read
    */
   final case class ConsumerConfig(
     queue: String,
     patience: Duration = 20.seconds,
     retryAfter: Duration = Duration.Zero,
     heartbeat: Duration = 5.seconds,
-    policy: DecodingPolicy = DecodingPolicy.DiscardAfter(3),
   )
 
   /**
@@ -119,7 +180,6 @@ object Provider:
    * @param retryAfter how long a key waits before anything this consumer failed is delivered again
    * @param heartbeat how often to beat before a claim has stated a lease to go by; once one has, the
    *                  lease it granted is what times the beats, and this no longer applies
-   * @param policy what to do with a message that cannot be read
    */
   final case class BatchConsumerConfig(
     queue: String,
@@ -127,34 +187,7 @@ object Provider:
     patience: Duration = 20.seconds,
     retryAfter: Duration = Duration.Zero,
     heartbeat: Duration = 5.seconds,
-    policy: DecodingPolicy = DecodingPolicy.DiscardAfter(3),
   )
-
-  /**
-   * What a consumer does with a message it cannot read.
-   *
-   * The service has no dead letter, so the choice is between a message coming back and a message going
-   * away, and neither is right everywhere: what is poison to one consumer is a type another one handles.
-   * Stated where a consumer is built, because the messaging port a handler is given has no channel to
-   * report it through.
-   */
-  enum DecodingPolicy:
-
-    /** Settle it failed, so it returns to its key's order and arrives again. */
-    case Retry
-
-    /** Settle it done, so it is gone. */
-    case Discard
-
-    /**
-     * Retry it until it has been delivered this often, then discard it.
-     *
-     * The only one of the three that neither loses a message on its first bad read nor blocks its key
-     * forever, because a delivery carries how many times it has been tried.
-     *
-     * @param attempts how many deliveries to allow before discarding
-     */
-    case DiscardAfter(attempts: Int)
 
   /**
    * How a value says what to call it and where it belongs.

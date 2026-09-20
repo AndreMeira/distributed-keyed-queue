@@ -2,19 +2,7 @@ package homelab.keyedqueue.client.queue
 
 
 import homelab.keyedqueue.client.ServiceError
-import homelab.keyedqueue.client.queue.model.{
-  Claim,
-  Dequeued,
-  Enqueued,
-  Message,
-  MessageEncoder,
-  MessageId,
-  MessageKey,
-  Receipt,
-  Renewed,
-  Settled,
-  Verdict,
-}
+import homelab.keyedqueue.client.queue.model.*
 import zio.*
 import zio.schema.{ DeriveSchema, Schema }
 import zio.test.*
@@ -25,8 +13,8 @@ import java.time.Instant
 /**
  * What a batch promises beyond one message at a time: every message of a claim shares an outcome.
  *
- * The cases worth testing are the ones where they disagree — a batch the logic failed halfway through, and
- * a batch carrying a message that never reached the logic at all.
+ * The cases worth testing are the ones where the outcome and the messages disagree — a batch the logic
+ * failed halfway through, and a batch carrying a message the caller's own reading will not take.
  */
 object ManagedBatchSpec extends ZIOSpecDefault:
 
@@ -34,7 +22,7 @@ object ManagedBatchSpec extends ZIOSpecDefault:
 
   private given Schema[Order] = DeriveSchema.gen[Order]
 
-  import homelab.keyedqueue.client.queue.model.MessageDecoder.auto.given
+  import MessageDecoder.auto.given
 
   private val lease   = 40.millis
   private val encoder = MessageEncoder.derive[Order]
@@ -88,13 +76,9 @@ object ManagedBatchSpec extends ZIOSpecDefault:
       asked   <- Ref.make(Chunk.empty[Int])
     yield Fake(answers, settled, asked)
 
-  private def batchOver(
-    client: QueueClient,
-    size: Int = 3,
-    policy: Provider.DecodingPolicy = Provider.DecodingPolicy.Retry,
-  ) =
+  private def batchOver(client: QueueClient, size: Int = 3) =
     Provider(client).batched[Order](
-      Provider.BatchConsumerConfig("orders", size, patience = 1.second, heartbeat = 10.millis, policy = policy)
+      Provider.BatchConsumerConfig("orders", size, patience = 1.second, heartbeat = 10.millis)
     )
 
   private def verdicts(of: Chunk[Verdict]): Map[String, Verdict.Outcome] =
@@ -127,39 +111,34 @@ object ManagedBatchSpec extends ZIOSpecDefault:
         given_.size == 2,
       )
     },
-    test("one message nobody can read keeps the whole batch from the logic") {
+    test("one message nobody can read fails the batch, and every message of it comes back") {
+      // Reading is the caller's now, so a message that will not read fails the reading — which is a
+      // handler failure like any other, and settles the way one does.
       for
-        client <- fake(claim(readable("m1"), unreadable("m2"), readable("m3")))
-        batch  <- batchOver(client, policy = Provider.DecodingPolicy.Retry)
-        ran    <- Ref.make(false)
-        _      <- batch.consume(_ => ran.set(true))
-        wentIn <- ran.get
-        given_ <- client.settled.get
+        client  <- fake(claim(readable("m1"), unreadable("m2"), readable("m3")))
+        batch   <- batchOver(client)
+        ran     <- Ref.make(false)
+        outcome <- batch.consume(_ => ran.set(true)).either
+        wentIn  <- ran.get
+        given_  <- client.settled.get
       yield assertTrue(
         !wentIn,
+        outcome.left.exists(_.isInstanceOf[ServiceError.Unreadable]),
         verdicts(given_).values.toSet == Set(Verdict.Outcome.Failed),
         given_.size == 3,
       )
     },
-    test("only the message that would not read takes the policy; its readable neighbours come back") {
+    test("a caller reading the messages itself decides what an unreadable one costs") {
+      // What the policy used to do, composed instead: drop the batch that will not read, by answering
+      // for it. Everything else a caller might want is the same kind of edit.
       for
-        client <- fake(claim(readable("m1"), unreadable("m2")))
-        batch  <- batchOver(client, policy = Provider.DecodingPolicy.Discard)
-        _      <- batch.consume(_ => ZIO.unit)
+        client <- fake(claim(unreadable("m1")))
+        raw    <- Provider(client).batchedMessages(
+                    Provider.BatchConsumerConfig("orders", size = 3, patience = 1.second, heartbeat = 10.millis)
+                  )
+        _      <- raw.consume(messages => ZIO.foreachDiscard(messages)(readingOrDropping))
         given_ <- client.settled.get
-      yield assertTrue(
-        verdicts(given_) == Map("m1" -> Verdict.Outcome.Failed, "m2" -> Verdict.Outcome.Done)
-      )
-    },
-    test("the policy reads each message's own attempts, so a batch may part on the count") {
-      for
-        client <- fake(claim(message("m1", Chunk(9.toByte), attempt = 1), message("m2", Chunk(9.toByte), attempt = 3)))
-        batch  <- batchOver(client, policy = Provider.DecodingPolicy.DiscardAfter(3))
-        _      <- batch.consume(_ => ZIO.unit)
-        given_ <- client.settled.get
-      yield assertTrue(
-        verdicts(given_) == Map("m1" -> Verdict.Outcome.Failed, "m2" -> Verdict.Outcome.Done)
-      )
+      yield assertTrue(verdicts(given_).values.toSet == Set(Verdict.Outcome.Done))
     },
     test("the claim is asked for as many messages as the batch takes, and one takes one") {
       for
@@ -174,3 +153,7 @@ object ManagedBatchSpec extends ZIOSpecDefault:
       yield assertTrue(batched == Chunk(7), alone == Chunk(1))
     },
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(30.seconds)
+
+  /** A caller's own reading, which answers for a message it cannot take rather than failing. */
+  private def readingOrDropping(message: Message.Incoming): UIO[Unit] =
+    ZIO.succeed(MessageDecoder[Order].decode(message)).unit
