@@ -1,7 +1,7 @@
 package homelab.keyedqueue.client.lock
 
 
-import homelab.keyedqueue.client.LockError
+import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLockClient
 import io.grpc.ManagedChannelBuilder
 import scalapb.zio_grpc.ZManagedChannel
@@ -26,7 +26,7 @@ trait LockClient:
    * @return the grant, or `Unavailable` when the wait elapsed; aborts with `Rejected` when the request is
    *         malformed, or `Unreachable` when the deployment did not answer
    */
-  def acquire(name: String, ttl: Duration, maxWait: Duration): IO[LockError, Acquired]
+  def acquire(name: String, ttl: Duration, maxWait: Duration): IO[ServiceError, Acquired]
 
   /**
    * Take the named lock only if it is free and unqueued right now.
@@ -36,7 +36,7 @@ trait LockClient:
    * @return the grant, or `Unavailable` when somebody holds it or is already queued for it; aborts with
    *         `Rejected` when the request is malformed, or `Unreachable` when the deployment did not answer
    */
-  def tryAcquire(name: String, ttl: Duration): IO[LockError, Acquired]
+  def tryAcquire(name: String, ttl: Duration): IO[ServiceError, Acquired]
 
   /**
    * Give up a lock this caller holds, so a waiter may take it.
@@ -45,7 +45,7 @@ trait LockClient:
    * @return whether it applied; `false` says the hold had already been revoked; aborts with `Rejected`
    *         when the receipt is not one the service issued
    */
-  def release(receipt: Receipt): IO[LockError, Boolean]
+  def release(receipt: Receipt): IO[ServiceError, Boolean]
 
   /**
    * Push a held lease forward.
@@ -55,7 +55,7 @@ trait LockClient:
    * @return the new deadline, or `Lost` when the hold is gone; aborts with `Rejected` when the receipt is
    *         not one the service issued
    */
-  def refresh(receipt: Receipt, ttl: Duration): IO[LockError, Refreshed]
+  def refresh(receipt: Receipt, ttl: Duration): IO[ServiceError, Refreshed]
 
 
 object LockClient:

@@ -34,7 +34,7 @@ final class HeartbeatUseCase(store: QueueStore):
   def apply(request: HeartbeatRequest): IO[ApplicationError, HeartbeatResponse] =
     val renewal = parse(request)
     store.renew(renewal.held).map { (until, lost) =>
-      HeartbeatResponse(renewal.unreadable ++ lost.map(_.reference), until)
+      HeartbeatResponse(renewal.unreadable ++ lost.map(_.reference), until, store.leaseTtl)
     }
 
   /**

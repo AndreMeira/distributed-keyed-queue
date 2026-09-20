@@ -2,13 +2,13 @@ package homelab.keyedqueue.client
 
 
 /**
- * What a call to the lock service aborts with.
+ * What a call to the service aborts with, whichever half of it was called.
  *
  * The client is the edge, so a transport's exception is wrapped here and never reaches a caller's
  * signature. The four cases are three decisions: fix the request, retry later, or give up and report — the
  * last of which covers both an answer this client cannot read and a failure it does not recognise.
  */
-enum LockError:
+enum ServiceError:
 
   /**
    * The service refused the request as malformed.

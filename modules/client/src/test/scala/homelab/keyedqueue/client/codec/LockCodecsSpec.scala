@@ -3,7 +3,7 @@ package homelab.keyedqueue.client.codec
 
 import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
-import homelab.keyedqueue.client.LockError
+import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.lock.*
 import homelab.keyedqueue.v1
 import io.grpc.Status
@@ -25,10 +25,10 @@ object LockCodecsSpec extends ZIOSpecDefault:
   private val span   = ProtoDuration(30L, 0)
   private val moment = Instant.ofEpochSecond(1_700_000_000L, 500)
 
-  private def unreadable(error: LockError): Boolean =
+  private def unreadable(error: ServiceError): Boolean =
     error match
-      case LockError.Unreadable(_) => true
-      case _                       => false
+      case ServiceError.Unreadable(_) => true
+      case _                          => false
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("LockCodecs")(
     suite("acquired")(
@@ -92,19 +92,19 @@ object LockCodecsSpec extends ZIOSpecDefault:
     suite("failure")(
       test("a malformed request is the caller's to fix, and carries what was wrong") {
         val raised = Status.INVALID_ARGUMENT.withDescription("a lock name is required").asException()
-        assertTrue(LockCodecs.failure(raised) == LockError.Rejected("a lock name is required"))
+        assertTrue(Protos.failure(raised) == ServiceError.Rejected("a lock name is required"))
       },
       test("an unreachable deployment is worth retrying") {
         val unavailable = Status.UNAVAILABLE.asException()
         val timedOut    = Status.DEADLINE_EXCEEDED.asException()
         assertTrue(
-          LockCodecs.failure(unavailable).isInstanceOf[LockError.Unreachable],
-          LockCodecs.failure(timedOut).isInstanceOf[LockError.Unreachable],
+          Protos.failure(unavailable).isInstanceOf[ServiceError.Unreachable],
+          Protos.failure(timedOut).isInstanceOf[ServiceError.Unreachable],
         )
       },
       test("anything else is reported rather than interpreted") {
         val internal = Status.INTERNAL.asException()
-        assertTrue(LockCodecs.failure(internal).isInstanceOf[LockError.Failed])
+        assertTrue(Protos.failure(internal).isInstanceOf[ServiceError.Failed])
       },
     ),
   )

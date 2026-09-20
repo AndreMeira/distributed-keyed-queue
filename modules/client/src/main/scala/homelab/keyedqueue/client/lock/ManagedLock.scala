@@ -1,7 +1,7 @@
 package homelab.keyedqueue.client.lock
 
 
-import homelab.keyedqueue.client.LockError
+import homelab.keyedqueue.client.ServiceError
 import zio.*
 
 
@@ -30,7 +30,7 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
    * @tparam E what `effect` aborts with
    * @tparam A what `effect` answers
    * @return what `effect` answered, or `None` when the wait elapsed; aborts with `effect`'s own error, or
-   *         with a [[LockError]] when the service could not be reached
+   *         with a [[ServiceError]] when the service could not be reached
    */
   override def acquire[R, E, A](
     name: String,
@@ -38,7 +38,7 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
     maxWait: Duration,
   )(
     effect: ZIO[R, E, A]
-  ): ZIO[R, LockError | E, Option[A]] = ZIO.scoped:
+  ): ZIO[R, ServiceError | E, Option[A]] = ZIO.scoped:
     ZIO.uninterruptibleMask: restore =>
       restore(client.acquire(name, ttl, maxWait)).flatMap {
         case Acquired.Unavailable   => ZIO.none
@@ -57,14 +57,14 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
    * @tparam E what `effect` aborts with
    * @tparam A what `effect` answers
    * @return what `effect` answered, or `None` when the lock was not free; aborts with `effect`'s own
-   *         error, or with a [[LockError]] when the service could not be reached
+   *         error, or with a [[ServiceError]] when the service could not be reached
    */
   override def tryAcquire[R, E, A](
     name: String,
     ttl: Duration,
   )(
     effect: ZIO[R, E, A]
-  ): ZIO[R, LockError | E, Option[A]] = ZIO.scoped:
+  ): ZIO[R, ServiceError | E, Option[A]] = ZIO.scoped:
     ZIO.uninterruptibleMask: restore =>
       restore(client.tryAcquire(name, ttl)).flatMap {
         case Acquired.Unavailable   => ZIO.none
@@ -96,9 +96,9 @@ final private[client] class ManagedLock(client: LockClient) extends DistributedL
    *
    * @param receipt what the renewals name
    * @param lease how long the lease now runs, which is what the next renewal is timed by
-   * @return noop when the hold is lost; aborts with a [[LockError]] when a call fails
+   * @return noop when the hold is lost; aborts with a [[ServiceError]] when a call fails
    */
-  private def renewing(receipt: Receipt, lease: Duration): IO[LockError, Unit] =
+  private def renewing(receipt: Receipt, lease: Duration): IO[ServiceError, Unit] =
     client.refresh(receipt, lease).delay(lease.dividedBy(2)).flatMap {
       case Refreshed.Lost                => ZIO.unit
       case Refreshed.Renewed(_, granted) => renewing(receipt, granted)

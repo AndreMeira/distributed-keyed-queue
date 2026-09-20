@@ -1,7 +1,7 @@
 package homelab.keyedqueue.client.lock
 
 
-import homelab.keyedqueue.client.LockError
+import homelab.keyedqueue.client.ServiceError
 import zio.*
 import zio.test.*
 
@@ -28,13 +28,13 @@ object DistributedLockSpec extends ZIOSpecDefault:
     lostAfter: Int,
     granting: Option[Duration],
   ) extends LockClient:
-    override def acquire(name: String, ttl: Duration, maxWait: Duration): IO[LockError, Acquired] =
+    override def acquire(name: String, ttl: Duration, maxWait: Duration): IO[ServiceError, Acquired] =
       ZIO.succeed(granted.fold(Acquired.Unavailable)(Acquired.Granted.apply))
-    override def tryAcquire(name: String, ttl: Duration): IO[LockError, Acquired]                 =
+    override def tryAcquire(name: String, ttl: Duration): IO[ServiceError, Acquired]                 =
       acquire(name, ttl, Duration.Zero)
-    override def release(receipt: Receipt): IO[LockError, Boolean]                                =
+    override def release(receipt: Receipt): IO[ServiceError, Boolean]                                =
       releases.update(_ + 1).as(true)
-    override def refresh(receipt: Receipt, ttl: Duration): IO[LockError, Refreshed]               =
+    override def refresh(receipt: Receipt, ttl: Duration): IO[ServiceError, Refreshed]               =
       refreshes
         .updateAndGet(_ :+ ttl)
         .tap(_ => renewed.succeed(()))

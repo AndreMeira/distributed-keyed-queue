@@ -177,6 +177,7 @@ object SpecHelper {
         claim = QueueClaim(QueueName(queue), MessageKey(key), Token(1)),
         messages = NonEmptyChunk(Grant.Owned(owned.messageId, owned, attempt = 1)),
         leaseExpiresAt = java.time.Instant.EPOCH,
+        leaseTtl = 30.seconds,
         backlogDepth = 0,
       )
 

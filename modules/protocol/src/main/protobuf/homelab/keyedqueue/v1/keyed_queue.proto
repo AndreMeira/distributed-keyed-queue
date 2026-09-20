@@ -64,6 +64,10 @@ message DequeueResponse {
   // How many more were queued for this key behind the batch. A lower bound: producers may append while the
   // claim is held, and nothing else may take from it.
   uint32                    backlog_depth    = 5;
+  // How long the lease runs. The deadline above is a reading of this service's clock, which a consumer
+  // cannot subtract its own from; this is the span it times its heartbeats by. Set whenever a claim was
+  // granted.
+  google.protobuf.Duration  lease_ttl        = 6;
 }
 
 message Delivery {
@@ -119,4 +123,5 @@ message HeartbeatRequest {
 message HeartbeatResponse {
   repeated string           stale         = 1;  // of those, the ones it no longer holds
   google.protobuf.Timestamp renewed_until = 2;  // the new deadline for all the rest
+  google.protobuf.Duration  lease_ttl     = 3;  // how long that renewal runs, for the same reason
 }

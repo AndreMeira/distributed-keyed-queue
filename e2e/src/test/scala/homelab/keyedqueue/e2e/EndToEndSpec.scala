@@ -125,6 +125,22 @@ object EndToEndSpec extends ZIOSpecDefault:
         applied <- dkq.a.settle(held)
       yield assertTrue(applied == Applied.APPLIED_OK)
     },
+    test("a claim states how long its lease runs, not only when it ends") {
+      // The deadline is a reading of the service's clock. The span beside it is the only thing a consumer
+      // can time its beats by: the lease is the service's configuration, and nothing the consumer sent
+      // reveals how long it is.
+      for
+        dkq    <- ZIO.service[Deployment]
+        _      <- dkq.a.enqueue(dkq.queue("span"), "k1", "work")
+        held   <- dkq.a.dequeue(dkq.queue("span"), 5.seconds)
+        beaten <- dkq.a.heartbeat(Seq(held.receipt))
+        _      <- dkq.a.settle(held)
+      yield assertTrue(
+        held.leaseTtl.map(_.seconds).contains(lease.getSeconds),
+        beaten.leaseTtl.map(_.seconds).contains(lease.getSeconds),
+        held.leaseExpiresAt.isDefined,
+      )
+    },
     test("a claim held in silence is reclaimed, and its settle refused") {
       // The other half: the same handler without beats. Its work is not just lost — the settle it eventually
       // sends must be *refused*, or the message would be completed twice by two different consumers.

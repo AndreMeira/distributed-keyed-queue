@@ -3,7 +3,7 @@ package homelab.keyedqueue.client.lock
 
 import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
-import homelab.keyedqueue.client.LockError
+import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.v1
 import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLock
 import io.grpc.inprocess.{ InProcessChannelBuilder, InProcessServerBuilder }
@@ -72,7 +72,7 @@ object GrpcLockClientSpec extends ZIOSpecDefault:
    * @param status what every call comes back with
    * @return what the client made of a refused acquire
    */
-  private def refusedBy(status: Status): ZIO[Scope, Throwable, Either[LockError, Acquired]] =
+  private def refusedBy(status: Status): ZIO[Scope, Throwable, Either[ServiceError, Acquired]] =
     for
       client <- served(Refusing(status))
       answer <- client.acquire("a-key", 1.second, 1.second).either
@@ -122,14 +122,14 @@ object GrpcLockClientSpec extends ZIOSpecDefault:
     },
     test("a malformed request comes back as the caller's to fix, carrying what the service said") {
       refusedBy(Status.INVALID_ARGUMENT.withDescription("a lock name is required"))
-        .map(answer => assertTrue(answer == Left(LockError.Rejected("a lock name is required"))))
+        .map(answer => assertTrue(answer == Left(ServiceError.Rejected("a lock name is required"))))
     },
     test("an unreachable deployment comes back as worth retrying") {
       refusedBy(Status.UNAVAILABLE)
-        .map(answer => assertTrue(answer.left.exists(_.isInstanceOf[LockError.Unreachable])))
+        .map(answer => assertTrue(answer.left.exists(_.isInstanceOf[ServiceError.Unreachable])))
     },
     test("anything else comes back reported rather than interpreted") {
       refusedBy(Status.INTERNAL)
-        .map(answer => assertTrue(answer.left.exists(_.isInstanceOf[LockError.Failed])))
+        .map(answer => assertTrue(answer.left.exists(_.isInstanceOf[ServiceError.Failed])))
     },
   )

@@ -69,6 +69,16 @@ trait QueueStore:
   def renew(claims: Chunk[Claim]): IO[ApplicationError.AdapterError, (Instant, Chunk[Claim])]
 
   /**
+   * How long a lease runs, which every grant and every renewal is written with.
+   *
+   * A deadline alone is a reading of this store's clock, so it is this that a consumer can time its
+   * heartbeats by.
+   *
+   * @return the span
+   */
+  def leaseTtl: Duration
+
+  /**
    * Repair what a death or a backoff left behind: revoke lapsed claims, and release keys whose retry delay
    * has elapsed.
    *
