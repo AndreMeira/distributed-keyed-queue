@@ -161,14 +161,11 @@ object Provider:
    * @param queue which queue to take from
    * @param patience how long a call blocks for work before answering with nothing
    * @param retryAfter how long a key waits before anything this consumer failed is delivered again
-   * @param heartbeat how often to beat before a claim has stated a lease to go by; once one has, the
-   *                  lease it granted is what times the beats, and this no longer applies
    */
   final case class ConsumerConfig(
     queue: String,
     patience: Duration = 20.seconds,
     retryAfter: Duration = Duration.Zero,
-    heartbeat: Duration = 5.seconds,
   )
 
   /**
@@ -178,13 +175,10 @@ object Provider:
    * @param size the most messages to take at once, which the service may lower to its own ceiling
    * @param patience how long a call blocks for work before answering with nothing
    * @param retryAfter how long a key waits before anything this consumer failed is delivered again
-   * @param heartbeat how often to beat before a claim has stated a lease to go by; once one has, the
-   *                  lease it granted is what times the beats, and this no longer applies
    */
   final case class BatchConsumerConfig(
     queue: String,
     size: Int,
     patience: Duration = 20.seconds,
     retryAfter: Duration = Duration.Zero,
-    heartbeat: Duration = 5.seconds,
   )

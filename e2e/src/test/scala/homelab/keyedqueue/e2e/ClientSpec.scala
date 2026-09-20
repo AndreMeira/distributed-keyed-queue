@@ -49,7 +49,7 @@ object ClientSpec extends ZIOSpecDefault:
    * @return the configuration
    */
   private def consuming(queue: String): Provider.ConsumerConfig =
-    Provider.ConsumerConfig(queue, patience = 5.seconds, heartbeat = 1.second)
+    Provider.ConsumerConfig(queue, patience = 5.seconds)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("the client, against the deployment")(
     test("a value sent through a producer comes back through a consumer as the same value") {

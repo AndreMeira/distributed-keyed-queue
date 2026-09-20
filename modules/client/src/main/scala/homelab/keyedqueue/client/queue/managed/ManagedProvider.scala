@@ -28,9 +28,7 @@ final private[client] class ManagedProvider(client: QueueClient) extends Provide
   override def messages(
     config: Provider.ConsumerConfig
   ): URIO[Scope, Consumer[AdapterError, Message.Incoming]] =
-    for
-      heartbeat <- Heartbeat.make(client, config.heartbeat)
-      _         <- heartbeat.start.forkScoped
+    for heartbeat <- Heartbeat.make(client)
     yield ManagedConsumer(client, heartbeat, config)
 
   /**
@@ -40,9 +38,7 @@ final private[client] class ManagedProvider(client: QueueClient) extends Provide
   override def batchedMessages(
     config: Provider.BatchConsumerConfig
   ): URIO[Scope, Consumer.Batched[AdapterError, Message.Incoming]] =
-    for
-      heartbeat <- Heartbeat.make(client, config.heartbeat)
-      _         <- heartbeat.start.forkScoped
+    for heartbeat <- Heartbeat.make(client)
     yield ManagedBatch(client, heartbeat, config)
 
   /**
