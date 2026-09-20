@@ -41,9 +41,20 @@ object PayloadSpec extends ZIOSpecDefault:
         outgoing.payloadType == "order.v2",
       )
     },
-    test("bytes that are not the value come back as a failure rather than as something wrong") {
-      val message = arrived(Chunk(9.toByte, 9.toByte), MessageEncoder.protobuf, "order.v2")
-      assertTrue(MessageDecoder.derive[Order].decode(message).isLeft)
+    test("bytes that are not the value fail, saying what the sender claimed they were") {
+      // A decoder that checks nothing fails here for a mismatched type more often than for corrupt bytes,
+      // so the failure carries the claim: a log of the reason alone would not say which it was.
+      val message = arrived(Chunk(9.toByte, 9.toByte), "application/json", "item.v1")
+      val failed  = MessageDecoder.derive[Order].decode(message).left.toOption
+      assertTrue(
+        failed.exists(_.isInstanceOf[MessageDecoder.Failure.Unreadable]),
+        failed
+          .collect { case MessageDecoder.Failure.Unreadable(_, encoding, _) => encoding }
+          .contains("application/json"),
+        failed
+          .collect { case MessageDecoder.Failure.Unreadable(_, _, payloadType) => payloadType }
+          .contains("item.v1"),
+      )
     },
     test("with both autos imported, a caller states the value and nothing about how it travels") {
       import MessageDecoder.auto.given

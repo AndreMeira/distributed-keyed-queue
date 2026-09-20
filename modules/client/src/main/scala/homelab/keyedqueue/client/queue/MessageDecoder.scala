@@ -84,11 +84,12 @@ object MessageDecoder:
   /**
    * What a failure to read amounts to, as a value the reading answers with.
    *
+   * @param message what arrived, which is what says the format the bytes were supposed to be in
    * @param error what the codec said was wrong
    * @return the failure
    */
-  private def unreadable(error: DecodeError): Failure =
-    Failure.Unreadable(error.message)
+  private def unreadable(message: Message.Incoming)(error: DecodeError): Failure =
+    Failure.Unreadable(error.message, message.encoding, message.payloadType)
 
   /**
    * A decoder over a codec that has already been derived.
@@ -103,7 +104,7 @@ object MessageDecoder:
      * @return the value its payload carries, or why the bytes are not one
      */
     override def decode(message: Message.Incoming): Either[Failure, A] =
-      codec.decode(message.payload).left.map(unreadable)
+      codec.decode(message.payload).left.map(unreadable(message))
 
   /**
    * A decoder that checks what a sender claimed before reading anything.
@@ -122,7 +123,7 @@ object MessageDecoder:
     override def decode(message: Message.Incoming): Either[Failure, A] =
       if message.encoding != encoding then Left(Failure.WrongEncoding(encoding, message.encoding))
       else if message.payloadType != payloadType then Left(Failure.WrongType(payloadType, message.payloadType))
-      else codec.decode(message.payload).left.map(unreadable)
+      else codec.decode(message.payload).left.map(unreadable(message))
 
   /**
    * Why a message did not become a value.
@@ -149,11 +150,16 @@ object MessageDecoder:
     case WrongType(expected: String, found: String)
 
     /**
-     * The format was right and the bytes were not a value.
+     * The bytes were not a value.
+     *
+     * What the sender said they were comes with it, because a decoder that checks neither will most often
+     * fail here for exactly that reason, and a log of the reason alone would not say so.
      *
      * @param reason what the reading said was wrong
+     * @param encoding the media type the message said its payload was in
+     * @param payloadType the schema name and version the message said it was written against
      */
-    case Unreadable(reason: String)
+    case Unreadable(reason: String, encoding: String, payloadType: String)
 
   /**
    * A decoder for anything with a schema, summoned rather than named.
