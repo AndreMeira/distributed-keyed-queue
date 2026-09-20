@@ -141,10 +141,16 @@ Provider.ConsumerConfig("orders", policy = Provider.DecodingPolicy.DiscardAfter(
 | `Retry` | settle failed, so it comes back — forever, if nobody can ever read it |
 | `Discard` | settle done, so it is gone |
 | `DiscardAfter(n)` | come back until it has been delivered `n` times, then go |
+| `Surface` | settle failed *and* abort the call with `Unreadable`, so you hear about it |
 
-`DiscardAfter` is the default because it is the only one of the three that neither loses a message on a
-first bad read nor blocks a key for good. The service has no dead letter, so there is no third place to
-put one.
+`DiscardAfter` is the default because it neither loses a message on a first bad read nor blocks a key for
+good. The service has no dead letter, so there is no third place to put one.
+
+The first three answer for the message and tell you nothing, which is what you want when a stray payload
+is somebody else's problem. `Surface` is for when it is not: the message comes back exactly as a failed
+handler's would, and your run loop decides whether to log it, stop, or carry on. It is the same shape the
+toolkit's NATS consumer offers, where a decoder sits *over* the consumer so a bad payload arrives as a
+handler failure — here the decoder is inside, so the policy is what gives it a way out.
 
 A mismatch is worth distinguishing from corruption, and the failure says which: a decoder built with
 `deriveAs` refuses anything labelled as another type or written in another format, and an `Unreadable`

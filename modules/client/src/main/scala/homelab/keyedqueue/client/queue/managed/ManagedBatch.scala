@@ -64,8 +64,8 @@ final private[queue] class ManagedBatch[A: MessageDecoder as decoder](
       heartbeat.hold(claim) *> {
         val messages = claim.messages.toList
         decoded(messages) match
-          case Left(unreadable) => settling(claim, refused(unreadable.toSet, messages))
-          case Right(values)    => restore(logic(values)).onExit(exit => settling(claim, processed(exit, messages)))
+          case Left(unreadable) => settle(claim, refused(unreadable.toSet, messages)) *> reporting(unreadable)
+          case Right(values)    => restore(logic(values)).onExit(exit => settle(claim, processed(exit, messages)))
       }
 
   /**
@@ -83,6 +83,21 @@ final private[queue] class ManagedBatch[A: MessageDecoder as decoder](
         case Right(value) => Right(value)
         case Left(_)      => Left(message.id)
     if left.nonEmpty then Left(left) else Right(right)
+
+  /**
+   * Tell the caller about messages that would not read, when the policy says to.
+   *
+   * The messages are settled either way; this is only whether the call answers or aborts. Under every
+   * other policy the consumer has spoken for them and the caller hears nothing.
+   *
+   * @param unreadable the names of this claim's messages that did not read
+   * @return noop under every policy but `Surface`; aborts with `Unreadable` under that one
+   */
+  private def reporting(unreadable: List[MessageId]): IO[ServiceError, Unit] =
+    conf.policy match
+      case DecodingPolicy.Surface =>
+        ZIO.fail(ServiceError.Unreadable(s"${unreadable.size} message(s) of a claim did not read"))
+      case _                      => ZIO.unit
 
   /**
    * What became of the messages the logic was given.
@@ -137,6 +152,7 @@ final private[queue] class ManagedBatch[A: MessageDecoder as decoder](
       case DecodingPolicy.Discard                                         => Verdict.Outcome.Done
       case DecodingPolicy.DiscardAfter(tries) if message.attempt >= tries => Verdict.Outcome.Done
       case DecodingPolicy.DiscardAfter(_)                                 => Verdict.Outcome.Failed
+      case DecodingPolicy.Surface                                         => Verdict.Outcome.Failed
 
   /**
    * Report every outcome at once and stop holding the claim.
@@ -149,6 +165,6 @@ final private[queue] class ManagedBatch[A: MessageDecoder as decoder](
    * @param verdicts what became of each of them
    * @return noop once they have been reported, or once reporting failed
    */
-  private def settling(claim: Claim, verdicts: List[Verdict]): UIO[Unit] =
+  private def settle(claim: Claim, verdicts: List[Verdict]): UIO[Unit] =
     client.settle(claim.receipt, verdicts.toChunk, conf.retryAfter).ignore
       *> heartbeat.release(claim.receipt)

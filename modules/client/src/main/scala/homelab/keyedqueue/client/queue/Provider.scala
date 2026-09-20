@@ -149,12 +149,21 @@ object Provider:
     /**
      * Retry it until it has been delivered this often, then discard it.
      *
-     * The only one of the three that neither loses a message on its first bad read nor blocks its key
-     * forever, because a delivery carries how many times it has been tried.
+     * The one that neither loses a message on its first bad read nor blocks its key forever, because a
+     * delivery carries how many times it has been tried.
      *
      * @param attempts how many deliveries to allow before discarding
      */
     case DiscardAfter(attempts: Int)
+
+    /**
+     * Settle it failed and abort the call with `Unreadable`, so the caller hears about it.
+     *
+     * The only one that reports: the others answer for the message and say nothing, which is what a
+     * consumer wants when a stray payload is somebody else's problem. This is what it wants when it is
+     * not — the message comes back like any failed one, and the run loop is where the decision goes.
+     */
+    case Surface
 
   /**
    * How a value says what to call it and where it belongs.

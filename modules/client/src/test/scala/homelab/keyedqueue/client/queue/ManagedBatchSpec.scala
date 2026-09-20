@@ -161,6 +161,22 @@ object ManagedBatchSpec extends ZIOSpecDefault:
         verdicts(given_) == Map("m1" -> Verdict.Outcome.Failed, "m2" -> Verdict.Outcome.Done)
       )
     },
+    test("under Surface the caller hears about it, and the message still comes back") {
+      // Every other policy answers for the message and says nothing. This one settles it the same way a
+      // failed handler would and lets the call abort, so the run loop is where the decision goes.
+      for
+        client  <- fake(claim(readable("m1"), unreadable("m2")))
+        batch   <- batchOver(client, policy = Provider.DecodingPolicy.Surface)
+        ran     <- Ref.make(false)
+        outcome <- batch.consume(_ => ran.set(true)).either
+        wentIn  <- ran.get
+        given_  <- client.settled.get
+      yield assertTrue(
+        !wentIn,
+        outcome.left.exists(_.isInstanceOf[ServiceError.Unreadable]),
+        verdicts(given_).values.toSet == Set(Verdict.Outcome.Failed),
+      )
+    },
     test("the claim is asked for as many messages as the batch takes, and one takes one") {
       for
         many    <- fake(Dequeued.Idle)
