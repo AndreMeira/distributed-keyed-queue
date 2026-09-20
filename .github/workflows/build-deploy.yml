@@ -1,15 +1,19 @@
-# CD: on push to main, run the same suite a PR runs, then build the image and push it to GHCR.
+# On push to main, run the same suite a PR runs, then build the image and push it to GHCR.
 #
-# Modelled on the pattern the homelab's deployed services use, with two differences, both deliberate:
+# This publishes; it does not deploy, and it is not going to. dkq sits where a database or a broker sits:
+# whatever runs it pins a version and moves when its operator decides to, so a merge here has no business
+# moving anything. A tag write for ArgoCD to follow would be continuous deployment of shared
+# infrastructure underneath everything depending on it, which is the opposite of what pinning is for.
 #
-#   1. The image is built by `sbt server/Docker/publish`, not docker/build-push-action. This service has no
-#      hand-written Dockerfile on purpose (see build.sbt) — sbt-native-packager generates it, so the image
-#      pushed here is the one `publishLocal` gives a developer and the one the end-to-end suite composes.
-#   2. There is no config-repo bump, because there is no manifest to bump: nothing deploys this yet.
-#      When that lands, the step that follows this one is the tag write ArgoCD watches.
+# Modelled on the pattern the homelab's deployed services use, with one difference: the image is built by
+# `sbt server/Docker/publish`, not docker/build-push-action. This service has no hand-written Dockerfile
+# on purpose (see build.sbt) — sbt-native-packager generates it, so the image pushed here is the one
+# `publishLocal` gives a developer and the one the end-to-end suite composes.
 #
-# Tagged with the commit SHA and `latest`: the SHA is what a manifest should ever pin, `latest` is what the
-# compose files use so a developer can pull instead of build.
+# Tagged with the commit SHA and `latest`: the SHA is what a manifest names, `latest` is what the compose
+# files use so a developer can pull instead of build. Nothing here tags a released version, so pinning
+# today means pinning a SHA — a version tag would have to come from the release workflow, which publishes
+# the Maven artifacts and does not touch the image.
 #
 # The package is public without anyone asking for it: published from a public repository with GITHUB_TOKEN,
 # so GHCR links it to the repository and it inherits that visibility. There is no API to change visibility
