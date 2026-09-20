@@ -129,26 +129,88 @@ is one behaviour rather than two.
 
 ## Messages that will not decode
 
-A message whose bytes are not an `A` never reaches the handler: the port hands over values, so there is
-nowhere to report one through. What becomes of it is chosen where the consumer is built.
+`consumer[A]` reads each message for you, so one that will not read fails the call the way your own logic
+failing would: it is settled failed, comes back, and the error says what the sender claimed it was.
+
+Anything else is a composition, because underneath the typed consumer is a consumer of messages:
 
 ```scala
-Provider.ConsumerConfig("orders", policy = Provider.DecodingPolicy.DiscardAfter(3))
+raw <- Provider(client).messages(Provider.ConsumerConfig("orders"))
+_   <- raw.consume(handleOrDrop).forever
 ```
 
-| policy | what it does |
+`Consumer` has `map` and `mapZIO`, so what used to be a policy is now an edit to your own handler:
+
+| what you want | what you write |
 |---|---|
-| `Retry` | settle failed, so it comes back — forever, if nobody can ever read it |
-| `Discard` | settle done, so it is gone |
-| `DiscardAfter(n)` | come back until it has been delivered `n` times, then go |
+| it comes back | let the reading fail — a handler failure settles failed |
+| it is gone | answer for it: catch the failure and succeed |
+| it comes back a few times, then goes | look at `message.attempt`, which the delivery carries |
+| it goes somewhere else | send it, then answer — a dead letter queue is a producer |
+| this queue carries several kinds | match on `message.payloadType` and pick a decoder |
 
-`DiscardAfter` is the default because it is the only one of the three that neither loses a message on a
-first bad read nor blocks a key for good. The service has no dead letter, so there is no third place to
-put one.
+The last two are the reason this is a consumer of messages rather than a consumer of values: a fixed set
+of policies could express the first three and never the rest.
 
-A mismatch is worth distinguishing from corruption, and the failure says which: a decoder built with
-`deriveAs` refuses anything labelled as another type or written in another format, and an `Unreadable`
-carries what the sender claimed it was.
+Each of those, written out. They all start from a decoder built once rather than per message:
+
+```scala
+private val orders  = MessageDecoder.deriveAs[Order]("order.v2")
+private val refunds = MessageDecoder.deriveAs[Refund]("refund.v1")
+
+private def unreadable(message: Message.Incoming)(failure: MessageDecoder.Failure): ServiceError =
+  ServiceError.Unreadable(s"${message.id} said it was ${message.payloadType}: $failure")
+```
+
+**It comes back** — the reading fails, so the handler fails, so the message settles failed:
+
+```scala
+def retrying(message: Message.Incoming): IO[ServiceError | MyError, Unit] =
+  ZIO.fromEither(orders.decode(message)).mapError(unreadable(message)).flatMap(handle)
+```
+
+**It is gone** — answer for it, and the claim settles done:
+
+```scala
+def dropping(message: Message.Incoming): IO[MyError, Unit] =
+  orders.decode(message) match
+    case Right(order) => handle(order)
+    case Left(_)      => ZIO.unit
+```
+
+**A few times, then gone** — the delivery says how often it has been tried:
+
+```scala
+def dropAfter(tries: Int)(message: Message.Incoming): IO[ServiceError | MyError, Unit] =
+  orders.decode(message) match
+    case Right(order)                        => handle(order)
+    case Left(_) if message.attempt >= tries  => ZIO.unit
+    case Left(failure)                        => ZIO.fail(unreadable(message)(failure))
+```
+
+**Somewhere else** — a dead letter queue is a producer, so this is two lines rather than a feature:
+
+```scala
+def deadLettering(rejects: Producer[ServiceError, Rejected])(
+  message: Message.Incoming
+): IO[ServiceError | MyError, Unit] =
+  orders.decode(message) match
+    case Right(order) => handle(order)
+    case Left(_)      => rejects.emit(Rejected(message.id, message.payloadType, message.encoding))
+```
+
+**Several kinds on one queue** — what the sender called it is on the message, so match on it:
+
+```scala
+def dispatching(message: Message.Incoming): IO[ServiceError | MyError, Unit] =
+  message.payloadType match
+    case "order.v2"  => ZIO.fromEither(orders.decode(message)).mapError(unreadable(message)).flatMap(handle)
+    case "refund.v1" => ZIO.fromEither(refunds.decode(message)).mapError(unreadable(message)).flatMap(refund)
+    case _           => ZIO.unit
+```
+
+Any of them goes into `raw.consume(...)`, and `consumer[A]` is the first one with the decoder supplied for
+you.
 
 ## Taking a key's messages together
 
@@ -161,7 +223,8 @@ def handleAll(orders: List[Order]): IO[MyError, Unit] = ???
 
 One claim, one outcome: the handler answers and every message is done, it fails and every message comes
 back — including the ones it had already worked. If you need to mark three of ten done and the rest
-failed, that is `QueueClient.settle`, which states an outcome per message.
+failed, that is `QueueClient.settle`, which states an outcome per message. `batchedMessages` is the same
+consumer over messages, for a caller doing its own reading.
 
 Two properties worth knowing before you choose a size:
 
