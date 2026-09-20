@@ -152,8 +152,8 @@ object MessageDecoder:
     /**
      * The bytes were not a value.
      *
-     * What the sender said they were comes with it, because a decoder that checks neither will most often
-     * fail here for exactly that reason, and a log of the reason alone would not say so.
+     * What the sender said they were comes with it, because a decoder that checks neither most often fails
+     * here for exactly that reason, and the reason alone does not say which it was.
      *
      * @param reason what the reading said was wrong
      * @param encoding the media type the message said its payload was in

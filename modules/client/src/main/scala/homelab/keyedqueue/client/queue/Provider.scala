@@ -1,0 +1,98 @@
+package homelab.keyedqueue.client.queue
+
+
+import homelab.common.error.ApplicationError.AdapterError
+import homelab.common.messaging.{ Consumer, Producer }
+import homelab.keyedqueue.client.queue.Provider.ConsumerConfig
+import zio.*
+
+
+/**
+ * The queue as the homelab's messaging ports, so a dkq topology looks like any other.
+ *
+ * A claim is renewed while its message is being worked and settled however the work ends, which are the
+ * two obligations [[QueueClient]] leaves to its caller. What it takes away is the receipt, the batch and
+ * the outcome — a caller that wants those drops to the client underneath.
+ */
+trait Provider:
+
+  /**
+   * A consumer of one queue, renewing what it holds for as long as the scope is open.
+   *
+   * The beat belongs to the scope rather than to a call, because one renewal covers everything this
+   * consumer holds. Closing the scope stops it: anything still claimed then lapses on its own lease and
+   * is delivered again.
+   *
+   * @param config which queue to take from, and what this consumer does about waiting, retrying and
+   *               messages it cannot read
+   * @tparam A what its messages read as
+   * @return the consumer
+   */
+  def consumer[A: MessageDecoder as decoder](config: ConsumerConfig): URIO[Scope, Consumer[AdapterError, A]]
+
+  /**
+   * A producer for one queue.
+   *
+   * @param name which queue to send to
+   * @tparam A what it sends
+   * @return the producer
+   */
+  def producer[A: MessageEncoder](name: String): UIO[Producer[AdapterError, A]]
+
+
+object Provider:
+
+  /**
+   * The messaging ports over a client.
+   *
+   * Nothing is configured here: what a consumer waits, retries and refuses is a property of the queue it
+   * reads, so it is stated per consumer.
+   *
+   * @param client what every call is made through
+   * @return the provider
+   */
+  def apply(client: QueueClient): Provider = ManagedProvider(client)
+
+  /**
+   * What one consumer does, beyond which queue it reads.
+   *
+   * @param queue which queue to take from
+   * @param patience how long a call blocks for work before answering with nothing
+   * @param retryAfter how long a key waits before anything this consumer failed is delivered again
+   * @param heartbeat how often to beat before a claim has stated a lease to go by; once one has, the
+   *                  lease it granted is what times the beats, and this no longer applies
+   * @param policy what to do with a message that cannot be read
+   */
+  final case class ConsumerConfig(
+    queue: String,
+    patience: Duration = 20.seconds,
+    retryAfter: Duration = Duration.Zero,
+    heartbeat: Duration = 5.seconds,
+    policy: DecodingPolicy = DecodingPolicy.DiscardAfter(3),
+  )
+
+  /**
+   * What a consumer does with a message it cannot read.
+   *
+   * The service has no dead letter, so the choice is between a message coming back and a message going
+   * away, and neither is right everywhere: what is poison to one consumer is a type another one handles.
+   * Stated where a consumer is built, because the messaging port a handler is given has no channel to
+   * report it through.
+   */
+  enum DecodingPolicy:
+
+    /** Settle it failed, so it returns to its key's order and arrives again. */
+    case Retry
+
+    /** Settle it done, so it is gone. */
+    case Discard
+
+    /**
+     * Retry it until it has been delivered this often, then discard it.
+     *
+     * The only one of the three that neither loses a message on its first bad read nor blocks its key
+     * forever, because a delivery carries how many times it has been tried.
+     *
+     * @param attempts how many deliveries to allow before discarding
+     */
+    case DiscardAfter(attempts: Int)
