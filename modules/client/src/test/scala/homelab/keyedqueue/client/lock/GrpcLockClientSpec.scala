@@ -57,7 +57,7 @@ object GrpcLockClientSpec extends ZIOSpecDefault:
    * @param service what answers the calls
    * @return a client talking to it over an in-process channel
    */
-  private def served(service: KeyedLock): ZIO[Scope, Throwable, LockClient] =
+  private def served(service: KeyedLock): ZIO[Scope, Throwable | ServiceError, LockClient] =
     val name = InProcessServerBuilder.generateName()
     for
       _      <- ScopedServer.fromServiceList(
@@ -73,7 +73,7 @@ object GrpcLockClientSpec extends ZIOSpecDefault:
    * @param status what every call comes back with
    * @return what the client made of a refused acquire
    */
-  private def refusedBy(status: Status): ZIO[Scope, Throwable, Either[ServiceError, Acquired]] =
+  private def refusedBy(status: Status): ZIO[Scope, Throwable | ServiceError, Either[ServiceError, Acquired]] =
     for
       client <- served(Refusing(status))
       answer <- client.acquire("a-key", 1.second, 1.second).either

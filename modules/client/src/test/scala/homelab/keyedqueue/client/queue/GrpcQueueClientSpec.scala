@@ -47,6 +47,13 @@ object GrpcQueueClientSpec extends ZIOSpecDefault:
     override def heartbeat(request: v1.HeartbeatRequest): IO[StatusException, v1.HeartbeatResponse] =
       seen.update(_ :+ request).as(renewal)
 
+  /** A service that never answers, for the deadline that stops a caller waiting on it. */
+  final private class Hanging extends KeyedQueue:
+    override def enqueue(request: v1.EnqueueRequest): IO[StatusException, v1.EnqueueResponse]       = ZIO.never
+    override def dequeue(request: v1.DequeueRequest): IO[StatusException, v1.DequeueResponse]       = ZIO.never
+    override def settle(request: v1.SettleRequest): IO[StatusException, v1.SettleResponse]          = ZIO.never
+    override def heartbeat(request: v1.HeartbeatRequest): IO[StatusException, v1.HeartbeatResponse] = ZIO.never
+
   /** A service that refuses everything with one status, for the reading of a failure. */
   final private class Refusing(status: Status) extends KeyedQueue:
     private def refused: IO[StatusException, Nothing]                                               =
@@ -62,14 +69,20 @@ object GrpcQueueClientSpec extends ZIOSpecDefault:
    * @param service what answers the calls
    * @return a client talking to it over an in-process channel
    */
-  private def served(service: KeyedQueue): ZIO[Scope, Throwable, QueueClient] =
+  private def served(
+    service: KeyedQueue,
+    patience: Duration = 10.seconds,
+  ): ZIO[Scope, Throwable | ServiceError, QueueClient] =
     val name = InProcessServerBuilder.generateName()
     for
       _      <- ScopedServer.fromServiceList(
                   InProcessServerBuilder.forName(name).directExecutor(),
                   ServiceList.add(service),
                 )
-      client <- QueueClient.scoped(ZManagedChannel(InProcessChannelBuilder.forName(name).directExecutor()))
+      client <- QueueClient.scoped(
+                  ZManagedChannel(InProcessChannelBuilder.forName(name).directExecutor()),
+                  patience,
+                )
     yield client
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("GrpcClient")(
@@ -138,6 +151,14 @@ object GrpcQueueClientSpec extends ZIOSpecDefault:
         answer.leaseTtl == 30.seconds,
       )
     },
+    test("a call the service never answers comes back once its deadline passes") {
+      // Settling runs where a caller's interruption does not reach, so a call with no deadline there is
+      // one nothing can stop. The transport gives up instead, and the failure reads like any other.
+      for
+        hung    <- served(Hanging(), patience = 300.millis)
+        outcome <- hung.settle(Receipt("r1"), Chunk.empty, Duration.Zero).either
+      yield assertTrue(outcome.isLeft)
+    } @@ TestAspect.withLiveClock @@ TestAspect.timeout(20.seconds),
     test("a refusal arrives as the error it amounts to, not as a status") {
       for
         refused  <- served(Refusing(Status.INVALID_ARGUMENT.withDescription("a queue is required")))

@@ -7,8 +7,11 @@ import homelab.keyedqueue.client.queue.QueueClient
 import homelab.keyedqueue.client.queue.model.*
 import homelab.keyedqueue.v1
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
-import io.grpc.StatusException
+import io.grpc.{ CallOptions, StatusException }
+import scalapb.zio_grpc.ClientTransform
 import zio.*
+
+import java.util.concurrent.TimeUnit
 
 
 /**
@@ -17,9 +20,14 @@ import zio.*
  * Every method is the same three steps — build the request, make the call, read the answer — so the
  * translation stays in one place and a reader comparing a method to its RPC sees nothing else.
  *
+ * Every call carries a deadline, so one that does not come back does not hold the caller: the transport
+ * gives up and the failure is read like any other. A dequeue is allowed its own wait on top, because
+ * blocking for work is what it is for.
+ *
  * @param stub the generated client, already dialled
+ * @param patience how long a call may take beyond what it was asked to wait for
  */
-final private[client] class GrpcClient(stub: KeyedQueueClient) extends QueueClient:
+final private[client] class GrpcClient(stub: KeyedQueueClient, patience: Duration) extends QueueClient:
 
   /**
    * One `Enqueue` call, stamped with the moment it was sent.
@@ -31,7 +39,7 @@ final private[client] class GrpcClient(stub: KeyedQueueClient) extends QueueClie
   override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
     for
       now    <- Clock.instant
-      answer <- call(stub.enqueue(QueueCodecs.encode(queue, message, now)))
+      answer <- call(within(patience).enqueue(QueueCodecs.encode(queue, message, now)))
     yield QueueCodecs.decode(answer)
 
   /**
@@ -44,7 +52,7 @@ final private[client] class GrpcClient(stub: KeyedQueueClient) extends QueueClie
    *         amounts to
    */
   override def dequeue(queue: String, maxWait: Duration, maxBatch: Int): IO[ServiceError, Dequeued] =
-    call(stub.dequeue(v1.DequeueRequest(queue, Some(Protos.encode(maxWait)), maxBatch)))
+    call(within(maxWait + patience).dequeue(v1.DequeueRequest(queue, Some(Protos.encode(maxWait)), maxBatch)))
       .map(QueueCodecs.decode)
       .absolve
 
@@ -61,7 +69,9 @@ final private[client] class GrpcClient(stub: KeyedQueueClient) extends QueueClie
     verdicts: Chunk[Verdict],
     retryAfter: Duration,
   ): IO[ServiceError, Settled] =
-    call(stub.settle(v1.SettleRequest(receipt, Some(Protos.encode(retryAfter)), verdicts.map(QueueCodecs.encode))))
+    call(
+      within(patience).settle(v1.SettleRequest(receipt, Some(Protos.encode(retryAfter)), verdicts.map(QueueCodecs.encode)))
+    )
       .map(QueueCodecs.decode)
       .absolve
 
@@ -73,9 +83,31 @@ final private[client] class GrpcClient(stub: KeyedQueueClient) extends QueueClie
    *         failure amounts to
    */
   override def heartbeat(receipts: Chunk[Receipt]): IO[ServiceError, Renewed] =
-    call(stub.heartbeat(v1.HeartbeatRequest(receipts)))
+    call(within(patience).heartbeat(v1.HeartbeatRequest(receipts)))
       .map(QueueCodecs.decode)
       .absolve
+
+  /**
+   * The stub, for a call the transport gives up on after a while.
+   *
+   * A deadline rather than an interruption: settling runs where a caller's interruption does not reach,
+   * so a call that never answers there is one nothing else can stop.
+   *
+   * @param deadline how long the call may take
+   * @return the stub, bounded
+   */
+  private def within(deadline: Duration): KeyedQueueClient =
+    stub.transform(ClientTransform.mapCallOptions(by(deadline)))
+
+  /**
+   * A deadline on a call's options.
+   *
+   * @param deadline how long the call may take
+   * @param options what the call would have been made with
+   * @return them, with the deadline
+   */
+  private def by(deadline: Duration)(options: CallOptions): CallOptions =
+    options.withDeadlineAfter(deadline.toMillis, TimeUnit.MILLISECONDS)
 
   /**
    * Make one call, reporting a transport failure in this client's terms.
