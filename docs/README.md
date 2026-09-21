@@ -67,6 +67,9 @@ What is specific to this repo:
   - [`reading-a-latency-tail.md`](learning-material/reading-a-latency-tail.md) — how to tell a GC pause
     from queueing in trace data, why generational ZGC lost to G1 here, and which lever actually moves it.
   And the most recent checkpoint is
+  [`sessions/2026-09-22-signals-in-the-client.md`](sessions/2026-09-22-signals-in-the-client.md) — the
+  queue's other use, what the client needed for it (almost nothing), and a flaky `HeartbeatSpec` to keep
+  an eye on. Before it,
   [`sessions/2026-09-20-the-client-makes-it-a-product.md`](sessions/2026-09-20-the-client-makes-it-a-product.md)
   — the client that ships with 0.0.5, the line it draws between the RPCs and what it takes on, and what
   the wire owed it. Before it,
