@@ -89,6 +89,15 @@ trait Provider:
    * What its messages are called is the encoder's, which states a name or states that nobody gave one.
    *
    * @param name which queue to send to
+   * @tparam A what it sends, which needs a [[Partition]] in scope to name it
+   * @return the producer
+   */
+  def producer[A: {MessageEncoder, Partition}](name: String): UIO[Producer[AdapterError, A]]
+
+  /**
+   * The same, for a type whose naming is stated at the call rather than given for the type.
+   *
+   * @param name which queue to send to
    * @param parts what names a value: its id, and the key whose order it takes its place in
    * @tparam A what it sends
    * @return the producer
@@ -97,17 +106,9 @@ trait Provider:
     name: String
   )(
     parts: A => (MessageId, MessageKey)
-  ): UIO[Producer[AdapterError, A]]
-
-  /**
-   * The same, for a type that says how it is named.
-   *
-   * @param name which queue to send to
-   * @tparam A what it sends, which needs a [[Partition]] in scope to name it
-   * @return the producer
-   */
-  def producer[A: {MessageEncoder, Partition as partition}](name: String): UIO[Producer[AdapterError, A]] =
-    producerWith(name)(value => partition.messageId(value) -> partition.messageKey(value))
+  ): UIO[Producer[AdapterError, A]] =
+    given Partition[A] = Partition.from(parts)
+    producer(name)
 
   /**
    * A producer of signals for one queue: a value names the key worth looking at, and carries nothing else.
