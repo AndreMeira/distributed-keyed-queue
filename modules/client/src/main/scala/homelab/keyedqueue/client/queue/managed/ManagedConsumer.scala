@@ -34,7 +34,6 @@ final private[queue] class ManagedConsumer(
       size = 1,
       patience = conf.patience,
       retryAfter = conf.retryAfter,
-      heartbeat = conf.heartbeat,
     ),
   )
 

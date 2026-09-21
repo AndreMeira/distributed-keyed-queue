@@ -71,23 +71,32 @@ transitive dependency with nothing to explain why. Both guides lead with it.
 
 ## Still open
 
-Nothing blocking, in rough order of what would pay:
+Nothing blocking, in rough order of what would pay. Four of what stood here shipped straight after:
+[#40](https://github.com/AndreMeira/distributed-keyed-queue/pull/40) drives the client against a real
+deployment, [#41](https://github.com/AndreMeira/distributed-keyed-queue/pull/41) puts `client/doc` in CI
+and corrects the release workflow's comment, and
+[#42](https://github.com/AndreMeira/distributed-keyed-queue/pull/42) mirrors the test tree and moves the
+payload typeclasses out of `model`.
 
-- **No end-to-end test drives the client.** It is covered by fakes and in-process channels; the deployed
-  suite still talks to the generated stubs. A client that works against a real deployment is currently a
-  belief rather than a result.
-- **`sbt doc` runs only on a release**, so scaladoc breakage is invisible until one is cut — which is how
-  three dead links from the package reorganisation reached 0.0.5's published docs
-  ([#35](https://github.com/AndreMeira/distributed-keyed-queue/pull/35)). Adding `client/doc` to CI would
-  move that to PR time.
-- **The release workflow's Publish step** says it resolves nothing from the toolkit. That is no longer
-  true — the client depends on it — and the step works because the Test step warms the coursier cache
-  first. The fallback is load-bearing now rather than incidental.
 - **The decoder's no-argument `derive` checks nothing**, not even the encoding, while `deriveAs` checks
   both. Unlike the payload type, the format is always derivable from the codec, so an unconditional
   encoding check may be the better default. Reading being the caller's now makes this a smaller question
   than it was, not a settled one.
-- Tests do not mirror the new `model`/`managed` subpackages, and the two payload typeclasses sit in
-  `model` while being behaviour rather than data.
 - Older, unchanged: duplicate CI runs awaiting branch protection, and `LockAcquireUseCaseSpec`'s sleeps
   standing in for "await parked".
+
+## The beat follows the claims
+
+The consumer's heartbeat used to be a fiber the provider forked at construction and a cadence the config
+carried, which meant a consumer holding nothing still had a fiber asleep, and the first renewal of a fresh
+claim waited out whatever interval that fiber had already started sleeping on — a 5-second default under a
+5-second lease.
+
+It now follows the toolkit `Batcher`: the state is `Idle` or `Beating`, the hold that finds the registry
+empty forks the beat, and the beat stands down when the last claim is settled. Registering and forking
+together refuse interruption, and the check that stands the beat down is the same atomic step that reads
+the cadence, so a claim arriving alongside it either joins the running beat or starts one. The first sleep
+is half the lease the service granted, because the claim states it before the fork.
+
+The config's `heartbeat` knob went with it: there is no longer an interval that applies before a claim has
+stated its own.
