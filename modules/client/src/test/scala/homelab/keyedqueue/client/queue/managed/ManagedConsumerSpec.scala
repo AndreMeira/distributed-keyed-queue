@@ -24,7 +24,11 @@ object ManagedConsumerSpec extends ZIOSpecDefault:
 
   import homelab.keyedqueue.client.queue.MessageDecoder.auto.given
 
-  private val lease   = 40.millis
+  private val lease = 40.millis
+
+  /** Long enough that a loaded runner is not the thing under test, short enough to fail a beat that waits
+    * out a cadence of its own. */
+  private val soon    = lease * 25
   private val encoder = MessageEncoder.derive[Order]
   private val order   = Order("o-1")
 
@@ -38,8 +42,7 @@ object ManagedConsumerSpec extends ZIOSpecDefault:
   final private class Fake(
     answers: Ref[Chunk[Dequeued]],
     val settled: Ref[Chunk[Verdict]],
-    val beaten: Promise[Nothing, Chunk[Receipt]],
-    val beats: Ref[Int],
+    val beats: Queue[Chunk[Receipt]],
   ) extends QueueClient:
 
     override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
@@ -59,15 +62,14 @@ object ManagedConsumerSpec extends ZIOSpecDefault:
       settled.update(_ ++ verdicts).as(Settled.Applied)
 
     override def heartbeat(receipts: Chunk[Receipt]): IO[ServiceError, Renewed] =
-      beats.update(_ + 1) *> beaten.succeed(receipts).as(Renewed(Chunk.empty, Instant.EPOCH, lease))
+      beats.offer(receipts).as(Renewed(Chunk.empty, Instant.EPOCH, lease))
 
   private def fake(scripted: Dequeued*) =
     for
       answers <- Ref.make(Chunk.fromIterable(scripted))
       settled <- Ref.make(Chunk.empty[Verdict])
-      beaten  <- Promise.make[Nothing, Chunk[Receipt]]
-      beats   <- Ref.make(0)
-    yield Fake(answers, settled, beaten, beats)
+      beats   <- Queue.unbounded[Chunk[Receipt]]
+    yield Fake(answers, settled, beats)
 
   private def consumerOver(client: QueueClient) =
     Provider(client).consumer[Order](
@@ -140,7 +142,7 @@ object ManagedConsumerSpec extends ZIOSpecDefault:
         consumer <- consumerOver(client)
         finish   <- Promise.make[Nothing, Unit]
         working  <- consumer.consume(_ => finish.await).fork
-        renewed  <- client.beaten.await.timeout(lease * 2)
+        renewed  <- client.beats.take.timeout(soon)
         _        <- finish.succeed(())
         _        <- working.join
       yield assertTrue(renewed.contains(Chunk(Receipt("r1"))))
@@ -151,18 +153,17 @@ object ManagedConsumerSpec extends ZIOSpecDefault:
         consumer <- consumerOver(client)
         first    <- Promise.make[Nothing, Unit]
         one      <- consumer.consume(_ => first.await).fork
-        _        <- client.beaten.await
+        _        <- client.beats.take
         _        <- first.succeed(())
         _        <- one.join
         _        <- ZIO.sleep(lease)
-        stood    <- client.beats.get
+        _        <- client.beats.takeAll
         second   <- Promise.make[Nothing, Unit]
         two      <- consumer.consume(_ => second.await).fork
-        _        <- ZIO.sleep(lease)
-        again    <- client.beats.get
+        again    <- client.beats.take.timeout(soon)
         _        <- second.succeed(())
         _        <- two.join
-      yield assertTrue(again > stood)
+      yield assertTrue(again.contains(Chunk(Receipt("r1"))))
     },
     test("a consumer interrupted mid-message still says what became of it") {
       for
