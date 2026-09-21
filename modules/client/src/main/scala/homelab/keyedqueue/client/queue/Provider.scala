@@ -4,7 +4,7 @@ package homelab.keyedqueue.client.queue
 import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.messaging.{ Consumer, Producer }
 import homelab.keyedqueue.client.queue.Provider.{ BatchConsumerConfig, ConsumerConfig, unreadable }
-import homelab.keyedqueue.client.queue.managed.{ ManagedProvider, ManagedSignalConsumer }
+import homelab.keyedqueue.client.queue.managed.ManagedProvider
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.queue.model.{ Message, MessageId, MessageKey, Ready }
 import zio.*
@@ -98,8 +98,8 @@ trait Provider:
     batchedMessages(config).map: messages =>
       new Consumer[AdapterError, Ready]:
         override def consume[E2 >: AdapterError](logic: Ready => IO[E2, Unit]): IO[E2, Unit] =
-          ManagedSignalConsumer(messages).consume: readies =>
-            ZIO.foreachDiscard(readies.distinct)(logic)
+          messages.consume: signals =>
+            ZIO.foreachDiscard(signals.map(signal => Ready(signal.key)).distinct)(logic)
 
   /**
    * A producer for one queue, naming each message from the value it sends.
