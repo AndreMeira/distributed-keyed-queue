@@ -40,7 +40,7 @@ class ManagedSignalProducer(client: QueueClient, queue: String) extends Producer
 object ManagedSignalProducer {
 
   /** What signals are written with; what it writes states [[MessageEncoder.unnamed]] as its payload type. */
-  given MessageEncoder[Ready] = {
+  given readyEncoder: MessageEncoder[Ready] = {
     val schema = DeriveSchema.gen[Ready]
     MessageEncoder.derive[Ready](using schema)
   }
