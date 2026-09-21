@@ -6,7 +6,7 @@ import homelab.common.messaging.{ Consumer, Producer }
 import homelab.keyedqueue.client.queue.Provider.{ BatchConsumerConfig, ConsumerConfig }
 import homelab.keyedqueue.client.queue.managed.ManagedProvider
 import homelab.keyedqueue.client.ServiceError
-import homelab.keyedqueue.client.queue.model.{ Message, MessageId, MessageKey }
+import homelab.keyedqueue.client.queue.model.{ Message, MessageId, MessageKey, Ready }
 import zio.*
 
 
@@ -108,6 +108,17 @@ trait Provider:
    */
   def producer[A: {MessageEncoder, Partition as partition}](name: String): UIO[Producer[AdapterError, A]] =
     producerWith(name)(value => partition.messageId(value) -> partition.messageKey(value))
+
+  /**
+   * A producer of signals for one queue: a value names the key worth looking at, and carries nothing else.
+   *
+   * The id is fresh on every emit, so a repeated signal is a second message and not the same one arriving
+   * twice. A consumer sees one announcement per call, and a batch of them says what one of them says.
+   *
+   * @param name which queue to send to
+   * @return the producer
+   */
+  def signalProducer(name: String): UIO[Producer[AdapterError, Ready]]
 
 
 object Provider:
