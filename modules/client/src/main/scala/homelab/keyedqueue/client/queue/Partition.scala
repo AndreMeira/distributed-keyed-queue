@@ -39,3 +39,14 @@ object Partition:
    * @return that naming
    */
   def apply[A: Partition as partition]: Partition[A] = partition
+
+  /**
+   * A naming stated as one function over the value, for a caller that has not given the type one.
+   *
+   * @param parts what names a value: its id, and the key whose order it takes its place in
+   * @tparam A what it names
+   * @return that naming, asking `parts` once per question
+   */
+  def from[A](parts: A => (MessageId, MessageKey)): Partition[A] = new Partition[A]:
+    override def messageId(value: A): MessageId   = parts(value)._1
+    override def messageKey(value: A): MessageKey = parts(value)._2

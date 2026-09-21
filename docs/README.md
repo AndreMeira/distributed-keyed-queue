@@ -54,6 +54,8 @@ What is specific to this repo:
     what the managed form does around it, and when a caller needs the fence instead.
   - [`consuming-and-producing.md`](learning-material/consuming-and-producing.md) — sending typed messages
     and working them, what happens around a handler, and what becomes of one that will not decode.
+  - [`signal-synchronisation.md`](learning-material/signal-synchronisation.md) — the other use of the
+    queue: telling a consumer a key is worth looking at, without sending it anything.
   - [`proto-generation.md`](learning-material/proto-generation.md) — how two published artifacts are
     generated from one set of `.proto` files, and what breaks if that is rearranged.
   - [`querying-observability-tools.md`](learning-material/querying-observability-tools.md) — asking

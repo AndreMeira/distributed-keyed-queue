@@ -5,7 +5,7 @@ import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.messaging.{ Consumer, Producer }
 import homelab.keyedqueue.client.queue
 import homelab.keyedqueue.client.queue.MessageEncoder
-import homelab.keyedqueue.client.queue.model.{ Message, MessageId, MessageKey }
+import homelab.keyedqueue.client.queue.model.{ Message, Ready }
 import homelab.keyedqueue.client.queue.{ Provider, QueueClient }
 import zio.*
 
@@ -43,13 +43,17 @@ final private[client] class ManagedProvider(client: QueueClient) extends Provide
 
   /**
    * @param name which queue to send to
-   * @param parts what names a value: its id, and the key whose order it takes its place in
-   * @tparam A what it sends
+   * @tparam A what it sends, which needs a [[queue.Partition]] in scope to name it
    * @return the producer
    */
-  override def producerWith[A: MessageEncoder](
+  override def producer[A: {MessageEncoder, queue.Partition as partition}](
     name: String
-  )(
-    parts: A => (MessageId, MessageKey)
   ): UIO[Producer[AdapterError, A]] =
-    ZIO.succeed(ManagedProducer(client, name, parts))
+    ZIO.succeed(ManagedProducer(client, name, partition))
+
+  /**
+   * @param name which queue to send to
+   * @return the producer
+   */
+  override def signalProducer(name: String): UIO[Producer[AdapterError, Ready]] =
+    ZIO.succeed(ManagedSignalProducer(client, name))

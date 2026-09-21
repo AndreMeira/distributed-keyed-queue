@@ -3,7 +3,7 @@ package homelab.keyedqueue.client.queue.managed
 
 import homelab.common.messaging.Producer
 import homelab.keyedqueue.client.ServiceError
-import homelab.keyedqueue.client.queue.MessageEncoder
+import homelab.keyedqueue.client.queue.{ MessageEncoder, Partition }
 import homelab.keyedqueue.client.queue.QueueClient
 import homelab.keyedqueue.client.queue.model.{ Message, MessageId, MessageKey }
 import zio.*
@@ -18,14 +18,14 @@ import zio.*
  *
  * @param client what the calls are made through
  * @param queue which queue it sends to
- * @param parts what names a value: its id, and the key whose order it takes its place in
+ * @param partition what names a value: its id, and the key whose order it takes its place in
  * @param encoder what writes the value, and what names the format it was written in
  * @tparam A what it sends
  */
 final private[queue] class ManagedProducer[A: MessageEncoder as encoder](
   client: QueueClient,
   queue: String,
-  parts: A => (MessageId, MessageKey),
+  partition: Partition[A],
 ) extends Producer[ServiceError, A]:
 
   /**
@@ -35,5 +35,5 @@ final private[queue] class ManagedProducer[A: MessageEncoder as encoder](
    * @return noop once the service has it; aborts with a [[ServiceError]] when the call does not land
    */
   override def emit(value: A): IO[ServiceError, Unit] =
-    val (id, key) = parts(value)
-    client.enqueue(queue, MessageEncoder.message(key, id, value)).unit
+    val message = MessageEncoder.message(partition.messageKey(value), partition.messageId(value), value)
+    client.enqueue(queue, message).unit

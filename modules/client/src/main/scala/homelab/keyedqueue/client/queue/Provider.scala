@@ -3,10 +3,10 @@ package homelab.keyedqueue.client.queue
 
 import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.messaging.{ Consumer, Producer }
-import homelab.keyedqueue.client.queue.Provider.{ BatchConsumerConfig, ConsumerConfig }
+import homelab.keyedqueue.client.queue.Provider.{ BatchConsumerConfig, ConsumerConfig, unreadable }
 import homelab.keyedqueue.client.queue.managed.ManagedProvider
 import homelab.keyedqueue.client.ServiceError
-import homelab.keyedqueue.client.queue.model.{ Message, MessageId, MessageKey }
+import homelab.keyedqueue.client.queue.model.{ Message, MessageId, MessageKey, Ready }
 import zio.*
 
 
@@ -62,7 +62,9 @@ trait Provider:
    * @return the consumer
    */
   def consumer[A: MessageDecoder as decoder](config: ConsumerConfig): URIO[Scope, Consumer[AdapterError, A]] =
-    messages(config).map(_.mapZIO(Provider.reading(decoder)))
+    messages(config).map: consumer =>
+      consumer.mapZIO: message =>
+        ZIO.fromEither(decoder.decode(message)).mapError(unreadable(message))
 
   /**
    * The same as [[batchedMessages]], reading each message as an `A`.
@@ -77,7 +79,28 @@ trait Provider:
   def batched[A: MessageDecoder as decoder](
     config: BatchConsumerConfig
   ): URIO[Scope, Consumer[AdapterError, List[A]]] =
-    batchedMessages(config).map(_.mapZIO(Provider.readingAll(decoder)))
+    batchedMessages(config).map: consumer =>
+      consumer.mapZIO: messages =>
+        ZIO.foreach(messages) { message =>
+          ZIO.fromEither(decoder.decode(message)).mapError(unreadable(message))
+        }
+
+  /**
+   * A consumer of one queue's signals, reading each delivery's key and never its payload.
+   *
+   * A claim is one key's messages, so the signals in it name one key however many arrived; `logic` runs
+   * once for it, and the whole claim settles on what that answers.
+   *
+   * @param config which queue to take from, how many at once, and how this consumer waits and retries
+   * @return the consumer, beating for what it holds until the scope closes
+   */
+  def signalConsumer(config: BatchConsumerConfig): URIO[Scope, Consumer[AdapterError, Ready]] =
+    batchedMessages(config).map: messages =>
+      new Consumer[AdapterError, Ready]:
+        override def consume[E2 >: AdapterError](logic: Ready => IO[E2, Unit]): IO[E2, Unit] =
+          messages.consume: incoming =>
+            val signals = incoming.map(message => Ready(message.key))
+            ZIO.foreachDiscard(signals.distinct)(logic)
 
   /**
    * A producer for one queue, naming each message from the value it sends.
@@ -89,6 +112,15 @@ trait Provider:
    * What its messages are called is the encoder's, which states a name or states that nobody gave one.
    *
    * @param name which queue to send to
+   * @tparam A what it sends, which needs a [[Partition]] in scope to name it
+   * @return the producer
+   */
+  def producer[A: {MessageEncoder, Partition}](name: String): UIO[Producer[AdapterError, A]]
+
+  /**
+   * The same, for a type whose naming is stated at the call rather than given for the type.
+   *
+   * @param name which queue to send to
    * @param parts what names a value: its id, and the key whose order it takes its place in
    * @tparam A what it sends
    * @return the producer
@@ -97,42 +129,23 @@ trait Provider:
     name: String
   )(
     parts: A => (MessageId, MessageKey)
-  ): UIO[Producer[AdapterError, A]]
+  ): UIO[Producer[AdapterError, A]] =
+    given Partition[A] = Partition.from(parts)
+    producer(name)
 
   /**
-   * The same, for a type that says how it is named.
+   * A producer of signals for one queue: a value names the key worth looking at, and carries nothing else.
+   *
+   * The id is fresh on every emit, so a repeated signal is a second message and not the same one arriving
+   * twice. A consumer sees one announcement per call, and a batch of them says what one of them says.
    *
    * @param name which queue to send to
-   * @tparam A what it sends, which needs a [[Partition]] in scope to name it
    * @return the producer
    */
-  def producer[A: {MessageEncoder, Partition as partition}](name: String): UIO[Producer[AdapterError, A]] =
-    producerWith(name)(value => partition.messageId(value) -> partition.messageKey(value))
+  def signalProducer(name: String): UIO[Producer[AdapterError, Ready]]
 
 
 object Provider:
-
-  /**
-   * One message read as an `A`, for the typed consumers.
-   *
-   * @param decoder what turns a message into a value
-   * @param message what arrived
-   * @tparam A what it reads as
-   * @return the value; aborts with `Unreadable` when the message is not one
-   */
-  private def reading[A](decoder: MessageDecoder[A])(message: Message.Incoming): IO[ServiceError, A] =
-    ZIO.fromEither(decoder.decode(message)).mapError(unreadable(message))
-
-  /**
-   * A batch read as values, all of them or none.
-   *
-   * @param decoder what turns a message into a value
-   * @param messages what the claim held
-   * @tparam A what they read as
-   * @return the values in order; aborts with `Unreadable` when any message is not one
-   */
-  private def readingAll[A](decoder: MessageDecoder[A])(messages: List[Message.Incoming]): IO[ServiceError, List[A]] =
-    ZIO.foreach(messages)(reading(decoder))
 
   /**
    * What a failure to read amounts to in this client's terms.
