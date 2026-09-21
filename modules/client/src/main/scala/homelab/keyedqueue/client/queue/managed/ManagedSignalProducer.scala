@@ -14,7 +14,7 @@ import zio.schema.{ DeriveSchema, Schema }
  * One queue's signals, each naming the key a consumer should look at.
  *
  * What it adds over [[QueueClient]] is the envelope and the naming: the key comes from the value, and the
- * id is minted per call, so emitting the same [[Ready]] twice queues two messages.
+ * id is minted per call, so emitting the same [[model.Ready]] twice queues two messages.
  *
  * @param client what the calls are made through
  * @param queue which queue it sends to
