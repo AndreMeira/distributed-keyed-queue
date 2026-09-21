@@ -98,8 +98,9 @@ trait Provider:
     batchedMessages(config).map: messages =>
       new Consumer[AdapterError, Ready]:
         override def consume[E2 >: AdapterError](logic: Ready => IO[E2, Unit]): IO[E2, Unit] =
-          messages.consume: signals =>
-            ZIO.foreachDiscard(signals.map(signal => Ready(signal.key)).distinct)(logic)
+          messages.consume: incoming =>
+            val signals = incoming.map(message => Ready(message.key))
+            ZIO.foreachDiscard(signals.distinct)(logic)
 
   /**
    * A producer for one queue, naming each message from the value it sends.
