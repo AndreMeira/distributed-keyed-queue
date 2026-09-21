@@ -3,7 +3,7 @@ package homelab.keyedqueue.client.queue
 
 import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.messaging.{ Consumer, Producer }
-import homelab.keyedqueue.client.queue.Provider.{ BatchConsumerConfig, ConsumerConfig }
+import homelab.keyedqueue.client.queue.Provider.{ BatchConsumerConfig, ConsumerConfig, unreadable }
 import homelab.keyedqueue.client.queue.managed.ManagedProvider
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.queue.model.{ Message, MessageId, MessageKey, Ready }
@@ -62,7 +62,9 @@ trait Provider:
    * @return the consumer
    */
   def consumer[A: MessageDecoder as decoder](config: ConsumerConfig): URIO[Scope, Consumer[AdapterError, A]] =
-    messages(config).map(_.mapZIO(Provider.reading(decoder)))
+    messages(config).map: consumer =>
+      consumer.mapZIO: message =>
+        ZIO.fromEither(decoder.decode(message)).mapError(unreadable(message))
 
   /**
    * The same as [[batchedMessages]], reading each message as an `A`.
@@ -77,7 +79,11 @@ trait Provider:
   def batched[A: MessageDecoder as decoder](
     config: BatchConsumerConfig
   ): URIO[Scope, Consumer[AdapterError, List[A]]] =
-    batchedMessages(config).map(_.mapZIO(Provider.readingAll(decoder)))
+    batchedMessages(config).map: consumer =>
+      consumer.mapZIO: messages =>
+        ZIO.foreach(messages) { message =>
+          ZIO.fromEither(decoder.decode(message)).mapError(unreadable(message))
+        }
 
   /**
    * A producer for one queue, naming each message from the value it sends.
@@ -123,28 +129,6 @@ trait Provider:
 
 
 object Provider:
-
-  /**
-   * One message read as an `A`, for the typed consumers.
-   *
-   * @param decoder what turns a message into a value
-   * @param message what arrived
-   * @tparam A what it reads as
-   * @return the value; aborts with `Unreadable` when the message is not one
-   */
-  private def reading[A](decoder: MessageDecoder[A])(message: Message.Incoming): IO[ServiceError, A] =
-    ZIO.fromEither(decoder.decode(message)).mapError(unreadable(message))
-
-  /**
-   * A batch read as values, all of them or none.
-   *
-   * @param decoder what turns a message into a value
-   * @param messages what the claim held
-   * @tparam A what they read as
-   * @return the values in order; aborts with `Unreadable` when any message is not one
-   */
-  private def readingAll[A](decoder: MessageDecoder[A])(messages: List[Message.Incoming]): IO[ServiceError, List[A]] =
-    ZIO.foreach(messages)(reading(decoder))
 
   /**
    * What a failure to read amounts to in this client's terms.
