@@ -80,7 +80,7 @@ object ManagedBatchSpec extends ZIOSpecDefault:
 
   private def batchOver(client: QueueClient, size: Int = 3) =
     Provider(client).batched[Order](
-      Provider.BatchConsumerConfig("orders", size, patience = 1.second, heartbeat = 10.millis)
+      Provider.BatchConsumerConfig("orders", size, patience = 1.second)
     )
 
   private def verdicts(of: Chunk[Verdict]): Map[String, Verdict.Outcome] =
@@ -136,7 +136,7 @@ object ManagedBatchSpec extends ZIOSpecDefault:
       for
         client <- fake(claim(unreadable("m1")))
         raw    <- Provider(client).batchedMessages(
-                    Provider.BatchConsumerConfig("orders", size = 3, patience = 1.second, heartbeat = 10.millis)
+                    Provider.BatchConsumerConfig("orders", size = 3, patience = 1.second)
                   )
         _      <- raw.consume(messages => ZIO.foreachDiscard(messages)(readingOrDropping))
         given_ <- client.settled.get
