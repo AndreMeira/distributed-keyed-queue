@@ -14,7 +14,8 @@ message need not repeat it: it says *this key is worth looking at*, and the cons
 itself.
 
 The client has a producer and a consumer for exactly that. Neither encodes nor decodes anything you wrote,
-because a signal's key is the whole of what it says.
+because a signal's key is the whole of what it says — and unlike a notification bus, being told about a key
+is also being given it, exclusively, for as long as the work takes.
 
 The queue half of the same client, for messages that do carry work, is
 [`consuming-and-producing.md`](consuming-and-producing.md). Why this shape rather than a broadcast or a
@@ -40,6 +41,35 @@ def look(ready: Ready): IO[MyError, Unit] = ???   // read the state of ready.id 
 
 `Ready(id)` is the key. Announcing one is `signals.emit(Ready(conversation))`, and the consumer is handed
 the same value back.
+
+## A signal grants the key
+
+This is what makes it different from a notification, and it is easy to miss because the code looks the
+same.
+
+A signal is delivered as a **claim**. The consumer that receives `Ready("conv-7")` is the only one working
+`conv-7` anywhere in the fleet until it settles, and the service holds that exclusivity with a lease rather
+than trusting a process to behave. So `look` may read the state, decide, and write it back without guarding
+any of it: nothing else is inside that key.
+
+A fan-out bus — SNS, a topic, anything publish-subscribe — does the opposite by design. Every subscriber
+gets the notification, they all wake, and they all go for the same row; keeping one of them out is a lock
+you add on top, with its own lease, its own fencing and its own failure modes. Here the wake and the
+exclusion are the same act, because the thing being handed over is the key.
+
+Three consequences worth having in mind:
+
+- **A signal for a key that is currently claimed waits.** It is not fanned out to a second consumer and it
+  is not dropped; it is delivered when the claim settles, which is what makes announcing during someone
+  else's turn safe.
+- **The lease is real work.** A `look` that runs for minutes is renewed on a beat while it runs — the
+  client does that for you — and it must stop if its claim ever goes stale. That is the one obligation the
+  service cannot enforce on your behalf.
+- **Ordering per key comes along with it**, since one consumer works a key at a time. Signals for
+  *different* keys proceed in parallel with no coordination at all.
+
+Scaling out is therefore running more consumers, not partitioning anything: keys distribute themselves
+across whoever is asking for work.
 
 ## The order is always the same
 
