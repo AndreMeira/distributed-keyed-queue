@@ -60,14 +60,17 @@ final private[queue] class Heartbeat(client: QueueClient, scope: Scope, state: R
     case Some(interval) => ZIO.sleep(interval) *> renewing *> beating
 
   /**
-   * Take a claim in, and say whether it is the only one.
+   * Take a claim in, and say whether it is what starts the beat.
+   *
+   * A beat that holds nothing is still a beat: it stands down under its own step, so a claim that finds
+   * one joins it. Only an idle heartbeat has a beat to start.
    *
    * @param claim what was granted
-   * @return whether the registry was empty, so this claim is what starts the beat
+   * @return whether there was no beat, so this claim is what starts one
    */
   private def register(claim: Claim): UIO[Boolean] = state.modify:
-    case State.Idle             => true         -> State.Beating(Set(claim.receipt), claim.leaseTtl.dividedBy(2))
-    case State.Beating(held, _) => held.isEmpty -> State.Beating(held + claim.receipt, claim.leaseTtl.dividedBy(2))
+    case State.Idle             => true  -> State.Beating(Set(claim.receipt), claim.leaseTtl.dividedBy(2))
+    case State.Beating(held, _) => false -> State.Beating(held + claim.receipt, claim.leaseTtl.dividedBy(2))
 
   /**
    * How long until the next beat, taking the registry back to idle when it holds nothing.

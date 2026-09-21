@@ -136,7 +136,7 @@ object ManagedConsumerSpec extends ZIOSpecDefault:
         verdicts <- client.settled.get
       yield assertTrue(verdicts == Chunk(Verdict(MessageId("m1"), Verdict.Outcome.Done)))
     },
-    test("the claim is renewed while the logic is still working, on the lease it was granted") {
+    test("the claim is renewed while the logic is still working") {
       for
         client   <- fake(claim(message()))
         consumer <- consumerOver(client)
