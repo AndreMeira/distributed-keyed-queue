@@ -18,8 +18,15 @@ object HeartbeatSpec extends ZIOSpecDefault:
 
   private val lease = 20.millis
 
-  /** Ten cadences, so a window counts beats rather than catching one. */
+  /** Ten cadences, so the window counts beats rather than catching one. */
   private val window = lease * 5
+
+  /** The most one beat sends in the window: a cadence is half the lease, and one falls on its edge. */
+  private val alone = (window.toMillis / (lease.toMillis / 2) + 1).toInt
+
+  /** Long enough that a loaded runner is not the thing under test, short enough to fail a beat keeping to
+    * a span of its own rather than to the lease it was granted. */
+  private val soon = lease * 25
 
   private def message(id: String): Message.Incoming =
     Message.Incoming(MessageKey("k1"), MessageId(id), "order.v1", "application/json", Chunk.empty, Instant.EPOCH, 1)
@@ -51,22 +58,19 @@ object HeartbeatSpec extends ZIOSpecDefault:
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("Heartbeat")(
     test("a claim taken as the last one is settled joins the beat rather than starting a second") {
-      // Counted against what one beat manages in the same run, so a runner that stalls lowers both
-      // windows: only a second fiber raises the later one. The lower bound is what makes the comparison
-      // mean anything, and it is also what pins the cadence to the lease the claim was granted — a beat
-      // keeping to a span of its own puts nothing in either window.
+      // Counted against what a single beat can send, which is a ceiling a slow runner only falls under:
+      // sleeping a cadence between beats is what bounds it, so the count rises above this only when
+      // there is more than one beat sending. Taking the first bounds the cadence, which the ceiling
+      // assumes and cannot itself check.
       for
         client    <- counting
         heartbeat <- Heartbeat.make(client)
         _         <- heartbeat.hold(claim("r1", "m1"))
-        _         <- client.beats.take
-        _         <- client.beats.takeAll
-        _         <- ZIO.sleep(window)
-        alone     <- client.beats.size
-        _         <- client.beats.takeAll
+        first     <- client.beats.take.timeout(soon)
         _         <- heartbeat.release(Receipt("r1")) *> heartbeat.hold(claim("r2", "m2"))
+        _         <- client.beats.takeAll
         _         <- ZIO.sleep(window)
-        after     <- client.beats.size
-      yield assertTrue(alone >= 2, after <= alone + 2)
+        sent      <- client.beats.size
+      yield assertTrue(first.isDefined, sent <= alone + 2)
     }
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(30.seconds)
