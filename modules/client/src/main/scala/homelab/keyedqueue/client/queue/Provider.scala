@@ -4,7 +4,7 @@ package homelab.keyedqueue.client.queue
 import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.messaging.{ Consumer, Producer }
 import homelab.keyedqueue.client.queue.Provider.{ BatchConsumerConfig, ConsumerConfig, unreadable }
-import homelab.keyedqueue.client.queue.managed.ManagedProvider
+import homelab.keyedqueue.client.queue.managed.{ ManagedProvider, ManagedSignalConsumer }
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.queue.model.{ Message, MessageId, MessageKey, Ready }
 import zio.*
@@ -84,6 +84,22 @@ trait Provider:
         ZIO.foreach(messages) { message =>
           ZIO.fromEither(decoder.decode(message)).mapError(unreadable(message))
         }
+
+  /**
+   * A consumer of one queue's signals, reading each delivery's key and never its payload.
+   *
+   * A claim is one key's messages, so the signals in it name one key however many arrived; `logic` runs
+   * once for it, and the whole claim settles on what that answers.
+   *
+   * @param config which queue to take from, how many at once, and how this consumer waits and retries
+   * @return the consumer, beating for what it holds until the scope closes
+   */
+  def signalConsumer(config: BatchConsumerConfig): URIO[Scope, Consumer[AdapterError, Ready]] =
+    batchedMessages(config).map: messages =>
+      new Consumer[AdapterError, Ready]:
+        override def consume[E2 >: AdapterError](logic: Ready => IO[E2, Unit]): IO[E2, Unit] =
+          ManagedSignalConsumer(messages).consume: readies =>
+            ZIO.foreachDiscard(readies.distinct)(logic)
 
   /**
    * A producer for one queue, naming each message from the value it sends.

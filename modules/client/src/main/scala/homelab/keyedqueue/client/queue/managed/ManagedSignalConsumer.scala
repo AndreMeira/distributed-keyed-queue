@@ -1,6 +1,7 @@
 package homelab.keyedqueue.client.queue.managed
 
 
+import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.messaging.Consumer
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.queue.model.{ Message, Ready }
@@ -20,8 +21,8 @@ import zio.*
  * @param messages the deliveries this reads, renewed for as long as its scope is open
  */
 final private[queue] class ManagedSignalConsumer(
-  messages: Consumer.Batched[ServiceError, Message.Incoming]
-) extends Consumer.Batched[ServiceError, Ready]:
+  messages: Consumer.Batched[AdapterError, Message.Incoming]
+) extends Consumer.Batched[AdapterError, Ready]:
 
   /**
    * Hand each claim's signals to `logic`, settling the whole batch on what it answers.
@@ -30,7 +31,7 @@ final private[queue] class ManagedSignalConsumer(
    * @tparam E2 the error `logic` may abort with, which this passes on
    * @return noop when the intake ends; aborts with whatever `logic` or the delivery aborts with
    */
-  override def consume[E2 >: ServiceError](logic: List[Ready] => IO[E2, Unit]): IO[E2, Unit] =
+  override def consume[E2 >: AdapterError](logic: List[Ready] => IO[E2, Unit]): IO[E2, Unit] =
     messages.consume: batch =>
       logic(batch.map(signal))
 
