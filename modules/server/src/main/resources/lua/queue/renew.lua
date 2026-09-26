@@ -11,6 +11,11 @@
 -- and the token check stops one extending a claim that has since been handed to somebody else — where a
 -- blind `XX` would happily push the new owner's deadline around.
 --
+-- A claim is stale when the fence names a different owner, or when the key is no longer in `claimed`.
+-- `ZSCORE` is what answers the second: it is asked before the write, so the answer is about whether the
+-- claim is still there and not about whether the deadline moved. A renewal that lands in the same
+-- millisecond as the one before it writes the deadline it already had, and is still a renewal.
+--
 -- It returns the keys it could NOT renew rather than a count: the caller has to stop working those, and a
 -- number does not say which.
 local claimed, fence = KEYS[1], KEYS[2]
@@ -22,11 +27,10 @@ now = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
 local stale = {}
 for i = 2, #ARGV, 2 do
   local key, token = ARGV[i], tonumber(ARGV[i + 1])
-  local renewed = 0
-  if tonumber(redis.call('HGET', fence, key) or 0) == token then
-    renewed = redis.call('ZADD', claimed, 'XX', 'CH', now + ttl, key)
-  end
-  if renewed == 0 then
+  local owned = tonumber(redis.call('HGET', fence, key) or 0) == token
+  if owned and redis.call('ZSCORE', claimed, key) then
+    redis.call('ZADD', claimed, 'XX', now + ttl, key)
+  else
     table.insert(stale, key)
   end
 end

@@ -285,5 +285,18 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           until.toEpochMilli > 0L,
         )
       },
+      test("a claim renewed again inside the same millisecond is still held") {
+        // The deadline a renewal writes can be the one the claim already had, and that is a renewal like
+        // any other. Repeated because the window is a single millisecond: one call would usually miss it,
+        // and the property is about every renewal rather than about a fast one.
+        for
+          worker   <- ZIO.service[QueueStore]
+          queue     = QueueName("rebeat")
+          _        <- worker.enqueue(Submission(queue, Helper.message(MessageKey("k1"), "work")))
+          held     <- worker.attemptClaim(queue, 1)
+          claims    = Chunk.fromIterable(held.map(_.claim))
+          reported <- ZIO.foreach(Chunk.fromIterable(1 to 100))(_ => worker.renew(claims).map(_._2))
+        yield assertTrue(claims.nonEmpty, reported.forall(_.isEmpty))
+      },
     ) @@ RedisSpecSupport.Aspect.init @@ SpecHelper.Aspect.common
   }.provideSomeShared[Scope](RedisSpecSupport.config(leaseTtl) >+> RedisSpecSupport.layer)

@@ -2,7 +2,7 @@
 title: "What dkq keeps in Redis, and what each structure is for"
 type: architecture
 status: current
-updated: 2026-09-11
+updated: 2026-09-26
 tags: [redis, keys, data-structures, lua, claims, ordering, streams]
 ---
 
@@ -120,6 +120,16 @@ acknowledged, `LREM msgs` + `HDEL payloads` + `HDEL attempts`. A nack removes on
 `ZADD delayed GT` to ask the key to wait. When `owned` is empty the claim is over: `fence` advances,
 `claimed` is cleared, and the key goes back to `ready` with a *fresh* score — it has been served, so it
 queues behind everything still waiting — or stays out of it, held by `delayed` or by having nothing left.
+
+**Renew** — `renew.lua` asks two questions per named key and writes only if both hold: the token against
+`fence`, and `ZSCORE claimed` for whether the claim is still there at all. It then `ZADD claimed XX` with
+the new deadline. A key failing either is returned as stale rather than renewed, which the consumer has to
+read as "stop working this". Nothing moves: a heartbeat touches the deadline and nothing else.
+
+The two questions are different — an owner that has been superseded versus a claim the watchdog has already
+taken away — and both have to be asked, because the deadline itself says nothing. A renewal arriving inside
+the same millisecond as the one before it writes the deadline the claim already had, and is a renewal like
+any other.
 
 **Every addition to `ready` appends a wake.** `enqueue.lua`, `settle.lua` and both watchdog sweeps append
 to `wake` in the same script, and only where the key actually became claimable — a nacked key parked in
