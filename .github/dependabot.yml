@@ -1,0 +1,66 @@
+# Dependency updates.
+#
+# Two ecosystems, because two things go stale here for different reasons: the Scala dependencies in
+# build.sbt, and the actions the workflows pin. The second is not an afterthought — the toolkit's v0.0.5
+# release run warned that `actions/setup-java@v4` is deprecated and that `ubuntu-latest` migrates to Ubuntu
+# 26 in October 2026, and nothing was watching for either.
+#
+# Grouped, and with the build's deliberate pins ignored. Both are about the same thing: a weekly PR that
+# cannot pass CI is how people learn to stop reading Dependabot.
+version: 2
+
+# The homelab toolkit resolves from GitHub Packages, which serves Maven only to authenticated callers — see
+# the comment in .github/workflows/tests.yml. Whether Dependabot's sbt updater honours this for a resolver
+# that project/GitHubPackages.scala declares in Scala rather than in build.sbt is untested: if Maven Central
+# dependencies keep appearing in update PRs while the toolkit never does, this is why.
+#
+# HOMELAB_PACKAGES_PAT has to exist as a *Dependabot* secret. Dependabot does not read Actions secrets.
+registries:
+  homelab-packages:
+    type: maven-repository
+    url: https://maven.pkg.github.com/AndreMeira/homelab-toolkit-zio
+    username: AndreMeira
+    password: ${{secrets.HOMELAB_PACKAGES_PAT}}
+
+updates:
+  - package-ecosystem: sbt
+    directory: /
+    registries:
+      - homelab-packages
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      # These are pinned against each other in build.sbt, so one PR per artifact produces a set that does
+      # not compile until every one of them has landed.
+      zio-and-grpc:
+        patterns:
+          - "dev.zio:*"
+          - "com.thesamet.scalapb:*"
+          - "com.thesamet.scalapb.zio-grpc:*"
+      # Everything else, minor and patch together. A major changes something and is worth its own read.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # build.sbt: "1.9.0 is built on Scala 3.9 and its TASTy is ahead of this compiler". Lift this when the
+      # build moves to a compiler that can read it.
+      - dependency-name: "dev.zio:zio-schema*"
+        versions: [">=1.9.0"]
+      # build.sbt pins these to what grpc-netty is built against and overrides the whole transitive set —
+      # "must match the grpc-core zio-grpc pulls, not scalapb's". Bumping either alone reintroduces the
+      # mismatch the overrides exist to prevent, so they move by hand, together, when zio-grpc moves.
+      - dependency-name: "io.grpc:*"
+      - dependency-name: "io.netty:*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns:
+          - "*"
