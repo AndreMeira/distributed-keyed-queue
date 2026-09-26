@@ -2,7 +2,7 @@
 title: "Every request, and what it does to Redis"
 type: learning-material
 status: current
-updated: 2026-09-05
+updated: 2026-09-26
 tags: [redis, walkthrough, keys, lua, claims, debugging]
 ---
 
@@ -146,11 +146,14 @@ and is refused. Nothing changes.
 **`Heartbeat([receipt])`**
 
 ```
-claimed      {k1: <now+lease>}        the lease is pushed out — only if the token still matches
+claimed      {k1: <now+lease>}        the lease is pushed out — only for a claim still there, still owned
 ```
 
-A receipt whose token no longer matches is reported back as stale rather than renewed: the claim was
-revoked while the consumer was not listening. Nothing else changes — a heartbeat never moves a message.
+A receipt is reported back as stale rather than renewed for either of two reasons: its token no longer
+matches, so the claim was handed on while the consumer was not listening, or the key is no longer in
+`claimed` at all, so the watchdog has already taken it. Nothing else changes — a heartbeat never moves a
+message, and beating twice in quick succession is not a problem: writing the deadline the claim already had
+is still a renewal.
 
 **A consumer holding nothing has nothing to beat for.** It is known by its receipts, not by a registration,
 so there is no liveness of its own to keep alive.
