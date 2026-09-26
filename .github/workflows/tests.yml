@@ -1,4 +1,4 @@
-# Unit and integration tests on every push.
+# Unit and integration tests on every pull request.
 #
 # The end-to-end suite is deliberately NOT run here: it builds a Docker image and composes a two-instance
 # deployment, for a suite whose value is in being run before a release rather than on every commit. Its
@@ -6,10 +6,10 @@
 name: tests
 
 on:
-  # Every branch but main. A merge to main runs this suite through build-deploy.yml, which gates the image
-  # push on it — triggering here as well would run it twice for one merge.
-  push:
-    branches-ignore: [main]
+  # Pull requests only. A `push` trigger here as well ran the suite twice for every commit on a branch with
+  # an open PR — once for the push, once for the PR's synchronize — and the two runs answer the same
+  # question. A branch with no PR yet gets no run, which is the deliberate trade: the answer that gates a
+  # merge is the one on the PR.
   pull_request:
   # build-deploy.yml gates on this, so a merge to main runs exactly the suite a PR ran.
   workflow_call:
