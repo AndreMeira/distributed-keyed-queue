@@ -45,13 +45,13 @@ jobs:
       GITHUB_ACTOR: ${{ github.actor }}
     steps:
       # Explicit ref: a manual run has no tag context of its own, and pinning it keeps both paths identical.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
 
       # 21 because that is what the service runs on in its image (see build.sbt, dockerBaseImage) — same as
       # tests.yml.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
