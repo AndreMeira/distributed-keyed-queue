@@ -133,10 +133,11 @@ leaves the waiting set, so the fan-out does not compound under load.
 
 The broadcast lasted until the herd it costs became the thing worth removing. What replaced it is a
 **readiness token** — one per queue, in a `Queue.sliding[Unit](1)`, taken by the consumer that acts on it.
-`QueueReadiness.awaitReady(queue, patience)(claim)` keeps the shape that matters — the claim runs *inside*, so a
-token is never a value a dying fiber can drop — but delivery is point-to-point again: one token wakes one
-consumer, and a consumer that finds work hands the token on, so a burst drains one at a time and the chain
-stops on the first fruitless look.
+`QueueReadiness.subscribe(queue)` hands out a `Signal` whose `await(patience)` takes one, and
+`DequeueUseCase.looking` takes and looks inside a single masked step, so a token is never a value a dying
+fiber can drop — but delivery is point-to-point again: one token wakes one consumer, and a consumer that finds
+work hands the token on through `ready`, so a burst drains one at a time and the chain stops on the first
+fruitless look.
 
 Which walks straight back into this note's problem, since a `Queue` has no CAS: it cannot report whether
 *this* taker received the element. Measured, the two bounded shapes lose catastrophically —
@@ -148,9 +149,9 @@ token offers one unconditionally:
 
 | path | recovery |
 |---|---|
-| the caller is interrupted | `onInterrupt` **outside** the timeout — inside, it never fires |
-| the claim fails | the `onExit` failure branch |
-| the patience elapses | an offer keyed on the *take* having given up |
+| the caller is interrupted | `Signal.await`'s `onInterrupt`, **outside** the timeout — inside, it never fires |
+| the look does not finish | `DequeueUseCase.looking`'s `onExit`, which hands on for every exit but an empty look |
+| the patience elapses | `Signal.await`'s offer keyed on the *take* having given up |
 
 None of them knows whether there was a token to restore, and none needs to. With a one-slot buffer a
 spurious offer costs one wasted look and cannot accumulate, while a lost token costs a queue going quiet

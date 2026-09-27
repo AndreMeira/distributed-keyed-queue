@@ -6,14 +6,13 @@ import zio.*
 
 
 /**
- * A wake for every parked waiter on a name — the lock's counterpart to [[QueueReadiness]].
+ * Announces that a lock came free, and hands a waiter the signal that hears it.
  *
- * A wake reaches the mailboxes subscribed at that moment and no others, so a waiter subscribes before it
- * enters. It reaches all of them, because grants go by ticket order and only the store knows whose turn it
- * is: every woken waiter asks, and only the head can win. A mailbox coalesces — two wakes while parked read
- * as one, which is sound because a waiter acts on what it finds rather than on the count.
+ * A waiter receives only the wakes sent after it subscribed; earlier ones do not reach it. Its mailbox then
+ * holds one wake until taken, so a waiter that is not looking misses nothing, and several wakes before it
+ * looks read as one.
  *
- * See `docs/architecture/readiness-and-wake.md`.
+ * See `docs/architecture/readiness-and-wake.md` for why a wake goes to every waiter.
  *
  * @param waiting lock → the mailboxes of its parked waiters
  */
@@ -22,8 +21,8 @@ final class LockReadiness(waiting: Ref[Map[LockName, Set[Queue[Unit]]]]):
   /**
    * Wake every waiter parked on this lock.
    *
-   * Reaches the mailboxes subscribed at this moment and no others — a wake nobody is waiting for is
-   * dropped, which the lock can afford because a waiter subscribes before it enters.
+   * Reaches the waiters subscribed at the moment of the call. A wake sent while none are is not kept for a
+   * later subscriber.
    *
    * @param lock what came free
    * @return noop
@@ -92,7 +91,7 @@ object LockReadiness:
     /**
      * Wait for the next wake on this name.
      *
-     * A wake that arrives while nobody waits is held for the next call, and repeats collapse into one.
+     * Returns at once when a wake arrived since the last call; several that arrived read as one.
      *
      * @return noop when a wake arrives
      */

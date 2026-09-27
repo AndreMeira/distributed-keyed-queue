@@ -19,9 +19,10 @@ import java.time.Instant
  * no messages, ownership or leases: a spec about those belongs against the real store.
  *
  * @param pending the grants still to be handed out
+ * @param looks how many claims have been attempted
  * @param leaseTtl the span it reports its leases run for
  */
-final class InMemoryQueueStore(pending: Ref[Chunk[Grant]], val leaseTtl: Duration = 30.seconds) extends QueueStore:
+final class InMemoryQueueStore(pending: Ref[Chunk[Grant]], looks: Ref[Int], val leaseTtl: Duration = 30.seconds) extends QueueStore:
 
   /**
    * Make a grant available to the next claim.
@@ -32,6 +33,13 @@ final class InMemoryQueueStore(pending: Ref[Chunk[Grant]], val leaseTtl: Duratio
   def hasWork(grant: Grant): UIO[Unit] = pending.update(_ :+ grant)
 
   /**
+   * How many times a claim has been attempted, whatever it found.
+   *
+   * @return the count
+   */
+  def looked: UIO[Int] = looks.get
+
+  /**
    * Take the oldest pending grant, if there is one.
    *
    * @param queue the queue asked about, which this store does not inspect
@@ -39,7 +47,7 @@ final class InMemoryQueueStore(pending: Ref[Chunk[Grant]], val leaseTtl: Duratio
    * @return the grant, or `None` when none is pending
    */
   override def attemptClaim(queue: QueueName, batch: Int): IO[ApplicationError.AdapterError, Option[Grant]] =
-    pending.modify(queued => (queued.headOption, queued.drop(1)))
+    looks.update(_ + 1) *> pending.modify(queued => (queued.headOption, queued.drop(1)))
 
   // The operations below are not exercised by the specs that use this store; they answer without recording.
 
@@ -61,4 +69,8 @@ object InMemoryQueueStore:
    *
    * @return the store
    */
-  def make: UIO[InMemoryQueueStore] = Ref.make(Chunk.empty[Grant]).map(InMemoryQueueStore(_))
+  def make: UIO[InMemoryQueueStore] =
+    for
+      pending <- Ref.make(Chunk.empty[Grant])
+      looks   <- Ref.make(0)
+    yield InMemoryQueueStore(pending, looks)

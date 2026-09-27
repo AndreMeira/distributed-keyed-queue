@@ -11,7 +11,7 @@ import zio.test.*
 /**
  * Where each kind of wake ends up.
  *
- * '''The gap case is here because nothing else exercises it.''' No Redis reader emits one — a stream
+ * The gap case is here because nothing else exercises it: no Redis reader emits one — a stream
  * replays from the id it holds — so without this test the branch would first run in whatever transport
  * needs it, which is the wrong place to discover it.
  */
@@ -33,11 +33,12 @@ object ReadinessSignalProcessorSpec extends ZIOSpecDefault:
           queueReady <- QueueReadiness.make
           lockReady  <- LockReadiness.make
           signal     <- lockReady.subscribe(lock)
-          _          <- queueReady.awaitReady(queue, 50.millis)(ZIO.none) // spend the seed token
+          tokens     <- queueReady.subscribe(queue)
+          _          <- tokens.await(50.millis) // spend the seed token
           _          <- ReadinessSignalProcessor(silent, queueReady, lockReady).process(List(ReadinessSignal.Queue(queue)))
-          found      <- queueReady.awaitReady(queue, 1.second)(ZIO.some(1))
+          taken      <- tokens.await(1.second)
           woken      <- signal.await.timeout(100.millis)
-        yield assertTrue(found.contains(1), woken.isEmpty)
+        yield assertTrue(taken, woken.isEmpty)
     },
     test("a lock wake reaches the lock's readiness, and not the queue's") {
       ZIO.scoped:
@@ -45,11 +46,12 @@ object ReadinessSignalProcessorSpec extends ZIOSpecDefault:
           queueReady <- QueueReadiness.make
           lockReady  <- LockReadiness.make
           signal     <- lockReady.subscribe(lock)
-          _          <- queueReady.awaitReady(queue, 50.millis)(ZIO.none)
+          tokens     <- queueReady.subscribe(queue)
+          _          <- tokens.await(50.millis)
           _          <- ReadinessSignalProcessor(silent, queueReady, lockReady).process(List(ReadinessSignal.Lock(lock)))
           woken      <- signal.await.timeout(1.second)
-          found      <- queueReady.awaitReady(queue, 100.millis)(ZIO.some(1))
-        yield assertTrue(woken.isDefined, found.isEmpty)
+          taken      <- tokens.await(100.millis)
+        yield assertTrue(woken.isDefined, !taken)
     },
     test("a gap reaches both, for every name each of them knows") {
       ZIO.scoped:
@@ -57,10 +59,11 @@ object ReadinessSignalProcessorSpec extends ZIOSpecDefault:
           queueReady <- QueueReadiness.make
           lockReady  <- LockReadiness.make
           signal     <- lockReady.subscribe(lock)
-          _          <- queueReady.awaitReady(queue, 50.millis)(ZIO.none)
+          tokens     <- queueReady.subscribe(queue)
+          _          <- tokens.await(50.millis)
           _          <- ReadinessSignalProcessor(silent, queueReady, lockReady).process(List(ReadinessSignal.Gap))
           woken      <- signal.await.timeout(1.second)
-          found      <- queueReady.awaitReady(queue, 1.second)(ZIO.some(1))
-        yield assertTrue(woken.isDefined, found.contains(1))
+          taken      <- tokens.await(1.second)
+        yield assertTrue(woken.isDefined, taken)
     },
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(1.minute)

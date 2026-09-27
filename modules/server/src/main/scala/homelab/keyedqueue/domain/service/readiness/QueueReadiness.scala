@@ -10,9 +10,9 @@ import zio.*
  * it.
  *
  * A coordination primitive, not a queue — it carries no work and knows nothing about Redis. A token says
- * "there may be something to claim" and the caller does the claiming, so the claim stays in the fiber that
- * will do the work. A token offered with nobody waiting is kept for the next look, and a token is a hint
- * that may be wrong rather than a promise: every path that could swallow one puts one back.
+ * "there may be something to claim"; what to do about one, and what becomes of it afterwards, is the
+ * taker's. A token offered with nobody waiting is kept for the next look, and repeats collapse into one, so
+ * a spare costs one look and cannot pile up.
  *
  * See `docs/architecture/readiness-and-wake.md`.
  *
@@ -46,39 +46,16 @@ final class QueueReadiness(queues: Ref[Map[QueueName, Queue[Unit]]]):
     queues.get.flatMap(current => ZIO.foreachDiscard(current.keys)(ready))
 
   /**
-   * Wait for this queue's token for at most `patience`, and run `claim` when one arrives.
+   * A signal for this queue's tokens.
    *
-   * The claim runs inside the wait: a token is never handed back to the caller, so it cannot be held as a
-   * value by a fiber that dies with it. A look that finds work hands the token onward; a look that finds
-   * nothing keeps it, which is what ends the chain.
+   * Every subscriber to a name shares its one buffer, so a token one takes another does not see. A taker
+   * that wants the next subscriber to look offers the token back through [[ready]].
    *
-   * @param queue the queue to wait on
-   * @param patience the longest to wait for a token
-   * @param onReady what to do when one arrives; `None` means it looked and found nothing
-   * @tparam E what `claim` aborts with
-   * @tparam A what `claim` produces
-   * @return `claim`'s answer, or `None` when nothing became ready in time; aborts with `E` when `claim` does
+   * @param queue the queue to take tokens for
+   * @return the signal
    */
-  def awaitReady[E, A](queue: QueueName, patience: Duration)(onReady: IO[E, Option[A]]): IO[E, Option[A]] =
-    buffer(queue).flatMap: found =>
-      // Uninterruptible except where restored, so a token cannot be taken and then dropped in the gap
-      // before its recovery is installed: interruption there would run neither handler.
-      ZIO.uninterruptibleMask: restore =>
-        for
-          // Recovers a token the interruption would otherwise swallow. Attached outside the timeout on
-          // purpose: when the timeout discards an element the take itself was never interrupted, so a
-          // finalizer on the take never runs.
-          ready  <- restore(found.take.timeout(patience)).onInterrupt(found.offer(()))
-          // Flattened here, where the nesting is created: the outer `Option` says whether the claim ran,
-          // the inner what it found, and conflating the two is how a fruitless look ends up handing the
-          // token on and consumers spin.
-          result <- restore(onReady.when(ready.isDefined).map(_.flatten)).onExit {
-                      case Exit.Success(None) => ZIO.unit        // No work, make the next claim wait
-                      case _                  => found.offer(()) // Work or failure, do not make it wait
-                    }
-          // The take gave up. It may have given up holding an element, which is unknowable, so put one back.
-          _      <- found.offer(()).when(ready.isEmpty)
-        yield result
+  def subscribe(queue: QueueName): UIO[QueueReadiness.Signal] =
+    buffer(queue).map(QueueReadiness.Signal(_))
 
   /**
    * A queue's token buffer, made on first use.
@@ -111,9 +88,34 @@ final class QueueReadiness(queues: Ref[Map[QueueName, Queue[Unit]]]):
 object QueueReadiness:
 
   /**
+   * What a consumer waits on.
+   *
+   * @param buffer the queue's token buffer
+   */
+  final class Signal(buffer: Queue[Unit]):
+
+    /**
+     * Take a token, waiting at most `patience` for one.
+     *
+     * A wait that gives up may have taken a token it never saw — the timeout forks the take, and the fork
+     * can win as the timeout fires — so one is put back on every give-up, and on an interruption. The buffer
+     * holds one, so a spare costs one look and cannot pile up.
+     *
+     * @param patience the longest to wait
+     * @return whether a token was taken; never fails
+     */
+    def await(patience: Duration): UIO[Boolean] =
+      ZIO.uninterruptibleMask: restore =>
+        restore(buffer.take.timeout(patience))
+          .onInterrupt(buffer.offer(()))
+          .flatMap:
+            case Some(_) => ZIO.succeed(true)
+            case None    => buffer.offer(()).as(false)
+
+  /**
    * An empty registry, with no queues yet.
    *
-   * @return the readiness
+   * @return the registry
    */
   def make: UIO[QueueReadiness] =
     Ref.make(Map.empty[QueueName, Queue[Unit]]).map(QueueReadiness(_))

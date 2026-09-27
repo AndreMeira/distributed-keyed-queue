@@ -54,6 +54,30 @@ object DequeueUseCaseSpec extends ZIOSpecDefault:
           (elapsed, answer) = outcome
         yield assertTrue(answer == DequeueResponse.fromGrant(waiting), elapsed < 5.seconds)
       },
+      test("finding work hands the token on; finding nothing stops the chain") {
+        // What replaces a broadcast: a burst drains one caller at a time, each hand-on costing exactly one
+        // look. The chain ends on the first look that finds nothing — that caller parks for the rest of its
+        // patience instead of looking again, or it would spin on the store for as long as it was willing to wait.
+        for
+          dequeue <- ZIO.service[DequeueUseCase]
+          store   <- ZIO.service[InMemoryQueueStore]
+          first    = Helper.grant("burst", "k1", "a")
+          second   = Helper.grant("burst", "k2", "b")
+          _       <- store.hasWork(first)
+          _       <- store.hasWork(second)
+          one     <- dequeue(DequeueRequest("burst", 1.second, 1))
+          two     <- dequeue(DequeueRequest("burst", 1.second, 1))
+          handed  <- store.looked
+          three   <- dequeue(DequeueRequest("burst", 300.millis, 1))
+          parked  <- store.looked
+        yield assertTrue(
+          one == DequeueResponse.fromGrant(first),
+          two == DequeueResponse.fromGrant(second),
+          three == DequeueResponse.Empty,
+          handed == 2,
+          parked == 3,
+        )
+      },
       test("the patience is a deadline: fruitless looks do not extend it") {
         // Announced repeatedly with nothing to find. Each wake costs a look, and a look that finds nothing
         // must not buy the caller more time than it asked for.
