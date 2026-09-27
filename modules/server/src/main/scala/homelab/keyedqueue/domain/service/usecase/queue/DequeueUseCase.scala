@@ -103,24 +103,23 @@ final class DequeueUseCase(
    * since it cannot know what it would have found.
    *
    * @param waiter who is waiting, for what, and since when
-   * @param patience what is left of the wait, which bounds the park
-   * @return the grant, or the same wait to continue; aborts with an `AdapterError` when the store fails
+   * @param patience what is left of the wait, which the park is bounded by
+   * @return the grant, the same wait to continue, or the end of the patience when no token came in time;
+   *         aborts with an `AdapterError` when the store fails
    */
   private def awaitWork(waiter: Waiter, patience: Duration): IO[AdapterError, DequeueLifecycle] =
-    val demand = waiter.demand
-    ZIO.uninterruptibleMask: restore =>
+    ZIO.uninterruptibleMask { restore =>
       restore(waiter.signal.await(patience)).flatMap:
-        case false => ZIO.succeed(Waiting(waiter))
+        case false => ZIO.succeed(GivenUp)
         case true  =>
-          restore(store.attemptClaim(demand.queue, demand.batch))
-            .map {
+          restore(store.attemptClaim(waiter.demand.queue, waiter.demand.batch))
+            .map:
               case Some(grant) => Granted(grant)
               case None        => Waiting(waiter)
-            }
-            .onExit {
+            .onExit:
               case Exit.Success(_: Waiting) => ZIO.unit
-              case _                        => readiness.ready(demand.queue)
-            }
+              case _                        => readiness.ready(waiter.demand.queue)
+    }
 
   /**
    * What is left of this waiter's patience.
