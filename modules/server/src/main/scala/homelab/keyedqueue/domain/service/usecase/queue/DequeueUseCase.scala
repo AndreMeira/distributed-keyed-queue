@@ -82,6 +82,18 @@ final class DequeueUseCase(
     }
 
   /**
+   * Continue one caller's wait, or end it when the patience is spent.
+   *
+   * @param state the wait to continue
+   * @return the grant, the same wait to continue, or the end of the patience; aborts with an `AdapterError`
+   *         when the store fails
+   */
+  private def looking(state: Waiting): IO[AdapterError, DequeueLifecycle] =
+    patienceLeft(state.waiter).flatMap:
+      case None       => ZIO.succeed(GivenUp)
+      case Some(left) => awaitWork(state.waiter, left)
+
+  /**
    * Take a token, look, and decide what becomes of the token.
    *
    * The park and the look are interruptible and the space around them is not, so a token that was taken is
@@ -90,29 +102,25 @@ final class DequeueUseCase(
    * what ends the chain. A look that does not finish — a failure, an interruption — hands it on as well,
    * since it cannot know what it would have found.
    *
-   * @param state the wait to continue
-   * @return the grant, the same wait to continue, or the end of the patience; aborts with an `AdapterError`
-   *         when the store fails
+   * @param waiter who is waiting, for what, and since when
+   * @param patience what is left of the wait, which bounds the park
+   * @return the grant, or the same wait to continue; aborts with an `AdapterError` when the store fails
    */
-  private def looking(state: Waiting): IO[AdapterError, DequeueLifecycle] =
-    val waiter = state.waiter
+  private def awaitWork(waiter: Waiter, patience: Duration): IO[AdapterError, DequeueLifecycle] =
     val demand = waiter.demand
-    patienceLeft(waiter).flatMap:
-      case None       => ZIO.succeed(GivenUp)
-      case Some(left) =>
-        ZIO.uninterruptibleMask: restore =>
-          restore(waiter.signal.await(left)).flatMap:
-            case false => ZIO.succeed(Waiting(waiter))
-            case true  =>
-              restore(store.attemptClaim(demand.queue, demand.batch))
-                .map {
-                  case Some(grant) => Granted(grant)
-                  case None        => Waiting(waiter)
-                }
-                .onExit {
-                  case Exit.Success(_: Waiting) => ZIO.unit
-                  case _                        => readiness.ready(demand.queue)
-                }
+    ZIO.uninterruptibleMask: restore =>
+      restore(waiter.signal.await(patience)).flatMap:
+        case false => ZIO.succeed(Waiting(waiter))
+        case true  =>
+          restore(store.attemptClaim(demand.queue, demand.batch))
+            .map {
+              case Some(grant) => Granted(grant)
+              case None        => Waiting(waiter)
+            }
+            .onExit {
+              case Exit.Success(_: Waiting) => ZIO.unit
+              case _                        => readiness.ready(demand.queue)
+            }
 
   /**
    * What is left of this waiter's patience.
