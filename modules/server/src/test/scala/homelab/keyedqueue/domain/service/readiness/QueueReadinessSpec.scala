@@ -1,6 +1,7 @@
 package homelab.keyedqueue.domain.service.readiness
 
 
+import homelab.keyedqueue.domain.service.readiness.QueueReadiness.Signal
 import homelab.keyedqueue.domain.types.QueueName
 import zio.*
 import zio.test.*
@@ -9,102 +10,100 @@ import zio.test.*
 /**
  * The invariants a readiness token has to hold, all of them about races.
  *
- * The one that matters most: '''a token is never lost while there is work to find'''. Work is claimable
- * the moment it is announced, so a token that vanishes is a queue going quiet with messages sitting in it.
- * Every path that could swallow one puts one back, and the tests below drive each of those paths.
+ * The one that matters most: a token is never lost while there is work to find. Work is claimable the
+ * moment it is announced, so a token that vanishes is a queue going quiet with messages sitting in it. Every
+ * path a wait can take puts one back, and the tests below drive each of those paths. What a taker does with
+ * a token is the use case's, and is tested there.
  */
 object QueueReadinessSpec extends ZIOSpecDefault:
-
-  private val queue = QueueName("orders")
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueReadiness")(
     test("a token wakes one caller, not every caller") {
-      // The whole point of the design: a broadcast would let both look.
+      // The whole point of the design: a broadcast would let both take one.
       for
         readiness <- QueueReadiness.make
-        _         <- readiness.awaitReady(queue, 1.second)(ZIO.none) // spend the seed
-        looked    <- Ref.make(0)
+        signal    <- readiness.subscribe(queue)
+        _         <- signal.await(1.second) // spend the seed
         _         <- readiness.ready(queue)
-        _         <- ZIO.foreachPar(1 to 2)(_ => readiness.awaitReady(queue, 150.millis)(looked.update(_ + 1).as(None)))
-        count     <- looked.get
-      yield assertTrue(count == 1)
+        taken     <- ZIO.foreachPar(1 to 2)(_ => signal.await(150.millis))
+      yield assertTrue(taken.count(identity) == 1)
     },
     test("a queue nobody has announced is still looked at once") {
       // The restart case: the wake stream is positioned at its end, so work already in `ready` would never
       // be announced. A fresh queue carries one token so its first caller looks instead of waiting.
       for
         readiness <- QueueReadiness.make
-        looked    <- Ref.make(0)
-        found     <- readiness.awaitReady(QueueName("cold"), 50.millis)(looked.update(_ + 1).as(Some(1)))
-        count     <- looked.get
-      yield assertTrue(found.contains(1), count == 1)
+        signal    <- readiness.subscribe(QueueName("cold"))
+        taken     <- signal.await(50.millis)
+      yield assertTrue(taken)
     },
-    test("finding work hands the token on; finding nothing stops the chain") {
-      // What replaces the broadcast: a burst drains one consumer at a time. The chain must end on the first
-      // look that finds nothing, or consumers spin on the store for as long as they are waiting.
+    test("a wait that gives up leaves a token for the next") {
+      // The timeout forks the take and cannot say whether the fork won, so a give-up puts one back.
       for
         readiness <- QueueReadiness.make
-        looked    <- Ref.make(0)
-        first     <- readiness.awaitReady(queue, 50.millis)(looked.update(_ + 1).as(Some(1)))
-        second    <- readiness.awaitReady(queue, 50.millis)(looked.update(_ + 1).as(Some(2)))
-        third     <- readiness.awaitReady(queue, 50.millis)(looked.update(_ + 1).as(None))
-        fourth    <- readiness.awaitReady(queue, 50.millis)(looked.update(_ + 1).as(Some(4)))
-        count     <- looked.get
-      yield assertTrue(first.contains(1), second.contains(2), third.isEmpty, fourth.isEmpty, count == 3)
+        signal    <- readiness.subscribe(queue)
+        _         <- signal.await(1.second) // spend the seed
+        gaveUp    <- signal.await(50.millis)
+        next      <- signal.await(50.millis)
+      yield assertTrue(!gaveUp, next)
     },
     test("a queue announced for is not confused with another") {
       for
         readiness <- QueueReadiness.make
-        _         <- readiness.awaitReady(queue, 1.second)(ZIO.none)
-        _         <- readiness.awaitReady(QueueName("elsewhere"), 1.second)(ZIO.none)
+        mine      <- readiness.subscribe(queue)
+        other     <- readiness.subscribe(QueueName("elsewhere"))
+        _         <- mine.await(1.second)
+        _         <- other.await(1.second)
         _         <- readiness.ready(queue)
-        mine      <- readiness.awaitReady(queue, 100.millis)(ZIO.succeed(Some(1)))
-        other     <- readiness.awaitReady(QueueName("elsewhere"), 50.millis)(ZIO.succeed(Some(1)))
-      yield assertTrue(mine.contains(1), other.isEmpty)
+        taken     <- mine.await(100.millis)
+        quiet     <- other.await(50.millis)
+      yield assertTrue(taken, !quiet)
     },
     test("readiness announced as the patience expires is not lost") {
       // `take.timeout` forks the take, so an element arriving as the timeout fires can be swallowed by a
-      // child fiber nothing observes. Driven from both sides: whichever wins, the work stays findable.
+      // child fiber nothing observes. Driven from both sides: whichever wins, the token stays takeable —
+      // by the racing waiter, or failing that by the next one. A taken token is consumed, so the next one
+      // only asks when the racer came away empty.
       ZIO
         .foreach(1 to 500): _ =>
           for
             readiness <- QueueReadiness.make
-            _         <- readiness.awaitReady(queue, 1.second)(ZIO.none)
-            // Claims rather than looking-and-finding-nothing: a fruitless look would consume the token
-            // legitimately, which is not what this test is about.
-            awaiting  <- readiness.awaitReady(queue, 20.millis)(ZIO.succeed(Some(1))).fork
+            signal    <- readiness.subscribe(queue)
+            _         <- signal.await(1.second)
+            awaiting  <- signal.await(20.millis).fork
             _         <- ZIO.sleep(20.millis)
             _         <- readiness.ready(queue)
-            first     <- awaiting.join
-            second    <- readiness.awaitReady(queue, 3.seconds)(ZIO.succeed(Some(1)))
-          yield assertTrue(first.isDefined || second.isDefined)
+            taken     <- awaiting.join.flatMap(first => if first then ZIO.succeed(true) else signal.await(3.seconds))
+          yield assertTrue(taken)
         .map(_.reduce(_ && _))
     },
-    test("work announced as a caller is interrupted around it is not stranded from a retrying caller") {
-      // Interrupt a consumer in the window where a wake arrives — the path neither the timeout nor the exit
-      // handler reaches — then check the guarantee the store actually relies on: a *retrying* caller finds
-      // the work. This mirrors `DequeueUseCase.claim`, which loops `awaitReady` until granted or the
-      // patience is spent; a single `awaitReady` is not how the store waits, and asserting on one tests a
-      // momentary internal state rather than the recovery the design promises. Each look that finds nothing
-      // re-arms a token on its way out, so the next look takes it and runs the claim.
-      def retryingCaller(readiness: QueueReadiness): UIO[Option[Int]] =
-        readiness.awaitReady(queue, 100.millis)(ZIO.succeed(Some(1))).flatMap {
-          case found @ Some(_) => ZIO.succeed(found)
-          case None            => retryingCaller(readiness)
-        }
-
+    test("a token announced as a caller is interrupted around it is not stranded from a retrying caller") {
+      // Interrupt a consumer in the window where a wake arrives — the path neither the timeout nor a
+      // handler reaches — then check what the store relies on: a caller that keeps asking gets a token.
       ZIO
         .foreach(1 to 500): _ =>
           for
             readiness  <- QueueReadiness.make
-            _          <- readiness.awaitReady(queue, 1.second)(ZIO.none)
-            awaiting   <- readiness.awaitReady(queue, 30.seconds)(ZIO.succeed(Some(1))).fork
+            signal     <- readiness.subscribe(queue)
+            _          <- signal.await(1.second)
+            awaiting   <- signal.await(30.seconds).fork
             _          <- ZIO.sleep(1.milli)
             announcing <- readiness.ready(queue).fork
             _          <- awaiting.interrupt
             _          <- announcing.join
-            recovered  <- retryingCaller(readiness).timeout(10.seconds)
-          yield assertTrue(recovered.contains(Some(1)))
+            recovered  <- retrying(signal).timeout(10.seconds)
+          yield assertTrue(recovered.contains(true))
         .map(_.reduce(_ && _))
     },
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(3.minutes)
+
+  /** The queue these tests wait on, and a caller that keeps asking. */
+  private object Support {
+
+    val queue = QueueName("orders")
+
+    /** Ask until a token is taken, the way a dequeue loops until granted or its patience is spent. */
+    def retrying(signal: Signal): UIO[Boolean] =
+      signal.await(100.millis).flatMap(taken => if taken then ZIO.succeed(true) else retrying(signal))
+  }
