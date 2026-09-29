@@ -59,12 +59,11 @@ final class LockReadiness(waiting: Ref[Map[LockName, Set[Queue[Unit]]]]):
    * @return the mailbox, already subscribed
    */
   private def addSubscriber(lock: LockName): UIO[Queue[Unit]] =
-    for
-      mailbox <- Queue.sliding[Unit](1)
-      _       <- waiting.update: current =>
-                   val subscribers = current.getOrElse(lock, Set.empty) + mailbox
-                   current.updated(lock, subscribers)
-    yield mailbox
+    Queue.sliding[Unit](1).tap { mailbox =>
+      waiting.update: current =>
+        val subscribers = current.getOrElse(lock, Set.empty) + mailbox
+        current.updated(lock, subscribers)
+    }
 
   /**
    * Take this mailbox out of the lock's subscribers, and the name with it once it holds none.

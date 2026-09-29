@@ -25,14 +25,14 @@ object Module:
   type Required = QueueStore & Watchdog & QueueInputValidation & QueueReadiness & LockStore & LockInputValidation & LockReadiness
 
   lazy val layer: ZLayer[Required, ApplicationError, Provided] =
-    useCases ++ lockUseCases
+    queueUseCases ++ lockUseCases
 
   /**
    * The four use cases, as one dependency for whatever adapter serves them.
    *
    * @return the layer
    */
-  val useCases: ZLayer[QueueStore & Watchdog & QueueInputValidation & QueueReadiness, Nothing, QueueUseCases] =
+  val queueUseCases: ZLayer[QueueStore & Watchdog & QueueInputValidation & QueueReadiness, Nothing, QueueUseCases] =
     ZLayer.fromFunction: (store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation, readiness: QueueReadiness) =>
       QueueUseCases(
         enqueue = EnqueueUseCase(store, watchdog, validation),
