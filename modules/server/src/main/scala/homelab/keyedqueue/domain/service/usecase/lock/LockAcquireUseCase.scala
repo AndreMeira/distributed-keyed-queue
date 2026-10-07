@@ -65,8 +65,8 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
    */
   private def acquire(waiter: Waiter, patience: Duration): IO[AdapterError, Option[Hold]] =
     Recursion(Demanding(waiter, patience)) {
-      case state: Demanding => placing(state)
-      case state: Queued    => queuing(state)
+      case state: Demanding => next(state)
+      case state: Queued    => next(state)
       case state            => ZIO.succeed(state)
     }.terminate {
       case GivenUp       => None
@@ -84,7 +84,7 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
    * @return the lock, or a place in the queue with the first recheck time; aborts with an `AdapterError`
    *         when the store fails
    */
-  private def placing(state: Demanding): IO[AdapterError, AcquireLifecycle] = ZIO.uninterruptible {
+  private def next(state: Demanding): IO[AdapterError, AcquireLifecycle] = ZIO.uninterruptible {
     for
       now      <- Clock.instant
       demand    = state.waiter.demand
@@ -104,7 +104,7 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
    * @return the lock, a later recheck, a fresh start when the queue no longer knows this ticket, or the
    *         end of the wait; aborts with an `AdapterError` when the store fails
    */
-  private def queuing(state: Queued): IO[AdapterError, AcquireLifecycle] =
+  private def next(state: Queued): IO[AdapterError, AcquireLifecycle] =
     patienceLeft(state)
       .flatMap:
         case None           => ZIO.succeed(GivenUp)

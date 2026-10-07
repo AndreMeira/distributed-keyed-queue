@@ -13,7 +13,7 @@ import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.readiness.QueueReadiness
 import homelab.keyedqueue.domain.service.readiness.QueueReadiness.Signal
 import homelab.keyedqueue.domain.service.usecase.queue.DequeueUseCase.DequeueLifecycle.*
-import homelab.keyedqueue.domain.service.usecase.queue.DequeueUseCase.{ DequeueLifecycle, Waiter }
+import homelab.keyedqueue.domain.service.usecase.queue.DequeueUseCase.DequeueLifecycle
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
 import zio.*
 
@@ -58,7 +58,7 @@ final class DequeueUseCase(
       _      <- watchdog.watch(demand.queue)
       asked  <- Clock.instant
       signal <- readiness.subscribe(demand.queue)
-      grant  <- claim(Waiter(demand, asked, signal))
+      grant  <- claim(demand, asked, signal)
     yield response(grant)
 
   /**
@@ -68,13 +68,15 @@ final class DequeueUseCase(
    * deadline of its own, and [[Recursion]] guarantees nothing about what crosses a step boundary, so a token
    * never does.
    *
-   * @param waiter who is waiting, for what, and since when
+   * @param demand the queue, how many to take, and how long to wait
+   * @param asked when the call arrived, which the patience is measured from
+   * @param signal what an announcement on this queue reaches
    * @return the grant, or `None` when the patience elapsed first; aborts with an `AdapterError` when the
    *         store fails
    */
-  private def claim(waiter: Waiter): IO[AdapterError, Option[Grant]] =
-    Recursion(Waiting(waiter)) {
-      case state: Waiting => looking(state)
+  private def claim(demand: Demand, asked: Instant, signal: Signal): IO[AdapterError, Option[Grant]] =
+    Recursion(Waiting(demand, asked, signal)) {
+      case state: Waiting => next(state)
       case state          => ZIO.succeed(state)
     }.terminate {
       case GivenUp        => None
@@ -88,10 +90,21 @@ final class DequeueUseCase(
    * @return the grant, the same wait to continue, or the end of the patience; aborts with an `AdapterError`
    *         when the store fails
    */
-  private def looking(state: Waiting): IO[AdapterError, DequeueLifecycle] =
-    patienceLeft(state.waiter).flatMap:
+  private def next(state: Waiting): IO[AdapterError, DequeueLifecycle] =
+    patienceLeft(state).flatMap:
       case None       => ZIO.succeed(GivenUp)
-      case Some(left) => awaitWork(state.waiter, left)
+      case Some(left) => awaitWork(state, left)
+
+  /**
+   * What is left of this waiter's patience.
+   *
+   * @param state the wait to measure, which carries when it was asked for
+   * @return the time still to wait, or `None` when it is spent
+   */
+  private def patienceLeft(state: Waiting): UIO[Option[Duration]] =
+    Clock.instant.map: now =>
+      val left = state.demand.patience.minus(Duration.fromInterval(state.asked, now))
+      Option.when(left.toMillis > 0)(left)
 
   /**
    * Take a token, look, and decide what becomes of the token.
@@ -102,35 +115,24 @@ final class DequeueUseCase(
    * what ends the chain. A look that does not finish — a failure, an interruption — hands it on as well,
    * since it cannot know what it would have found.
    *
-   * @param waiter who is waiting, for what, and since when
+   * @param state the wait to continue: who is waiting, for what, and since when
    * @param patience what is left of the wait, which the park is bounded by
    * @return the grant, the same wait to continue, or the end of the patience when no token came in time;
    *         aborts with an `AdapterError` when the store fails
    */
-  private def awaitWork(waiter: Waiter, patience: Duration): IO[AdapterError, DequeueLifecycle] =
+  private def awaitWork(state: Waiting, patience: Duration): IO[AdapterError, DequeueLifecycle] =
     ZIO.uninterruptibleMask { restore =>
-      restore(waiter.signal.await(patience)).flatMap:
+      restore(state.signal.await(patience)).flatMap:
         case false => ZIO.succeed(GivenUp)
         case true  =>
-          restore(store.attemptClaim(waiter.demand.queue, waiter.demand.batch))
+          restore(store.attemptClaim(state.demand.queue, state.demand.batch))
             .map:
               case Some(grant) => Granted(grant)
-              case None        => Waiting(waiter)
+              case None        => state
             .onExit:
               case Exit.Success(_: Waiting) => ZIO.unit
-              case _                        => readiness.ready(waiter.demand.queue)
+              case _                        => readiness.ready(state.demand.queue)
     }
-
-  /**
-   * What is left of this waiter's patience.
-   *
-   * @param waiter the wait to measure, which carries when it was asked for
-   * @return the time still to wait, or `None` when it is spent
-   */
-  private def patienceLeft(waiter: Waiter): UIO[Option[Duration]] =
-    Clock.instant.map: now =>
-      val left = waiter.demand.patience.minus(Duration.fromInterval(waiter.asked, now))
-      Option.when(left.toMillis > 0)(left)
 
   /**
    * Present what the store returned as the answer the caller gets.
@@ -145,17 +147,6 @@ final class DequeueUseCase(
 
 
 object DequeueUseCase:
-
-  /**
-   * One caller's wait: what it asked for, when it asked, and where its tokens come from.
-   *
-   * None of the three changes while the wait lasts.
-   *
-   * @param demand the queue, how many to take, and how long to wait
-   * @param asked when the call arrived, which the patience is measured from
-   * @param signal what an announcement on this queue reaches
-   */
-  private[queue] case class Waiter(demand: Demand, asked: Instant, signal: Signal)
 
   /**
    * Where one caller's wait has got to.
@@ -176,8 +167,10 @@ object DequeueUseCase:
     case Granted(grant: Grant)
 
     /**
-     * About to take a token and look.
+     * About to take a token and look. None of the three changes while the wait lasts.
      *
-     * @param waiter who is waiting, for what, and since when
+     * @param demand the queue, how many to take, and how long to wait
+     * @param asked when the call arrived, which the patience is measured from
+     * @param signal what an announcement on this queue reaches
      */
-    case Waiting(waiter: Waiter)
+    case Waiting(demand: Demand, asked: Instant, signal: Signal)
