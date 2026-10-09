@@ -154,7 +154,7 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
       // say how long it is prepared to wait.
       for
         impatient <- validation.parse(DequeueRequest("jobs", Duration.Zero, maxBatch = 1)).orFail.flip
-        backwards <- validation.parse(DequeueRequest("jobs", -1.second, maxBatch = 1)).orFail.flip
+        backwards <- validation.parse(DequeueRequest("jobs", (-1).second, maxBatch = 1)).orFail.flip
         // Accumulated with the others rather than short-circuiting, which is the point of the whole scheme.
         both      <- validation.parse(DequeueRequest("", Duration.Zero, maxBatch = -1)).orFail.flip
       yield assertTrue(

@@ -5,7 +5,7 @@
 // Built on homelab-toolkit-zio: `homelab-common` brings the ports and the error vocabulary,
 // `homelab-telemetry` the OpenTelemetry adapter behind the `Monitor` port.
 
-val scala3Version         = "3.8.3"
+val scala3Version         = "3.9.0"         // the LTS line; what this build publishes needs a 3.9+ compiler to read
 val zioVersion            = "2.1.23"
 val zioPreludeVersion     = "1.0.0-RC47"    // the toolkit's version; Validation is a domain-level type here
 val toolkitVersion        = "0.0.5"
@@ -19,7 +19,7 @@ val typesafeConfigVersion = "1.4.9"
 val pureconfigVersion     = "0.17.10"
 val chimneyVersion        = "1.10.0"
 val testcontainersVersion = "1.20.6"
-val zioSchemaVersion      = "1.8.6"         // 1.9.0 is built on Scala 3.9 and its TASTy is ahead of this compiler
+val zioSchemaVersion      = "1.8.6"
 
 ThisBuild / scalaVersion := scala3Version
 ThisBuild / organization := "com.andremeira.homelab"
