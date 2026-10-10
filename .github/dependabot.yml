@@ -45,10 +45,6 @@ updates:
           - minor
           - patch
     ignore:
-      # build.sbt: "1.9.0 is built on Scala 3.9 and its TASTy is ahead of this compiler". Lift this when the
-      # build moves to a compiler that can read it.
-      - dependency-name: "dev.zio:zio-schema*"
-        versions: [">=1.9.0"]
       # build.sbt pins these to what grpc-netty is built against and overrides the whole transitive set —
       # "must match the grpc-core zio-grpc pulls, not scalapb's". Bumping either alone reintroduces the
       # mismatch the overrides exist to prevent, so they move by hand, together, when zio-grpc moves.
