@@ -5,7 +5,8 @@ import homelab.common.error.ApplicationError
 import homelab.common.error.ApplicationError.AdapterError
 import homelab.common.flow.Recursion
 import homelab.common.orFail
-import homelab.keyedqueue.domain.model.queue.{ Demand, Grant }
+import homelab.keyedqueue.domain.model.queue.{ Demand, Grant, Settlement }
+import homelab.keyedqueue.domain.model.queue.Settlement.{ Outcome, Verdict }
 import homelab.keyedqueue.domain.request.queue.DequeueRequest
 import homelab.keyedqueue.domain.response.queue.*
 import homelab.keyedqueue.domain.service.maintenance.Watchdog
@@ -48,18 +49,24 @@ final class DequeueUseCase(
    * `backlogDepth` says how many were left. Both clamps happen in the parse, which is what makes a
    * `Demand` mean "within this service's limits" wherever one turns up.
    *
+   * The call is a scope, and a claim is acquired in it: a call that does not answer after its claim was made,
+   * because it was cancelled, hands the claim back rather than leaving it claimed until its lease expires. Its
+   * messages are claimable again at once and count one more delivery attempt. A call cancelled after it has
+   * answered is beyond this: the response is lost on its way out, and the claim lapses on its lease.
+   *
    * @param request the queue and what the caller is asking for, untrusted
    * @return the delivery, or nothing when none became ready in time; aborts with `ValidationError` when the
    *         queue is unnamed or the batch is negative, or with `ApplicationError` when the store fails
    */
   def apply(request: DequeueRequest): IO[ApplicationError, DequeueResponse] =
-    for
-      demand <- validation.parse(request).orFail
-      _      <- watchdog.watch(demand.queue)
-      asked  <- Clock.instant
-      signal <- readiness.subscribe(demand.queue)
-      grant  <- claim(demand, asked, signal)
-    yield response(grant)
+    ZIO.scoped:
+      for
+        demand <- validation.parse(request).orFail
+        _      <- watchdog.watch(demand.queue)
+        asked  <- Clock.instant
+        signal <- readiness.subscribe(demand.queue)
+        grant  <- claim(demand, asked, signal)
+      yield response(grant)
 
   /**
    * Follow one caller's wait from its first look until it has work or the patience is spent.
@@ -72,9 +79,9 @@ final class DequeueUseCase(
    * @param asked when the call arrived, which the patience is measured from
    * @param signal what an announcement on this queue reaches
    * @return the grant, or `None` when the patience elapsed first; aborts with an `AdapterError` when the
-   *         store fails
+   *         store fails; a grant is acquired in the scope, see [[acquireClaim]]
    */
-  private def claim(demand: Demand, asked: Instant, signal: Signal): IO[AdapterError, Option[Grant]] =
+  private def claim(demand: Demand, asked: Instant, signal: Signal): ZIO[Scope, AdapterError, Option[Grant]] =
     Recursion(Waiting(demand, asked, signal)) {
       case state: Waiting => next(state)
       case state          => ZIO.succeed(state)
@@ -90,7 +97,7 @@ final class DequeueUseCase(
    * @return the grant, the same wait to continue, or the end of the patience; aborts with an `AdapterError`
    *         when the store fails
    */
-  private def next(state: Waiting): IO[AdapterError, DequeueLifecycle] =
+  private def next(state: Waiting): ZIO[Scope, AdapterError, DequeueLifecycle] =
     patienceLeft(state).flatMap:
       case None       => ZIO.succeed(GivenUp)
       case Some(left) => awaitWork(state, left)
@@ -109,23 +116,22 @@ final class DequeueUseCase(
   /**
    * Take a token, look, and decide what becomes of the token.
    *
-   * The park and the look are interruptible and the space around them is not, so a token that was taken is
-   * always disposed of by the handler here. A look that finds work hands the token on through
-   * [[QueueReadiness.ready]], so the next consumer looks too. A look that finds nothing keeps it, which is
-   * what ends the chain. A look that does not finish — a failure, an interruption — hands it on as well,
-   * since it cannot know what it would have found.
+   * Only the park is interruptible; the look is an acquisition, so it always finishes. A look that finds work
+   * hands the token on through [[QueueReadiness.ready]], so the next consumer looks too. A look that finds
+   * nothing keeps it, which is what ends the chain. A look that fails hands it on as well, since it cannot know
+   * what it would have found.
    *
    * @param state the wait to continue: who is waiting, for what, and since when
    * @param patience what is left of the wait, which the park is bounded by
    * @return the grant, the same wait to continue, or the end of the patience when no token came in time;
    *         aborts with an `AdapterError` when the store fails
    */
-  private def awaitWork(state: Waiting, patience: Duration): IO[AdapterError, DequeueLifecycle] =
+  private def awaitWork(state: Waiting, patience: Duration): ZIO[Scope, AdapterError, DequeueLifecycle] =
     ZIO.uninterruptibleMask { restore =>
       restore(state.signal.await(patience)).flatMap:
         case false => ZIO.succeed(GivenUp)
         case true  =>
-          restore(store.attemptClaim(state.demand.queue, state.demand.batch))
+          acquireClaim(state.demand)
             .map:
               case Some(grant) => Granted(grant)
               case None        => state
@@ -133,6 +139,40 @@ final class DequeueUseCase(
               case Exit.Success(_: Waiting) => ZIO.unit
               case _                        => readiness.ready(state.demand.queue)
     }
+
+  /**
+   * Claim from the queue, as a resource of the call's scope: when the call ends without answering, the claim
+   * is handed back.
+   *
+   * @param demand the queue and how many to take
+   * @return the claim, or `None` when nothing was claimable; aborts with an `AdapterError` when the store fails
+   */
+  private def acquireClaim(demand: Demand): ZIO[Scope, AdapterError, Option[Grant]] =
+    ZIO.acquireReleaseExit(store.attemptClaim(demand.queue, demand.batch))(handBackUnanswered)
+
+  /**
+   * Hand back a claim whose call did not answer.
+   *
+   * @param claimed what the claim found
+   * @param ended how the call's scope closed
+   * @return noop; never fails
+   */
+  private def handBackUnanswered(claimed: Option[Grant], ended: Exit[Any, Any]): UIO[Unit] =
+    claimed match
+      case Some(grant) if !ended.isSuccess => handBack(grant)
+      case _                               => ZIO.unit
+
+  /**
+   * Return every message of a grant to its key, claimable again at once. A settle that does not land is
+   * left alone: the claim then lapses on its lease, as it would for a consumer that died.
+   *
+   * @param grant what was claimed for a call that did not complete
+   * @return noop; never fails
+   */
+  private def handBack(grant: Grant): UIO[Unit] =
+    store
+      .settle(Settlement(grant.claim, grant.messages.map(owned => Outcome(owned.id, Verdict.Failed)), None))
+      .ignore
 
   /**
    * Present what the store returned as the answer the caller gets.
