@@ -33,6 +33,11 @@ final private[queue] class ManagedBatch(
   /**
    * Claim a key's messages and work them together, or answer with nothing when none became ready.
    *
+   * Only the wait for the claim and the logic are interruptible. A claim that has reached this consumer is
+   * therefore always held and settled, even when an interrupt arrives with it: the logic is interrupted at
+   * once and its messages come back. The settle runs on every exit, so a consumer stopped mid-batch still
+   * says what became of it and stops renewing it.
+   *
    * @param logic what to run on the messages
    * @tparam E2 what the logic aborts with, alongside this client's own failures
    * @return noop once the batch is settled, or once the wait elapsed with nothing to take; aborts with
@@ -42,31 +47,11 @@ final private[queue] class ManagedBatch(
     ZIO.uninterruptibleMask: restore =>
       restore(client.dequeue(conf.queue, conf.patience, conf.size)).flatMap {
         case Dequeued.Idle           => ZIO.unit
-        case Dequeued.Claimed(claim) => holding(claim, logic, restore)
+        case Dequeued.Claimed(claim) =>
+          val messages = claim.messages.toList
+          heartbeat.hold(claim) *> restore(logic(messages))
+            .onExit(exit => settle(claim, worked(exit, messages), backoff(exit)))
       }
-
-  /**
-   * Hold a claim for as long as its messages are being worked.
-   *
-   * Only the wait for the claim and the logic are interruptible. A claim that has reached this consumer is
-   * therefore always held and settled, even when an interrupt arrives with it: the logic is interrupted at
-   * once and its messages come back. The settle runs on every exit, so a consumer stopped mid-batch still
-   * says what became of it and stops renewing it.
-   *
-   * @param claim what was granted
-   * @param logic what to run on the messages
-   * @param restore [[consume]]'s restorer, the only way back to interruptible from here
-   * @tparam E2 what the logic aborts with
-   * @return noop once the batch is settled
-   */
-  private def holding[E2 >: ServiceError](
-    claim: Claim,
-    logic: List[Message.Incoming] => IO[E2, Unit],
-    restore: ZIO.InterruptibilityRestorer,
-  ): IO[E2, Unit] =
-    val messages = claim.messages.toList
-    heartbeat.hold(claim) *> restore(logic(messages))
-      .onExit(exit => settle(claim, worked(exit, messages), backoff(exit)))
 
   /**
    * What became of the messages the logic was given.
