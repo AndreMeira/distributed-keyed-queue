@@ -12,7 +12,8 @@ import java.time.Instant
 
 /**
  * What the beat promises about its own fiber: one runs while claims are held, and a claim taken as the
- * last one is settled joins it rather than starting a second.
+ * last one is settled joins it rather than starting a second. And about its registry: what is still held
+ * when its scope closes is handed back.
  */
 object HeartbeatSpec extends ZIOSpecDefault:
 
@@ -34,8 +35,11 @@ object HeartbeatSpec extends ZIOSpecDefault:
   private def claim(receipt: String, of: String): Claim =
     Claim(Receipt(receipt), NonEmptyChunk(message(of)), Instant.EPOCH, lease, backlogDepth = 0)
 
-  /** A client that records every beat and answers each on the same lease. */
-  final private class Counting(val beats: Queue[Chunk[Receipt]]) extends QueueClient:
+  /** A client that records every beat and every settle, and answers each beat on the same lease. */
+  final private class Counting(
+    val beats: Queue[Chunk[Receipt]],
+    val settles: Queue[(Receipt, Chunk[Verdict], Duration)],
+  ) extends QueueClient:
 
     override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
       ZIO.succeed(Enqueued(0L))
@@ -48,13 +52,16 @@ object HeartbeatSpec extends ZIOSpecDefault:
       verdicts: Chunk[Verdict],
       retryAfter: Duration,
     ): IO[ServiceError, Settled] =
-      ZIO.succeed(Settled.Applied)
+      settles.offer((receipt, verdicts, retryAfter)).as(Settled.Applied)
 
     override def heartbeat(receipts: Chunk[Receipt]): IO[ServiceError, Renewed] =
       beats.offer(receipts).as(Renewed(Chunk.empty, Instant.EPOCH, lease))
 
   private def counting: UIO[Counting] =
-    Queue.unbounded[Chunk[Receipt]].map(Counting(_))
+    for
+      beats   <- Queue.unbounded[Chunk[Receipt]]
+      settles <- Queue.unbounded[(Receipt, Chunk[Verdict], Duration)]
+    yield Counting(beats, settles)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("Heartbeat")(
     test("a claim taken as the last one is settled joins the beat rather than starting a second") {
@@ -72,5 +79,18 @@ object HeartbeatSpec extends ZIOSpecDefault:
         _         <- ZIO.sleep(window)
         sent      <- client.beats.size
       yield assertTrue(first.isDefined, sent <= alone + 2)
-    }
+    },
+    test("a claim still held when the scope closes is handed back, every message failed, with no wait") {
+      for
+        client <- counting
+        _      <- ZIO.scoped:
+                    Heartbeat
+                      .make(client)
+                      .flatMap: heartbeat =>
+                        heartbeat.hold(claim("r1", "m1")) *>
+                          heartbeat.hold(claim("r2", "m2")) *>
+                          heartbeat.release(Receipt("r2"))
+        sent   <- client.settles.takeAll
+      yield assertTrue(sent == Chunk((Receipt("r1"), Chunk(Verdict(MessageId("m1"), Verdict.Outcome.Failed)), Duration.Zero)))
+    },
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(30.seconds)
