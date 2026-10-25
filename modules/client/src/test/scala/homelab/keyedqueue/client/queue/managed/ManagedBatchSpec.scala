@@ -50,6 +50,7 @@ object ManagedBatchSpec extends ZIOSpecDefault:
     answers: Ref[Chunk[Dequeued]],
     val settled: Ref[Chunk[Verdict]],
     val asked: Ref[Chunk[Int]],
+    val waits: Ref[Chunk[Duration]],
   ) extends QueueClient:
 
     override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
@@ -66,7 +67,7 @@ object ManagedBatchSpec extends ZIOSpecDefault:
       verdicts: Chunk[Verdict],
       retryAfter: Duration,
     ): IO[ServiceError, Settled] =
-      settled.update(_ ++ verdicts).as(Settled.Applied)
+      settled.update(_ ++ verdicts) *> waits.update(_ :+ retryAfter).as(Settled.Applied)
 
     override def heartbeat(receipts: Chunk[Receipt]): IO[ServiceError, Renewed] =
       ZIO.succeed(Renewed(Chunk.empty, Instant.EPOCH, lease))
@@ -76,11 +77,12 @@ object ManagedBatchSpec extends ZIOSpecDefault:
       answers <- Ref.make(Chunk.fromIterable(scripted))
       settled <- Ref.make(Chunk.empty[Verdict])
       asked   <- Ref.make(Chunk.empty[Int])
-    yield Fake(answers, settled, asked)
+      waits   <- Ref.make(Chunk.empty[Duration])
+    yield Fake(answers, settled, asked, waits)
 
-  private def batchOver(client: QueueClient, size: Int = 3) =
+  private def batchOver(client: QueueClient, size: Int = 3, retryAfter: Duration = Duration.Zero) =
     Provider(client).batched[Order](
-      Provider.BatchConsumerConfig("orders", size, patience = 1.second)
+      Provider.BatchConsumerConfig("orders", size, patience = 1.second, retryAfter = retryAfter)
     )
 
   private def verdicts(of: Chunk[Verdict]): Map[String, Verdict.Outcome] =
@@ -112,6 +114,29 @@ object ManagedBatchSpec extends ZIOSpecDefault:
         verdicts(given_).values.toSet == Set(Verdict.Outcome.Failed),
         given_.size == 2,
       )
+    },
+    test("a batch whose logic was interrupted comes back at once, whatever the configured backoff") {
+      for
+        client   <- fake(claim(readable("m1"), readable("m2")))
+        batch    <- batchOver(client, retryAfter = 5.seconds)
+        started  <- Promise.make[Nothing, Unit]
+        consumer <- batch.consume(_ => started.succeed(()) *> ZIO.never).fork
+        _        <- started.await
+        _        <- consumer.interrupt
+        given_   <- client.settled.get
+        waits    <- client.waits.get
+      yield assertTrue(
+        verdicts(given_) == Map("m1" -> Verdict.Outcome.Failed, "m2" -> Verdict.Outcome.Failed),
+        waits == Chunk(Duration.Zero),
+      )
+    },
+    test("a batch whose logic failed waits out the configured backoff") {
+      for
+        client <- fake(claim(readable("m1")))
+        batch  <- batchOver(client, retryAfter = 5.seconds)
+        _      <- batch.consume(_ => ZIO.fail(ServiceError.Rejected("mine"))).ignore
+        waits  <- client.waits.get
+      yield assertTrue(waits == Chunk(5.seconds))
     },
     test("one message nobody can read fails the batch, and every message of it comes back") {
       // Reading is the caller's now, so a message that will not read fails the reading — which is a

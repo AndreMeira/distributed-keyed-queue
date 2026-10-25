@@ -39,30 +39,34 @@ final private[queue] class ManagedBatch(
    *         what the logic aborted with, or with a [[ServiceError]] when a call does not land
    */
   override def consume[E2 >: ServiceError](logic: List[Message.Incoming] => IO[E2, Unit]): IO[E2, Unit] =
-    client.dequeue(conf.queue, conf.patience, conf.size).flatMap {
-      case Dequeued.Idle           => ZIO.unit
-      case Dequeued.Claimed(claim) => holding(claim, logic)
-    }
+    ZIO.uninterruptibleMask: restore =>
+      restore(client.dequeue(conf.queue, conf.patience, conf.size)).flatMap {
+        case Dequeued.Idle           => ZIO.unit
+        case Dequeued.Claimed(claim) => holding(claim, logic, restore)
+      }
 
   /**
    * Hold a claim for as long as its messages are being worked.
    *
-   * Taking the claim and settling it are both outside the caller's interruption, and the settle runs on
-   * every exit, so a consumer stopped mid-batch still says what became of it and stops renewing it.
+   * Only the wait for the claim and the logic are interruptible. A claim that has reached this consumer is
+   * therefore always held and settled, even when an interrupt arrives with it: the logic is interrupted at
+   * once and its messages come back. The settle runs on every exit, so a consumer stopped mid-batch still
+   * says what became of it and stops renewing it.
    *
    * @param claim what was granted
    * @param logic what to run on the messages
+   * @param restore [[consume]]'s restorer, the only way back to interruptible from here
    * @tparam E2 what the logic aborts with
    * @return noop once the batch is settled
    */
   private def holding[E2 >: ServiceError](
     claim: Claim,
     logic: List[Message.Incoming] => IO[E2, Unit],
+    restore: ZIO.InterruptibilityRestorer,
   ): IO[E2, Unit] =
-    ZIO.uninterruptibleMask: restore =>
-      val messages = claim.messages.toList
-      heartbeat.hold(claim) *> restore(logic(messages))
-        .onExit(exit => settle(claim, worked(exit, messages)))
+    val messages = claim.messages.toList
+    heartbeat.hold(claim) *> restore(logic(messages))
+      .onExit(exit => settle(claim, worked(exit, messages), backoff(exit)))
 
   /**
    * What became of the messages the logic was given.
@@ -89,6 +93,18 @@ final private[queue] class ManagedBatch(
     else Verdict.Outcome.Failed
 
   /**
+   * How long the key waits before what the logic did not finish is delivered again.
+   *
+   * Work that was interrupted did not fail, it was stopped, so it is handed back at once. Only a logic that
+   * ended on its own without answering waits out the configured backoff.
+   *
+   * @param exit how the logic ended
+   * @return no wait when it was interrupted, else the configured backoff
+   */
+  private def backoff(exit: Exit[?, Unit]): Duration =
+    if exit.isInterrupted then Duration.Zero else conf.retryAfter
+
+  /**
    * Report every outcome at once and stop holding the claim.
    *
    * One call, because the wire states outcomes per message and a claim ends when nothing it owns is left
@@ -97,7 +113,8 @@ final private[queue] class ManagedBatch(
    *
    * @param claim what owns the messages
    * @param verdicts what became of each of them
+   * @param retryAfter how long the key waits before anything failed is delivered again
    * @return noop once they have been reported, or once reporting failed
    */
-  private def settle(claim: Claim, verdicts: List[Verdict]): UIO[Unit] =
-    client.settle(claim.receipt, verdicts.toChunk, conf.retryAfter).ignore *> heartbeat.release(claim.receipt)
+  private def settle(claim: Claim, verdicts: List[Verdict], retryAfter: Duration): UIO[Unit] =
+    client.settle(claim.receipt, verdicts.toChunk, retryAfter).ignore *> heartbeat.release(claim.receipt)

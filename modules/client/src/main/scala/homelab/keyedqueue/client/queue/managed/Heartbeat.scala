@@ -3,7 +3,7 @@ package homelab.keyedqueue.client.queue.managed
 
 import homelab.keyedqueue.client.queue.QueueClient
 import homelab.keyedqueue.client.queue.managed.Heartbeat.State
-import homelab.keyedqueue.client.queue.model.{ Claim, Receipt, Renewed }
+import homelab.keyedqueue.client.queue.model.{ Claim, Receipt, Renewed, Verdict }
 import zio.*
 
 
@@ -14,6 +14,10 @@ import zio.*
  * claim. It runs only while something is held: the hold that finds the registry empty starts it, and it
  * stops once the last claim is settled. The cadence is half the lease the service granted, restated by
  * every claim and every renewal, so a ceiling that moves under a running consumer is followed.
+ *
+ * A claim still held when the scope closes is handed back, every message of it failed with no wait, so it
+ * is delivered again at once rather than when its lease runs out. The scope must therefore outlive the
+ * consumers working those claims, or a key would be handed on while its logic still runs.
  *
  * @param client what the renewals are sent through
  * @param scope what the beat is forked into, whose close ends it
@@ -51,6 +55,32 @@ final private[queue] class Heartbeat(client: QueueClient, scope: Scope, state: R
     case State.Beating(held, interval) => State.Beating(held - receipt, interval)
 
   /**
+   * Hand back every claim still held, and stop renewing.
+   *
+   * Each is settled failed with no wait, in parallel, through calls bounded by the client's own deadline.
+   * A settle that does not land leaves that claim to lapse on its lease.
+   *
+   * @return noop once every settle has been sent, or has failed
+   */
+  private def handBackAll: UIO[Unit] =
+    state
+      .getAndSet(State.Idle)
+      .flatMap:
+        case State.Idle             => ZIO.unit
+        case State.Beating(held, _) => ZIO.foreachParDiscard(held.values)(handBack)
+
+  /**
+   * Settle a claim nobody will finish: every message failed, delivered again at once.
+   *
+   * @param claim what is still held
+   * @return noop once the settle has been sent, or has failed
+   */
+  private def handBack(claim: Claim): UIO[Unit] =
+    client
+      .settle(claim.receipt, claim.messages.map(message => Verdict(message.id, Verdict.Outcome.Failed)).toChunk, Duration.Zero)
+      .ignore
+
+  /**
    * Renew what is held, for as long as anything is.
    *
    * @return noop once the last claim has been settled
@@ -69,8 +99,8 @@ final private[queue] class Heartbeat(client: QueueClient, scope: Scope, state: R
    * @return whether there was no beat, so this claim is what starts one
    */
   private def register(claim: Claim): UIO[Boolean] = state.modify:
-    case State.Idle             => true  -> State.Beating(Set(claim.receipt), claim.leaseTtl.dividedBy(2))
-    case State.Beating(held, _) => false -> State.Beating(held + claim.receipt, claim.leaseTtl.dividedBy(2))
+    case State.Idle             => true  -> State.Beating(Map(claim.receipt -> claim), claim.leaseTtl.dividedBy(2))
+    case State.Beating(held, _) => false -> State.Beating(held + (claim.receipt -> claim), claim.leaseTtl.dividedBy(2))
 
   /**
    * How long until the next beat, taking the registry back to idle when it holds nothing.
@@ -106,7 +136,7 @@ final private[queue] class Heartbeat(client: QueueClient, scope: Scope, state: R
    */
   private def outstanding: UIO[Set[Receipt]] = state.get.map:
     case State.Idle             => Set.empty
-    case State.Beating(held, _) => held
+    case State.Beating(held, _) => held.keySet
 
   /**
    * Send one beat for what is held.
@@ -141,19 +171,22 @@ object Heartbeat:
     /**
      * Claims are held, and a fiber is renewing them.
      *
-     * @param held the receipts outstanding, and nothing about what they own
+     * @param held the claims outstanding, by receipt
      * @param interval how long to wait before the next beat
      */
-    case Beating(held: Set[Receipt], interval: Duration)
+    case Beating(held: Map[Receipt, Claim], interval: Duration)
 
   /**
    * A beat that holds nothing and is not yet running.
    *
-   * @param client what the renewals are sent through
-   * @return the heartbeat, whose fiber lives in the calling scope from the first claim it is given
+   * @param client what the renewals and hand-backs are sent through
+   * @return the heartbeat, whose fiber lives in the calling scope from the first claim it is given, and
+   *         which hands back whatever it still holds when that scope closes
    */
   def make(client: QueueClient): URIO[Scope, Heartbeat] =
     for
-      scope <- ZIO.scope
-      state <- Ref.make[State](State.Idle)
-    yield Heartbeat(client, scope, state)
+      scope    <- ZIO.scope
+      state    <- Ref.make[State](State.Idle)
+      heartbeat = Heartbeat(client, scope, state)
+      _        <- ZIO.addFinalizer(heartbeat.handBackAll)
+    yield heartbeat
