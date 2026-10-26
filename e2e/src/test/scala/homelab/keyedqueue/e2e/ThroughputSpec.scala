@@ -72,9 +72,9 @@ object ThroughputSpec extends ZIOSpecDefault:
         results <- ZIO.foreach(shapes): (keys, consumers) =>
                      ZIO
                        .foreach(1 to rounds)(round => once(dkq, s"sweep-$keys-$consumers-$round", keys, consumers))
-                       .map(rates => (keys, consumers, median(rates)))
+                       .map(rates => (keys, consumers, median(rates.map(_.overall)), median(rates.map(_.draining))))
         _       <- report(results)
-      yield assertTrue(results.forall((_, _, rate) => rate > 0.0))
+      yield assertTrue(results.forall((_, _, overall, draining) => overall > 0.0 && draining > 0.0))
     },
     test("how long a message waits when every consumer is already idle") {
       // The other half of the picture, and the half the sweep cannot see. There, consumers claim work that
@@ -89,38 +89,38 @@ object ThroughputSpec extends ZIOSpecDefault:
       val gap       = 200.millis
       val patience  = 15.seconds
       for
-        dkq       <- ZIO.service[Deployment]
-        queue      = dkq.queue("idle")
-        seen      <- Ref.make(Chunk.empty[Consumer.Handled])
+        dkq      <- ZIO.service[Deployment]
+        queue     = dkq.queue("idle")
+        seen     <- Ref.make(Chunk.empty[Consumer.Handled])
         // Parked first, and given a moment to actually be waiting, so every message meets an idle consumer
         // rather than one that has not arrived yet.
-        draining  <- ZIO.foreachParDiscard(0 until consumers)(index => Consumer.drain(dkq(index), queue, patience, Duration.Zero, seen)).fork
-        _         <- ZIO.sleep(1.second)
+        draining <- ZIO.foreachParDiscard(0 until consumers)(index => Consumer.drain(dkq(index), queue, patience, Duration.Zero, seen)).fork
+        _        <- ZIO.sleep(1.second)
         // One at a time, each carrying the moment it was sent: the body is the measurement.
-        sends     <- Ref.make(Chunk.empty[Long])
-        _         <- ZIO.foreachDiscard(0 until messages): index =>
-                       Clock.instant.flatMap: now =>
-                         dkq(index)
-                           .enqueue(queue, s"k$index", now.toEpochMilli.toString)
-                           .timed
-                           // The enqueue round trip is inside every latency below, so it is measured too:
-                           // what is left after subtracting it is what the wake path and the claim cost.
-                           .flatMap((took, _) => sends.update(_ :+ took.toMillis))
-                       *> ZIO.sleep(gap)
-        _         <- draining.join
-        handled   <- seen.get
-        latencies  = handled.map(one => one.claimedAt.toEpochMilli - one.body.toLong).sorted
-        enqueues  <- sends.get.map(_.sorted)
-        _         <- Console.printLine(summary("wake latency", latencies))
+        sends    <- Ref.make(Chunk.empty[Long])
+        _        <- ZIO.foreachDiscard(0 until messages): index =>
+                      Clock.instant.flatMap: now =>
+                        dkq(index)
+                          .enqueue(queue, s"k$index", now.toEpochMilli.toString)
+                          .timed
+                          // The enqueue round trip is inside every latency below, so it is measured too:
+                          // what is left after subtracting it is what the wake path and the claim cost.
+                          .flatMap((took, _) => sends.update(_ :+ took.toMillis))
+                      *> ZIO.sleep(gap)
+        _        <- draining.join
+        handled  <- seen.get
+        latencies = handled.map(one => one.claimedAt.toEpochMilli - one.body.toLong).sorted
+        enqueues <- sends.get.map(_.sorted)
+        _        <- Console.printLine(summary("wake latency", latencies))
         // Printed beside it because it is *inside* it: what is left after subtracting this is what the
         // wake path and the claim actually cost.
-        _         <- Console.printLine(summary("enqueue round trip", enqueues))
+        _        <- Console.printLine(summary("enqueue round trip", enqueues))
       yield assertTrue(
-        handled.size == messages,                                  // a lost wake would show up as a lost message
-        handled.map(_.body).distinct.size == messages,             // and a double wake as a duplicate
+        handled.size == messages,                      // a lost wake would show up as a lost message
+        handled.map(_.body).distinct.size == messages, // and a double wake as a duplicate
         latencies.lift(latencies.size * 95 / 100).exists(_ < 2000), // p95 well inside the listener's block
       )
-    }
+    },
   ).provideSomeShared[Scope](Deployment.layer)
     @@ TestAspect.withLiveClock
     @@ TestAspect.sequential
@@ -128,7 +128,8 @@ object ThroughputSpec extends ZIOSpecDefault:
     @@ TestAspect.ifEnvSet("DKQ_THROUGHPUT")
 
   /**
-   * One shape, once: fill a fresh queue, drain it with `consumers` consumers, and report the rate.
+   * One shape, once: fill a fresh queue, drain it with `consumers` consumers, and report two rates — over
+   * the whole run, and over the drain alone, timed from the moment the queue is full.
    *
    * The queue name carries the round so each run starts empty — a shape that inherited another's leftovers
    * would measure the wrong thing.
@@ -137,9 +138,9 @@ object ThroughputSpec extends ZIOSpecDefault:
    * @param name what to call this run's queue
    * @param keys how many keys to spread the messages over
    * @param consumers how many consumers to drain with, round-robin across both instances
-   * @return messages per second, measured to the last message handled
+   * @return messages per second, both measured to the last message handled
    */
-  private def once(dkq: Deployment, name: String, keys: Int, consumers: Int): Task[Double] =
+  private def once(dkq: Deployment, name: String, keys: Int, consumers: Int): Task[Rates] =
     val partitions = Chunk.fromIterable(0 until keys).map(index => s"k$index")
     val expected   = keys * perKey
     for
@@ -147,14 +148,25 @@ object ThroughputSpec extends ZIOSpecDefault:
       started <- Clock.instant
       _       <- ZIO.foreachParDiscard(partitions.zipWithIndex): (key, offset) =>
                    ZIO.foreachDiscard(0 until perKey)(index => dkq(index + offset).enqueue(queue, key, index.toString))
+      filled  <- Clock.instant
       seen    <- Ref.make(Chunk.empty[Consumer.Handled])
       _       <- ZIO.foreachParDiscard(0 until consumers)(index => Consumer.drain(dkq(index), queue, 3.seconds, Duration.Zero, seen))
       handled <- seen.get
       // To the last message handled, not to when the consumers gave up: each ends by waiting out its
       // patience on an empty queue, and counting that would report the patience instead of the rate.
       finished = handled.map(_.releasedAt.toEpochMilli).maxOption.getOrElse(started.toEpochMilli)
-      elapsed  = math.max(finished - started.toEpochMilli, 1)
-    yield expected * 1000.0 / elapsed
+      overall  = math.max(finished - started.toEpochMilli, 1)
+      draining = math.max(finished - filled.toEpochMilli, 1)
+    yield Rates(overall = expected * 1000.0 / overall, draining = expected * 1000.0 / draining)
+
+  /**
+   * What one run of a shape measured.
+   *
+   * @param overall messages per second over the whole run: filling the queue, then draining it
+   * @param draining messages per second over the drain alone — a dequeue and a settle per message — timed from
+   *                 the moment the queue is full
+   */
+  final private case class Rates(overall: Double, draining: Double)
 
   /**
    * The middle run, so one slow round does not become the number.
@@ -178,12 +190,13 @@ object ThroughputSpec extends ZIOSpecDefault:
       f"$label over ${timings.size} messages: median ${at(50)}ms, p95 ${at(95)}ms, max ${timings.last}ms"
 
   /**
-   * Print the sweep as a table, so two runs can be diffed by eye.
+   * Print the sweep as a table, so two runs can be diffed by eye: the rate over the whole run, and over the
+   * drain alone.
    *
-   * @param results one row per shape
+   * @param results one row per shape: keys, consumers, the overall rate and the drain rate
    * @return noop
    */
-  private def report(results: Seq[(Int, Int, Double)]): UIO[Unit] =
-    val header = f"${"keys"}%6s ${"consumers"}%10s ${"msg/s"}%10s"
-    val rows   = results.map((keys, consumers, rate) => f"$keys%6d $consumers%10d $rate%10.0f")
+  private def report(results: Seq[(Int, Int, Double, Double)]): UIO[Unit] =
+    val header = f"${"keys"}%6s ${"consumers"}%10s ${"msg/s"}%10s ${"drain msg/s"}%12s"
+    val rows   = results.map((keys, consumers, overall, draining) => f"$keys%6d $consumers%10d $overall%10.0f $draining%12.0f")
     Console.printLine((header +: rows).mkString("\n")).orDie
