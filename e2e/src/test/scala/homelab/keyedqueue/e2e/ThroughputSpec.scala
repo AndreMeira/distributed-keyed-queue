@@ -22,7 +22,7 @@ import zio.test.*
 object ThroughputSpec extends ZIOSpecDefault:
 
   /** keys × consumers, chosen to show which of the two binds — see docs/research/throughput-first-numbers.md. */
-  private val shapes = Chunk((8, 8), (16, 16), (64, 8), (64, 16), (64, 32))
+  private val shapes = Chunk((8, 8), (16, 16), (64, 8), (64, 16), (64, 32), (128, 64), (256, 128))
 
   /** Messages per key. Enough that startup is not what is being measured. */
   private val perKey = 15
@@ -72,9 +72,18 @@ object ThroughputSpec extends ZIOSpecDefault:
         results <- ZIO.foreach(shapes): (keys, consumers) =>
                      ZIO
                        .foreach(1 to rounds)(round => once(dkq, s"sweep-$keys-$consumers-$round", keys, consumers))
-                       .map(rates => Row(keys, consumers, median(rates.map(_.filling)), median(rates.map(_.draining)), median(rates.map(_.overall))))
+                       .map(rates =>
+                         Row(
+                           keys,
+                           consumers,
+                           median(rates.map(_.filling)),
+                           median(rates.map(_.draining)),
+                           median(rates.map(_.dequeuing)),
+                           median(rates.map(_.overall)),
+                         )
+                       )
         _       <- report(results)
-      yield assertTrue(results.forall(row => row.filling > 0.0 && row.draining > 0.0 && row.overall > 0.0))
+      yield assertTrue(results.forall(row => row.filling > 0.0 && row.draining > 0.0 && row.dequeuing > 0.0 && row.overall > 0.0))
     },
     test("how long a message waits when every consumer is already idle") {
       // The other half of the picture, and the half the sweep cannot see. There, consumers claim work that
@@ -128,8 +137,13 @@ object ThroughputSpec extends ZIOSpecDefault:
     @@ TestAspect.ifEnvSet("DKQ_THROUGHPUT")
 
   /**
-   * One shape, once: fill a fresh queue, drain it with `consumers` consumers, and report three rates — the
-   * fill alone, the drain alone timed from the moment the queue is full, and the whole run.
+   * One shape, once: fill a fresh queue, drain it with `consumers` consumers, and report four rates — the
+   * fill alone, the drain alone timed from the moment the queue is full, the dequeues alone, and the whole
+   * run.
+   *
+   * The dequeue rate counts only the time consumers spent inside the dequeue calls that delivered a message:
+   * the summed duration of those calls, divided across the consumers, is how long one would take if all it
+   * did was dequeue.
    *
    * The queue name carries the round so each run starts empty — a shape that inherited another's leftovers
    * would measure the wrong thing.
@@ -138,7 +152,7 @@ object ThroughputSpec extends ZIOSpecDefault:
    * @param name what to call this run's queue
    * @param keys how many keys to spread the messages over
    * @param consumers how many consumers to drain with, round-robin across both instances
-   * @return messages per second for the fill, the drain and the whole run
+   * @return messages per second for the fill, the drain, the dequeues and the whole run
    */
   private def once(dkq: Deployment, name: String, keys: Int, consumers: Int): Task[Rates] =
     val partitions = Chunk.fromIterable(0 until keys).map(index => s"k$index")
@@ -158,9 +172,11 @@ object ThroughputSpec extends ZIOSpecDefault:
       filling  = math.max(filled.toEpochMilli - started.toEpochMilli, 1)
       draining = math.max(finished - filled.toEpochMilli, 1)
       overall  = math.max(finished - started.toEpochMilli, 1)
+      dequeues = math.max(handled.map(one => one.claimedAt.toEpochMilli - one.askedAt.toEpochMilli).sum, 1)
     yield Rates(
       filling = expected * 1000.0 / filling,
       draining = expected * 1000.0 / draining,
+      dequeuing = expected * consumers * 1000.0 / dequeues,
       overall = expected * 1000.0 / overall,
     )
 
@@ -170,9 +186,11 @@ object ThroughputSpec extends ZIOSpecDefault:
    * @param filling messages per second over the fill alone: every enqueue, until the queue is full
    * @param draining messages per second over the drain alone — a dequeue and a settle per message — timed from
    *                 the moment the queue is full
+   * @param dequeuing messages per second over the time consumers spent inside the dequeues that delivered
+   *                  them
    * @param overall messages per second over the whole run: filling the queue, then draining it
    */
-  final private case class Rates(filling: Double, draining: Double, overall: Double)
+  final private case class Rates(filling: Double, draining: Double, dequeuing: Double, overall: Double)
 
   /**
    * One line of the sweep's table: a shape, and the median of each rate over its runs.
@@ -181,9 +199,17 @@ object ThroughputSpec extends ZIOSpecDefault:
    * @param consumers how many consumers drained them
    * @param filling the fill rate, in messages per second
    * @param draining the drain rate, in messages per second
+   * @param dequeuing the dequeue rate, in messages per second
    * @param overall the rate over the whole run, in messages per second
    */
-  final private case class Row(keys: Int, consumers: Int, filling: Double, draining: Double, overall: Double)
+  final private case class Row(
+    keys: Int,
+    consumers: Int,
+    filling: Double,
+    draining: Double,
+    dequeuing: Double,
+    overall: Double,
+  )
 
   /**
    * The middle run, so one slow round does not become the number.
@@ -207,12 +233,16 @@ object ThroughputSpec extends ZIOSpecDefault:
       f"$label over ${timings.size} messages: median ${at(50)}ms, p95 ${at(95)}ms, max ${timings.last}ms"
 
   /**
-   * Print the sweep as a table, so two runs can be diffed by eye: the fill, the drain, and the whole run.
+   * Print the sweep as a table, so two runs can be diffed by eye: the fill, the drain, the dequeues, and the
+   * whole run.
    *
    * @param results one row per shape
    * @return noop
    */
   private def report(results: Seq[Row]): UIO[Unit] =
-    val header = f"${"keys"}%6s ${"consumers"}%10s ${"fill msg/s"}%11s ${"drain msg/s"}%12s ${"overall msg/s"}%14s"
-    val rows   = results.map(row => f"${row.keys}%6d ${row.consumers}%10d ${row.filling}%11.0f ${row.draining}%12.0f ${row.overall}%14.0f")
+    val header =
+      f"${"keys"}%6s ${"consumers"}%10s ${"fill msg/s"}%11s ${"drain msg/s"}%12s ${"dequeue msg/s"}%14s ${"overall msg/s"}%14s"
+    val rows   = results.map(row =>
+      f"${row.keys}%6d ${row.consumers}%10d ${row.filling}%11.0f ${row.draining}%12.0f ${row.dequeuing}%14.0f ${row.overall}%14.0f"
+    )
     Console.printLine((header +: rows).mkString("\n")).orDie
