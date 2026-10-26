@@ -1,8 +1,8 @@
 ---
-title: "Connections and threads: why a synchronous Redis client is the right call here"
+title: "Connections and threads: an asynchronous shared connection, synchronous partition ones"
 type: architecture
 status: current
-updated: 2026-09-05
+updated: 2026-10-26
 tags: [redis, lettuce, connections, threads, zio, latency, measurement]
 ---
 
@@ -10,10 +10,14 @@ tags: [redis, lettuce, connections, threads, zio, latency, measurement]
 
 One shared connection plus one per partition — two in all on a single server, which uses a single
 partition; seventeen on a cluster, which uses sixteen. A blocked read occupies its connection whole, so the
-listener cannot share. All of them are
-opened by `Connection.make` at startup, so the count is fixed before anything serves. A synchronous client,
-and `ZIO.attemptBlocking` around every call. All of it looks like things to apologise for, and this page is
-the measurement that says they are not.
+listener cannot share. All of them are opened by `Connection.make` at startup, so the count is fixed before
+anything serves.
+
+The shared connection is used through Lettuce's asynchronous API: every call answers a future, awaited with
+`ZIO.fromCompletionStage`, so a call in flight parks a fiber rather than a thread. The partition connections
+keep the synchronous API under `ZIO.attemptBlocking`, because their `XREAD … BLOCK` occupies the connection
+whichever API issues it. The shared connection was synchronous too until 2026-10-26; the measurements below
+are from that time, and still describe what each part costs.
 
 ## The model
 
@@ -60,7 +64,7 @@ Throughput confirms it is transport rather than work: **~4,000 msg/s at ~7ms lat
 requests in flight**, not seven milliseconds of computation each. Seven milliseconds of CPU per request
 would need dozens of busy cores to reach that rate.
 
-## So what does the synchronous client cost?
+## What the synchronous client cost, and why the shared connection left it
 
 Not CPU. **A parked thread per in-flight Redis call** — the thread waits out the round trip rather than
 doing anything. The question is therefore how many calls are in flight at once, and the answer is bounded by
@@ -74,20 +78,26 @@ concurrency, not by consumers:
 
 Lettuce's synchronous API is implemented over its asynchronous one — it issues the command and awaits the
 future — so the Netty-to-caller handoff exists either way. Going asynchronous removes the parked thread, not
-the handoff.
+the handoff: the ceiling it lifts is the one at hundreds or thousands of concurrent Redis operations per
+instance, a thread each. That is the change that was made, on the shared connection only.
 
-## When to revisit
+## What the asynchronous shared connection keeps from the synchronous one
 
-Switch to `RedisAsyncCommands` with `ZIO.fromCompletionStage` when either of these becomes true, and not
-before:
+Two properties came for free with `attemptBlocking` and are kept deliberately:
 
-- **Hundreds or thousands of concurrent Redis operations per instance.** A thread each is about a megabyte
-  of stack plus scheduler pressure; that is the real ceiling of the current approach.
-- **A measurement showing server-side cost matters.** Today's numbers cannot show it: the Docker Desktop
-  boundary hides everything smaller than a millisecond. Run the load generator *inside* the compose network
-  first — whatever remains after that boundary is gone is the honest server cost.
+- **A call that has been sent is waited for.** Interrupting a fiber blocked in `attemptBlocking` does not
+  interrupt the thread, so the fiber always learned what its script did. A future can be abandoned instead,
+  and then Redis would still run the script — a claim or a lock grant made for a fiber that has left. So
+  `LuaScript.runScript` awaits the reply uninterruptibly: the wait parks the fiber, not a thread, and the
+  caller still sees every script it sent.
+- **A server that stops answering fails the call.** The connection's command timeout bounds the
+  asynchronous API too: Lettuce's default client options (`TimeoutOptions.enabled()`) expire a command after
+  the connection's own timeout, which `Connection.connect` sets. Without that, an uninterruptible wait on a
+  frozen server would never end.
 
-The listener would keep its own connection regardless. Redis serves one connection's commands in order, so a
+`ConnectionSpec` pins both against a server frozen with `CLIENT PAUSE`.
+
+The listener keeps its own synchronous connections. Redis serves one connection's commands in order, so a
 blocking `XREAD` occupies the connection whether or not it occupies a thread.
 
 ## Where the numbers came from

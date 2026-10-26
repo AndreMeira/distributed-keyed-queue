@@ -24,8 +24,8 @@ What is specific to this repo:
     Redis, and what each structure is for.
   - [`architecture/redis-cluster.md`](architecture/redis-cluster.md) — the key layout was built for cluster
     mode from the start; the page is as much about what is *not* proven as what is.
-  - [`architecture/redis-connections.md`](architecture/redis-connections.md) — two connections, a
-    synchronous client, and the measurements that say that is the right call.
+  - [`architecture/redis-connections.md`](architecture/redis-connections.md) — a shared connection used
+    asynchronously, one synchronous connection per partition for blocking reads, and what each costs.
   - [`architecture/observability.md`](architecture/observability.md) — what the service reports about
     itself, and why `dequeue`'s latency is not comparable to the rest.
   - [`architecture/end-to-end-testing.md`](architecture/end-to-end-testing.md) — the test harness, settled

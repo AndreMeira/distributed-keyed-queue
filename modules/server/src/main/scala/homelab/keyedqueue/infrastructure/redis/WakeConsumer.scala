@@ -139,7 +139,7 @@ final class WakeConsumer(
     offset: StreamOffset[String],
   ): IO[RedisFailure, List[StreamMessage[String, Array[Byte]]]] =
     connection.provideBlocking(partition):
-      Connection.use: commands =>
+      Connection.useBlocking: commands =>
         ZIO
           .attemptBlocking:
             commands.xread(XReadArgs.Builder.block(block.toMillis).count(WakeConsumer.count), offset)
@@ -160,7 +160,7 @@ final class WakeConsumer(
   ): ZIO[Connection.Commands, RedisFailure, (RedisKey, WakeConsumer.EntryId)] =
     Connection.use: commands =>
       ZIO
-        .attemptBlocking(commands.xrevrange(stream, Range.unbounded[String](), Limit.create(0, 1)))
+        .fromCompletionStage(commands.xrevrange(stream, Range.unbounded[String](), Limit.create(0, 1)))
         .mapBoth(LuaScript.failure, reply => stream -> WakeConsumer.EntryId(Option(reply)))
 
 
