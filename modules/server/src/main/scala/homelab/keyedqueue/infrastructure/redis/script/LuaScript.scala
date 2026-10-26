@@ -4,7 +4,7 @@ package homelab.keyedqueue.infrastructure.redis.script
 import homelab.keyedqueue.infrastructure.redis.script.LuaScript.{ Input, Output }
 import homelab.keyedqueue.infrastructure.redis.{ Connection, RedisFailure }
 import io.lettuce.core.ScriptOutputType
-import io.lettuce.core.cluster.api.sync.RedisAdvancedClusterCommands
+import io.lettuce.core.cluster.api.async.RedisAdvancedClusterAsyncCommands
 import zio.*
 
 import java.nio.charset.StandardCharsets
@@ -51,14 +51,18 @@ case class LuaScript[-In: Input.Encoder, +Out: Output.Decoder](
   /**
    * The call itself: `EVALSHA` on the connection, with whatever the store failed with lifted.
    *
+   * The wait for the reply cannot be interrupted: once a script is sent Redis runs it whatever the caller
+   * does, so the caller always learns what it did — a claim or a grant is never made for a fiber that has
+   * already left. The wait parks the fiber, not a thread, and is bounded by the connection's command timeout.
+   *
    * @param input the keys and arguments, already encoded
-   * @return the raw reply; aborts with `Unavailable` when the call fails
+   * @return the raw reply; aborts with `Unavailable` when the call fails or times out
    */
   private def runScript(input: LuaScript.Input): ZIO[Connection.Commands, RedisFailure, LuaScript.Output] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking:
-          redis.evalsha[Any](sha, outputType, input.key, input.args*)
+        .fromCompletionStage(redis.evalsha[Any](sha, outputType, input.key, input.args*))
+        .uninterruptible
         .map(LuaScript.Output.apply)
         .mapError(LuaScript.failure)
 
@@ -492,8 +496,7 @@ object LuaScript:
   def register(path: String): ZIO[Connection.Commands, RedisFailure, Sha] =
     load(path).flatMap: text =>
       Connection.use: redis =>
-        ZIO
-          .attemptBlocking(loadEverywhere(redis, text.getBytes(StandardCharsets.UTF_8)))
+        loadEverywhere(redis, text.getBytes(StandardCharsets.UTF_8))
           .mapError(error => RedisFailure.Unavailable(s"loading a script failed: ${error.getMessage}"))
           .map(Sha.apply)
 
@@ -510,7 +513,7 @@ object LuaScript:
   /**
    * Register a script on every node that might be asked to run it.
    *
-   * `RedisAdvancedClusterCommands` overrides the cluster-wide script commands — `SCRIPT FLUSH`, `SCRIPT
+   * `RedisAdvancedClusterAsyncCommands` overrides the cluster-wide script commands — `SCRIPT FLUSH`, `SCRIPT
    * KILL` — but inherits `scriptLoad` unchanged, so on a cluster connection it still reaches a single node.
    * With no `NOSCRIPT` fallback anywhere (see [[QueueScripts]]), a call routed to any other node would simply
    * fail, which is why this reaches for the node-selection API instead.
@@ -521,13 +524,19 @@ object LuaScript:
    *
    * @param redis the connection to register on
    * @param script the script's bytes
-   * @return the digest the server gave it
+   * @return the digest the server gave it; aborts with what the call failed with, or when a cluster has no
+   *         upstream node to answer
    */
-  private def loadEverywhere(redis: Connection.Commands, script: Array[Byte]): String =
+  private def loadEverywhere(redis: Connection.Commands, script: Array[Byte]): Task[String] =
     redis match
-      case cluster: RedisAdvancedClusterCommands[?, ?] =>
-        cluster.upstream().commands().scriptLoad(script).stream().findFirst().orElseThrow()
-      case standalone                                  => standalone.scriptLoad(script)
+      case cluster: RedisAdvancedClusterAsyncCommands[?, ?] =>
+        ZIO
+          .fromCompletionStage(cluster.upstream().commands().scriptLoad(script))
+          .flatMap(digests => ZIO.fromOption(digests.asScala.headOption).orElseFail(noUpstream))
+      case standalone                                       => ZIO.fromCompletionStage(standalone.scriptLoad(script))
+
+  /** What a cluster with no upstream node answers a script load with. */
+  private val noUpstream: IllegalStateException = IllegalStateException("no upstream node answered SCRIPT LOAD")
 
   /**
    * Read one script off the classpath.

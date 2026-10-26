@@ -141,10 +141,13 @@ final case class KeyLayout(partitions: Int):
   private def attempt: ZIO[Connection.Commands, RedisFailure, Option[String]] =
     Connection.use: redis =>
       ZIO
-        .attemptBlocking {
-          if redis.set(KeyLayout.schema, utf8(stamp), SetArgs.Builder.nx()) == "OK" then Some(stamp)
-          else Option(redis.get(KeyLayout.schema)).map(bytes => String(bytes, StandardCharsets.UTF_8))
-        }
+        .fromCompletionStage(redis.set(KeyLayout.schema, utf8(stamp), SetArgs.Builder.nx()))
+        .flatMap: reply =>
+          if reply == "OK" then ZIO.succeed(Some(stamp))
+          else
+            ZIO
+              .fromCompletionStage(redis.get(KeyLayout.schema))
+              .map(bytes => Option(bytes).map(String(_, StandardCharsets.UTF_8)))
         .mapError(error => RedisFailure.Unavailable(error.getMessage))
 
   /**

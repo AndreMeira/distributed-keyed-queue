@@ -220,11 +220,11 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           _        <- ZIO.foreachDiscard(List("a", "b"))(m => worker.enqueue(Submission(queue, Helper.message(key, m))))
           held     <- worker.attemptClaim(queue, 2)
           _        <- ZIO.foreachDiscard(held)(batch => worker.settle(Helper.settlement(batch.claim, Helper.acks(batch))))
-          payloads <- ZIO.attemptBlocking(redis.hlen(layout.queue(QueueName("cleanup")).payloads(MessageKey("k1")))).orDie
-          owned    <- ZIO.attemptBlocking(redis.scard(layout.queue(QueueName("cleanup")).owned(MessageKey("k1")))).orDie
+          payloads <- ZIO.fromCompletionStage(redis.hlen(layout.queue(QueueName("cleanup")).payloads(MessageKey("k1")))).orDie
+          owned    <- ZIO.fromCompletionStage(redis.scard(layout.queue(QueueName("cleanup")).owned(MessageKey("k1")))).orDie
           // Idle is the absence of the key from every structure — there is no state entry to check any more.
-          claimed  <- ZIO.attemptBlocking(redis.zcard(layout.queue(QueueName("cleanup")).claimed)).orDie
-          ready    <- ZIO.attemptBlocking(redis.zcard(layout.queue(QueueName("cleanup")).ready)).orDie
+          claimed  <- ZIO.fromCompletionStage(redis.zcard(layout.queue(QueueName("cleanup")).claimed)).orDie
+          ready    <- ZIO.fromCompletionStage(redis.zcard(layout.queue(QueueName("cleanup")).ready)).orDie
         yield assertTrue(payloads == 0L, owned == 0L, claimed == 0L, ready == 0L)
       },
       test("a claim reclaimed while a nack's backoff is pending queues its key once, not twice") {
@@ -244,7 +244,7 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           // Let the lease lapse and the backoff fall due, then sweep both in one pass.
           _      <- ZIO.sleep(leaseTtl + 1.second)
           _      <- worker.sweep(queue, 100)
-          ready  <- ZIO.attemptBlocking(redis.zcard(layout.queue(queue).ready)).orDie
+          ready  <- ZIO.fromCompletionStage(redis.zcard(layout.queue(queue).ready)).orDie
         yield assertTrue(ready == 1L)
       },
       test("a sweep names what it reclaimed and what it released") {

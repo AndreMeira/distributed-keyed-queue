@@ -33,9 +33,9 @@ object KeyLayoutSpec extends ZIOSpecDefault:
         // boot must refuse before touching structures it would misread. Deleting the marker is the whole
         // remedy an operator has: the next boot records its own.
         val predecessor = Connection.use: redis =>
-          ZIO.attemptBlocking(redis.set("dkq:layout:schema", "999".getBytes)).unit
+          ZIO.fromCompletionStage(redis.set("dkq:layout:schema", "999".getBytes)).unit
         val drained     = Connection.use: redis =>
-          ZIO.attemptBlocking(redis.del("dkq:layout:schema")).unit
+          ZIO.fromCompletionStage(redis.del("dkq:layout:schema")).unit
         for
           conf     <- ZIO.service[QueueConfig]
           _        <- Helper.boot(predecessor)
