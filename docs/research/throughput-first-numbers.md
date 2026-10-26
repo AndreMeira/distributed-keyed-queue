@@ -2,7 +2,7 @@
 title: "First throughput numbers — what they mean, and mostly what they don't"
 type: research
 status: draft
-updated: 2026-09-05
+updated: 2026-10-26
 tags: [throughput, measurement, load, e2e, keyed-queue, exploration]
 ---
 
@@ -175,3 +175,51 @@ from startup, so there is no subscription to establish when a queue is first ask
 The two rows are now indistinguishable — in that run the cold queue was *faster* than the warm control,
 which is noise, and is exactly what "no cold path" looks like. An idle consumer is reached about 10ms after
 an enqueue, of which ~7ms is the enqueue round trip itself.
+
+## After the shared connection went asynchronous, with the sweep split into phases (2026-10-26)
+
+The shared Redis connection now answers through futures (#56), and the sweep reports each phase on its own,
+so the table has more columns than the ones above:
+
+- **fill**: every enqueue, from the start of the run until the queue is full;
+- **drain**: from the moment the queue is full to the last message handled, a dequeue and a settle each;
+- **dequeue**: messages × consumers over the summed time spent inside the dequeue calls that delivered
+  them, the rate consumers would reach if all they did was dequeue;
+- **overall**: the two phases back to back, which do not overlap.
+
+Two larger shapes were added, 128 keys × 64 consumers and 256 × 128, to see where the curve bends. Same
+laptop, two instances, one Valkey, median of three runs per shape after a warmup pass; load average about 4:
+
+| keys | consumers | fill msg/s | drain msg/s | dequeue msg/s | overall msg/s |
+|-----:|----------:|-----------:|------------:|--------------:|--------------:|
+| 8    | 8         | 3,243      | 1,905       | 3,542         | 1,200         |
+| 16   | 16        | 6,486      | 3,478       | 6,305         | 2,264         |
+| 64   | 8         | 16,000     | 2,581       | 4,827         | 2,222         |
+| 64   | 16        | 17,778     | 4,068       | 7,672         | 3,310         |
+| 64   | 32        | 15,238     | 6,275       | 11,220        | 4,444         |
+| 128  | 64        | 22,326     | 8,807       | 15,182        | 6,337         |
+| 256  | 128       | 32,269     | 11,925      | 19,958        | 8,707         |
+
+**The overall column is the one comparable to the tables above, and it has not moved.** The *Method* section
+says the sweep starts its clock after the enqueue, but `ThroughputSpec.once` as committed started it before,
+so its single `msg/s` was fill and drain together — and today's overall figures for the first five shapes
+land on the historical ones. The earlier tables are most likely overall rates; the drain rate on its own was
+never recorded before this section.
+
+**Still no ceiling at 128 consumers.** The dequeue and drain rates keep rising, by about 1.3× per doubling
+from 32 consumers up: two instances drain about 12,000 messages a second, a full dequeue and settle each,
+and dequeue about 20,000. Per-dequeue latency (consumers over the dequeue rate) goes from 2.9ms at 32
+consumers to 6.4ms at 128, so contention is starting; on this setup the shared laptop cores and the single
+driving JVM are more likely limits than the service.
+
+**A consumer spends a bit over half of each message in `dequeue`.** The dequeue rate holds at about 1.7× the
+drain rate at every shape, so settling is the remaining ~40%. Batching or pipelining the settles alone would
+lift the drain rate towards the dequeue rate, and amortising both calls is what would multiply it.
+
+**The fill scales with keys, not consumers,** because each key is filled by its own sequential producer: 8 keys
+enqueue 8-way, 256 keys 256-way. With 64 keys or more it runs 3–5× faster than the drain, so a deployment with
+producers and consumers running together would be bound by the consumers.
+
+Run it with `DKQ_THROUGHPUT=1 sbt "e2e/testOnly *ThroughputSpec -- -t sweep"` after `sbt server/Docker/publishLocal`,
+so the stack runs the code being measured.
+
