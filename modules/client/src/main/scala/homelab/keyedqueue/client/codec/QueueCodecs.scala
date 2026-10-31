@@ -16,7 +16,7 @@ import java.time.Instant
  * Proto to Scala and back, for the queue's four calls.
  *
  * Pure: these are decisions about what arrived, so a caller lifts them where it needs an effect. Reading
- * in is partial, because the wire states a claim as a receipt and fields that mean something only when it
+ * in is partial, because `v1.DequeueResponse` states a claim as a receipt and fields that mean something only when it
  * was granted, and an answer this client cannot hold is refused here rather than carried inwards.
  *
  * Payloads pass through as bytes. Turning them into values is a decoder's job, above this, which is what
@@ -30,7 +30,7 @@ private[client] object QueueCodecs:
    * @param queue which queue it is addressed to
    * @param message what to send
    * @param sentAt when this client is sending it, which the service keeps and never reads
-   * @return the wire request
+   * @return the `v1.EnqueueRequest`
    */
   def encode(queue: String, message: Message.Outgoing, sentAt: Instant): v1.EnqueueRequest =
     v1.EnqueueRequest(
@@ -48,10 +48,10 @@ private[client] object QueueCodecs:
     )
 
   /**
-   * What became of one message, as the wire states it.
+   * What became of one message, as `v1.MessageOutcome` states it.
    *
    * @param verdict which message, and what became of it
-   * @return the wire outcome
+   * @return the `v1.MessageOutcome`
    */
   def encode(verdict: Verdict): v1.MessageOutcome =
     v1.MessageOutcome(verdict.id, outcome(verdict.outcome))
@@ -166,10 +166,10 @@ private[client] object QueueCodecs:
     yield sofar :+ next
 
   /**
-   * What became of a message, as the wire names it.
+   * What became of a message, as `v1.Outcome` names it.
    *
    * @param outcome what became of it
-   * @return the wire form
+   * @return the `v1.Outcome`
    */
   private def outcome(outcome: Verdict.Outcome): v1.Outcome =
     outcome match

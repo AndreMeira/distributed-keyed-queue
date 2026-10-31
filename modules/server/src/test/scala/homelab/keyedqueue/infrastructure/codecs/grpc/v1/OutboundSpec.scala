@@ -15,7 +15,7 @@ import java.time.Instant
  *
  * These transformers enable default values so that they stay derivable, which means a field the derivation
  * fails to match becomes the target's default rather than a compile error. For an `Option` that default is
- * `None`, so a lease the wire is meant to state would go out unset and nothing else here would say so.
+ * `None`, so a lease the protobuf response is meant to state would go out unset and nothing else here would say so.
  */
 object OutboundSpec extends ZIOSpecDefault:
 

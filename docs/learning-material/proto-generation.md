@@ -2,7 +2,7 @@
 title: "One contract, two artifacts — how the protobuf build is wired"
 type: learning-material
 status: current
-updated: 2026-08-30
+updated: 2026-10-31
 tags: [protobuf, scalapb, sbt-protoc, zio-grpc, build, codegen]
 ---
 
@@ -109,7 +109,7 @@ ls modules/protocol-zio-grpc/target/scala-*/src_managed/main/scalapb/homelab/key
 RELEASE_VERSION=0.0.0 sbt 'protocol/publishLocal' 'protocolZioGrpc/publishLocal'
 unzip -l ~/.ivy2/local/.../distributed-keyed-queue-protocol-*_3/0.0.0/jars/*.jar | grep keyedqueue/v1
 
-# 3. The wire artifact still has no ZIO and no gRPC.
+# 3. The `protocol` artifact still has no ZIO and no gRPC.
 grep artifactId ~/.ivy2/local/.../distributed-keyed-queue-protocol_3/0.0.0/poms/*.pom
 ```
 

@@ -69,7 +69,7 @@ What is specific to this repo:
   And the most recent checkpoint is
   [`sessions/2026-09-20-the-client-makes-it-a-product.md`](sessions/2026-09-20-the-client-makes-it-a-product.md)
   — the client that ships with 0.0.5, the line it draws between the RPCs and what it takes on, and what
-  the wire owed it. Before it,
+  the protobuf contract owed it. Before it,
   [`sessions/2026-09-13-redis-package-cleanup.md`](sessions/2026-09-13-redis-package-cleanup.md) — the
   `redis` package back in shape, and why the readinesses belong in the domain next.
 

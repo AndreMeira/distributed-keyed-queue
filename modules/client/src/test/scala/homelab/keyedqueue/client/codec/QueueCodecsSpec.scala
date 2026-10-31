@@ -15,7 +15,7 @@ import java.time.Instant
 
 
 /**
- * Reading the wire's answers, where the wire can state more than the client can hold.
+ * Reading the protobuf responses, which can state more than the client can hold.
  *
  * A claim is a receipt and fields that mean something only when one was granted, so the cases worth
  * testing are the ones where those disagree.

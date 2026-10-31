@@ -11,9 +11,9 @@ import java.time.Instant
 
 
 /**
- * Reading the times and spans the wire carries, for both halves of the service.
+ * Reading the times and spans the protobuf `Timestamp`s and `Duration`s carry, for both halves of the service.
  *
- * Total, which is the only interesting thing about it: nothing on the wire bounds these fields, so a
+ * Total, which is the only interesting thing about it: nothing in them bounds these fields, so a
  * malformed answer would otherwise reach a caller as a thrown exception rather than as the refusal every
  * other unreadable answer becomes.
  */
@@ -76,7 +76,7 @@ private[client] object Protos:
   /**
    * Whether a timestamp names a time, which is what makes reading it total.
    *
-   * @param stamp the wire timestamp
+   * @param stamp the protobuf `Timestamp`
    * @return whether its seconds and nanoseconds are both in range
    */
   private def namesInstant(stamp: Timestamp): Boolean =
@@ -86,7 +86,7 @@ private[client] object Protos:
   /**
    * Whether a duration names a length a lease runs for: in range, and longer than nothing.
    *
-   * @param duration the wire duration
+   * @param duration the protobuf `Duration`
    * @return whether it is a positive span this client reads
    */
   private def namesSpan(duration: ProtoDuration): Boolean =
@@ -97,7 +97,7 @@ private[client] object Protos:
   /**
    * A timestamp as an instant, for one that [[namesInstant]] accepted.
    *
-   * @param stamp the wire timestamp
+   * @param stamp the protobuf `Timestamp`
    * @return the instant it names
    */
   private def instant(stamp: Timestamp): Instant =
@@ -106,7 +106,7 @@ private[client] object Protos:
   /**
    * A proto duration as a duration, for one that [[namesSpan]] accepted.
    *
-   * @param duration the wire duration
+   * @param duration the protobuf `Duration`
    * @return the span it names
    */
   private def length(duration: ProtoDuration): Duration =

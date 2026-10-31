@@ -21,7 +21,7 @@ import java.time.Instant
 /**
  * Domain to v1.
  *
- * Total, unlike [[Inbound]]: everything the domain can hold has a wire representation, because the wire is
+ * Total, unlike [[Inbound]]: everything the domain can hold has a protobuf representation, because the proto is
  * strictly the wider of the two — it also has the `UNSPECIFIED` cases the domain refuses to carry. That
  * asymmetry is the point, and it is why only one direction needs to be able to fail.
  */
@@ -41,7 +41,7 @@ object Outbound:
   private given Transformer[MessageId, String]  = identity(_)
 
   // proto3 has no presence for a scalar, so absence is the empty string — which is what "no claim" looks
-  // like on the wire, and why `deliveries` being empty says the same thing.
+  // like in a `v1.DequeueResponse`, and why `deliveries` being empty says the same thing.
   private given Transformer[Option[Claim.Ref], String] = _.getOrElse(Claim.Ref(""))
 
   // Likewise for the lease: no claim, no deadline.
@@ -73,37 +73,37 @@ object Outbound:
     Transformer.derive[DequeueResponse.Delivery, v1.Delivery]
 
   /**
-   * The wire form of a message, which is also how it is stored.
+   * A message as a `v1.Message`, which is also how it is stored.
    *
    * @param message the message
-   * @return its wire form
+   * @return its `v1.Message`
    */
   def toProto(message: Message): v1.Message =
     message.transformInto[v1.Message]
 
   extension (response: EnqueueResponse)
-    /** @return the wire response */
+    /** @return the `v1.EnqueueResponse` */
     def toProto: v1.EnqueueResponse =
       response.transformInto[v1.EnqueueResponse]
 
   extension (response: DequeueResponse)
     /**
      * The one response the derivation cannot carry alone: the domain states "claim or nothing" as a choice,
-     * the wire states it as fields that are absent together. Matching here is what keeps that flattening in
-     * the codec, where wire concerns belong, rather than in a domain shaped around the proto.
+     * `v1.DequeueResponse` states it as fields that are absent together. Matching here is what keeps that flattening in
+     * the codec, where protobuf concerns belong, rather than in a domain shaped around the proto.
      *
-     * @return the wire response; an empty one is a timeout, not an error
+     * @return the `v1.DequeueResponse`; an empty one is a timeout, not an error
      */
     def toProto: v1.DequeueResponse = response match
       case DequeueResponse.Empty             => v1.DequeueResponse()
       case granted: DequeueResponse.NonEmpty => granted.transformInto[v1.DequeueResponse]
 
   extension (response: SettleResponse)
-    /** @return the wire response */
+    /** @return the `v1.SettleResponse` */
     def toProto: v1.SettleResponse = response.transformInto[v1.SettleResponse]
 
   extension (response: HeartbeatResponse)
-    /** @return the wire response */
+    /** @return the `v1.HeartbeatResponse` */
     def toProto: v1.HeartbeatResponse = response.transformInto[v1.HeartbeatResponse]
 
   extension (response: AcquireResponse)
@@ -112,7 +112,7 @@ object Outbound:
      * the rest empty. The fence is exposed as its own number, unlike the queue's — a holder stamps its
      * downstream writes with it.
      *
-     * @return the wire response
+     * @return the `v1.AcquireResponse`
      */
     def toProto: v1.AcquireResponse = response match
       case AcquireResponse.Unavailable                         => v1.AcquireResponse(acquired = false)
@@ -126,11 +126,11 @@ object Outbound:
         )
 
   extension (response: ReleaseResponse)
-    /** @return the wire response */
+    /** @return the `v1.ReleaseResponse` */
     def toProto: v1.ReleaseResponse = response.transformInto[v1.ReleaseResponse]
 
   extension (response: RefreshResponse)
-    /** @return the wire response; a lost hold is `renewed = false` with no deadline */
+    /** @return the `v1.RefreshResponse`; a lost hold is `renewed = false` with no deadline */
     def toProto: v1.RefreshResponse = response match
       case RefreshResponse.Lost                => v1.RefreshResponse(renewed = false)
       case RefreshResponse.Renewed(until, ttl) =>

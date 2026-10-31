@@ -9,8 +9,8 @@ import java.time.Instant
 /**
  * A message, in whichever direction it is travelling.
  *
- * The payload is bytes here, because that is what the wire carries and it is the one part of a message
- * this client does not know better than the wire. Reading it into a value is [[MessageDecoder]]'s job, and
+ * The payload is bytes here, because that is what the `v1.Message` carries and it is the one part of a message
+ * this client does not know better than the `v1.Message`. Reading it into a value is [[MessageDecoder]]'s job, and
  * writing one out is [[MessageEncoder]]'s.
  */
 sealed trait Message:

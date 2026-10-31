@@ -15,7 +15,7 @@ import java.time.Instant
 
 
 /**
- * Reading the wire's answers, where the wire can state more than the client can hold.
+ * Reading the protobuf responses, which can state more than the client can hold.
  *
  * A grant is a flag and four fields that mean something only when it is set, so the cases worth testing
  * are the ones where those disagree.
@@ -61,7 +61,7 @@ object LockCodecsSpec extends ZIOSpecDefault:
         assertTrue(LockCodecs.decode(response).left.exists(unreadable))
       },
       test("a deadline past the end of time is an error, not a thrown one") {
-        // Nothing on the wire bounds these fields, so the decoder does: reading them is total, and an
+        // Nothing in the proto bounds these fields, so the decoder does: reading them is total, and an
         // answer this client cannot hold comes back as a value like every other refusal here.
         val far  = v1.AcquireResponse(acquired = true, "handle", 7L, Some(Timestamp(Long.MaxValue, 0)), Some(span))
         val odd  = v1.AcquireResponse(acquired = true, "handle", 7L, Some(Timestamp(0L, -1)), Some(span))

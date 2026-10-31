@@ -14,7 +14,7 @@ import zio.*
  * The lock service's four calls, in Scala types.
  *
  * One method per RPC and nothing withheld: the fence is in [[model.Hold]], the wait is the caller's, and
- * try-acquire is its own verb rather than a wait of zero, which the service refuses. What the wire states
+ * try-acquire is its own verb rather than a wait of zero, which the service refuses. What `v1.AcquireResponse` states
  * as a flag and three fields arrives here as a choice.
  */
 trait LockClient:

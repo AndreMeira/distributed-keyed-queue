@@ -255,7 +255,7 @@ lazy val server = project
       // one that lets a file carry both a working default and an env override for the same key.
       "com.typesafe"            % "config"            % typesafeConfigVersion,
       "com.github.pureconfig"  %% "pureconfig-core"   % pureconfigVersion,
-      // Wire <-> domain mapping. The domain DTOs mirror the proto field for field precisely so these
+      // Protobuf <-> domain mapping. The domain DTOs mirror the proto field for field precisely so these
       // transformers stay derivable: anything Chimney cannot derive is a mismatch worth looking at.
       "io.scalaland"           %% "chimney"           % chimneyVersion,
       // The transport the server listens on; the generated stubs and their runtime come from `protocol`.

@@ -39,8 +39,8 @@ final class QueueService(
    * Refuses a message that does not say how to read itself: the encoding is decoded here, not validated in
    * the use case, because the domain has no `Unspecified` to carry inwards.
    *
-   * @param request the wire request
-   * @return the wire response; aborts with `INVALID_ARGUMENT` when the message cannot be read
+   * @param request the `v1.EnqueueRequest`
+   * @return the `v1.EnqueueResponse`; aborts with `INVALID_ARGUMENT` when the message cannot be read
    */
   override def enqueue(request: v1.EnqueueRequest): IO[StatusException, v1.EnqueueResponse] =
     monitor.measure("QueueService.enqueue"):
@@ -53,8 +53,8 @@ final class QueueService(
    * Blocks for the caller's `max_wait`, clamped by the use case. A timeout comes back as an absent
    * `delivery` rather than a status, so a quiet queue is not an error.
    *
-   * @param request the wire request
-   * @return the wire response, whose delivery is absent when nothing became ready
+   * @param request the `v1.DequeueRequest`
+   * @return the `v1.DequeueResponse`, whose delivery is absent when nothing became ready
    */
   override def dequeue(request: v1.DequeueRequest): IO[StatusException, v1.DequeueResponse] =
     monitor.measure("QueueService.dequeue"):
@@ -67,8 +67,8 @@ final class QueueService(
    * A revoked claim answers `APPLIED_STALE` rather than failing: the caller must branch on it, and a status
    * would let a retrying client treat it as a transport problem.
    *
-   * @param request the wire request
-   * @return the wire response; aborts with `INVALID_ARGUMENT` when the outcome is unspecified
+   * @param request the `v1.SettleRequest`
+   * @return the `v1.SettleResponse`; aborts with `INVALID_ARGUMENT` when the outcome is unspecified
    */
   override def settle(request: v1.SettleRequest): IO[StatusException, v1.SettleResponse] =
     monitor.measure("QueueService.settle"):
@@ -81,8 +81,8 @@ final class QueueService(
    * Never fails on a receipt it cannot read — that one is reported stale alongside the genuinely revoked
    * ones, so a single bad handle does not cost a consumer the claims it still holds.
    *
-   * @param request the wire request
-   * @return the wire response, naming what the caller no longer holds
+   * @param request the `v1.HeartbeatRequest`
+   * @return the `v1.HeartbeatResponse`, naming what the caller no longer holds
    */
   override def heartbeat(request: v1.HeartbeatRequest): IO[StatusException, v1.HeartbeatResponse] =
     monitor.measure("QueueService.heartbeat"):
@@ -94,7 +94,7 @@ final class QueueService(
   /**
    * Turn a partial decode into a call that either proceeds or is refused.
    *
-   * A wire message the domain cannot hold — no envelope, an unspecified encoding or outcome — is the
+   * A `v1.Message` the domain cannot hold — no envelope, an unspecified encoding or outcome — is the
    * caller's to fix, so every such failure is `INVALID_ARGUMENT`, and all of them are reported at once
    * rather than the first.
    *

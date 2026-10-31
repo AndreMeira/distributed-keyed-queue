@@ -150,7 +150,7 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
     },
     test("a dequeue that will not wait is refused, and so is one that never said") {
       // Rejected rather than served: a claim that will not wait is a different operation from the one this
-      // API offers. An absent `max_wait` reads as zero on the wire, so it lands here too — a caller has to
+      // API offers. An absent `max_wait` reads as zero in the `v1.DequeueRequest`, so it lands here too — a caller has to
       // say how long it is prepared to wait.
       for
         impatient <- validation.parse(DequeueRequest("jobs", Duration.Zero, maxBatch = 1)).orFail.flip
