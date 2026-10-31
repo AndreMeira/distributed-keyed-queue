@@ -2,6 +2,7 @@ target/
 .bsp/
 .bloop/
 .metals/
+metals.sbt
 .ammonite/
 project/project/
 project/target/
