@@ -98,12 +98,11 @@ object SpecHelper {
       claim: QueueClaim,
       outcomes: NonEmptyChunk[(MessageId, Verdict)],
       retryAfter: Duration = Duration.Zero,
-    ): Settlement =
-      Settlement(
-        claim,
-        outcomes.map((id, verdict) => Settlement.Outcome(id, verdict)),
-        Option.when(retryAfter.toMillis > 0)(retryAfter),
-      )
+    ): Settlement = Settlement(
+      claim,
+      outcomes.map((id, verdict) => Settlement.Outcome(id, verdict)),
+      Option.when(retryAfter.toMillis > 0)(retryAfter),
+    )
 
     /**
      * Claim exactly one message, for the tests that are not about batching.
