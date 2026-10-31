@@ -22,7 +22,7 @@ object GrpcSpec extends ZIOSpecDefault:
 
   def spec: Spec[TestEnvironment & Scope, Any] = {
     suite("KeyedQueue over gRPC")(
-      test("the lock API over the wire: acquire, refuse, release, re-acquire, fence, refresh") {
+      test("the lock API over the network: acquire, refuse, release, re-acquire, fence, refresh") {
         for
           lock    <- ZIO.service[KeyedLockClient]
           secs     = (n: Int) => Some(ProtoDuration(n.toLong))
@@ -42,8 +42,8 @@ object GrpcSpec extends ZIOSpecDefault:
           renewed.renewed,
         )
       },
-      test("try-acquire over the wire: taken when free, refused when held, refused when queued for") {
-        // The verb that says no instead of waiting, over the wire. `barging` asks *after* the holder let
+      test("try-acquire over the network: taken when free, refused when held, refused when queued for") {
+        // The verb that says no instead of waiting, over the network. `barging` asks *after* the holder let
         // go, so what refuses it is whichever came first: the waiter's ticket still queued, or that same
         // waiter having already won. Which one is a race, so this asserts only that it was refused — the
         // queued-and-still-refused case is pinned deterministically in LockTryAcquireUseCaseSpec, where a

@@ -181,7 +181,7 @@ object SpecHelper {
       )
 
     /**
-     * An acquire as it arrives over the wire.
+     * An acquire as it arrives over the network.
      *
      * @param name the lock to take
      * @param ttl how long to hold it
