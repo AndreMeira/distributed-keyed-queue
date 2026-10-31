@@ -26,11 +26,11 @@ object QueueCodecsSpec extends ZIOSpecDefault:
   private val moment = Instant.ofEpochSecond(1_700_000_000L)
   private val span   = ProtoDuration(30L, 0)
 
-  private def wireMessage(id: String, body: String): v1.Message =
+  private def protoMessage(id: String, body: String): v1.Message =
     v1.Message("k1", id, "order.v2", "application/json", Some(stamp), ByteString.copyFromUtf8(body))
 
   private def delivery(id: String, body: String, attempt: Int = 1): v1.Delivery =
-    v1.Delivery(id, Some(wireMessage(id, body)), attempt)
+    v1.Delivery(id, Some(protoMessage(id, body)), attempt)
 
   private def claimed(head: Option[v1.Delivery], tail: Seq[v1.Delivery] = Seq.empty): v1.DequeueResponse =
     v1.DequeueResponse("receipt", head, tail, Some(stamp), 4, Some(span))

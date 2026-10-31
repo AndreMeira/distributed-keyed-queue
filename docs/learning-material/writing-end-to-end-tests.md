@@ -2,7 +2,7 @@
 title: "Writing end-to-end tests that mean something"
 type: learning-material
 status: current
-updated: 2026-08-23
+updated: 2026-10-31
 tags: [testing, e2e, zio-test, docker-compose, grpc, netty, debugging, distributed]
 ---
 
@@ -188,7 +188,7 @@ Three transferable lessons:
 - **Pin at `ThisBuild`, not per project.** Overrides in one project's settings do not reach a second project,
   which will resolve its own versions and reintroduce the split — which is exactly what the new `e2e`
   project did.
-- **Keep the minimal reproduction as a test.** `WireSpec` — 200 calls on one channel, once through the Java
+- **Keep the minimal reproduction as a test.** `GrpcChannelSpec` — 200 calls on one channel, once through the Java
   stub, once through the ZIO one — takes two seconds and fails loudly if anyone bumps one library without the
   other. A comment in `build.sbt` explains *why*; the test is what enforces it.
 

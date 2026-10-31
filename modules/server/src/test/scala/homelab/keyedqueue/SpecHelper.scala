@@ -98,12 +98,11 @@ object SpecHelper {
       claim: QueueClaim,
       outcomes: NonEmptyChunk[(MessageId, Verdict)],
       retryAfter: Duration = Duration.Zero,
-    ): Settlement =
-      Settlement(
-        claim,
-        outcomes.map((id, verdict) => Settlement.Outcome(id, verdict)),
-        Option.when(retryAfter.toMillis > 0)(retryAfter),
-      )
+    ): Settlement = Settlement(
+      claim,
+      outcomes.map((id, verdict) => Settlement.Outcome(id, verdict)),
+      Option.when(retryAfter.toMillis > 0)(retryAfter),
+    )
 
     /**
      * Claim exactly one message, for the tests that are not about batching.
@@ -126,8 +125,8 @@ object SpecHelper {
     def nack(store: QueueStore)(batch: Grant): ZIO[Any, ApplicationError, Boolean] =
       store.settle(settlement(batch.claim, batch.messages.map(_.id -> Verdict.Failed)))
 
-    /** A message as it arrives over the wire, with whatever key the test is about. */
-    def wireMessage(key: String, body: String): v1.Message =
+    /** A protobuf message as it arrives over gRPC, with whatever key the test is about. */
+    def protoMessage(key: String, body: String): v1.Message =
       v1.Message(
         key = key,
         messageId = s"$key-$body",

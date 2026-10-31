@@ -2,7 +2,7 @@
 title: "The end-to-end suite — a real deployment, driven over the wire"
 type: architecture
 status: current
-updated: 2026-08-23
+updated: 2026-10-31
 tags: [testing, e2e, docker-compose, grpc, distributed, load]
 ---
 
@@ -37,7 +37,7 @@ so its clients are the same generated stubs a real consumer would use.
 | heartbeat past the lease | a 15s handler keeps a 5s lease alive by beating |
 | silence loses the claim | and the late settle is **refused**, so no message is completed twice |
 | load | 120 messages, 8 keys, 8 consumers: nothing lost, nothing doubled, every key ordered |
-| `WireSpec` | one channel survives concurrent calls — see [the Netty pin](#the-netty-pin) |
+| `GrpcChannelSpec` | one channel survives concurrent calls — see [the Netty pin](#the-netty-pin) |
 
 **No load balancer in front of the instances, deliberately.** The client addresses `dkq-a` and `dkq-b`
 directly. Behind a proxy you could not tell which instance served a call, and the cross-instance tests would
@@ -102,7 +102,7 @@ directions.
 
 It reproduces through the plain Java blocking stub, so it is nothing to do with zio-grpc, and it cannot
 appear in a single-threaded test. `build.sbt` now pins Netty to what grpc-netty was built against, and
-`WireSpec` is the minimal reproduction kept as a regression guard. **When bumping either, bump them
+`GrpcChannelSpec` is the minimal reproduction kept as a regression guard. **When bumping either, bump them
 together**: take the Netty version from the grpc-java release notes.
 
 What building it taught — the ZIO Test traps, how to read an HTTP/2 failure, why the Netty pin goes *down* —

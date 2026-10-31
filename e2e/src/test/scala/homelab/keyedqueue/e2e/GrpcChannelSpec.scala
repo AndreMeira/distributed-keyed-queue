@@ -20,7 +20,7 @@ import zio.test.*
  * the zio-grpc stub on fibers. Both are the canonical way to use their respective client. Whichever corrupts
  * is the guilty one.
  */
-object WireSpec extends ZIOSpecDefault:
+object GrpcChannelSpec extends ZIOSpecDefault:
 
   private val calls   = 200
   private val threads = 8
@@ -29,7 +29,7 @@ object WireSpec extends ZIOSpecDefault:
     test("the Java blocking stub, from plain threads") {
       for
         dkq  <- ZIO.service[Deployment]
-        queue = dkq.queue("wire-java")
+        queue = dkq.queue("channel-java")
         // Its own channel, and the Java stub rather than the ZIO one: the point is to be as close to plain
         // gRPC as possible, so that a failure cannot be blamed on anything this repo chose.
         _    <- ZIO.attemptBlocking:
@@ -50,7 +50,7 @@ object WireSpec extends ZIOSpecDefault:
     test("the zio-grpc stub, from fibers") {
       for
         dkq  <- ZIO.service[Deployment]
-        queue = dkq.queue("wire-zio")
+        queue = dkq.queue("channel-zio")
         _    <- ZIO.foreachParDiscard(0 until threads): worker =>
                   ZIO.foreachDiscard(0 until calls / threads): index =>
                     dkq.a.enqueue(queue, s"k$worker", index.toString)
@@ -63,7 +63,7 @@ object WireSpec extends ZIOSpecDefault:
    *
    * @param key the key to file it under
    * @param body its payload
-   * @return the wire message
+   * @return the protobuf message
    */
   private def message(key: String, body: String): Message =
     Message(

@@ -19,18 +19,18 @@ something else. Line numbers are as of 2026-10-31 (`main` after #56).
 
 **Decided, not on this list:** `modules/protocol` / `protocol-zio-grpc` keep their names.
 
-## 1. Names: need approval before renaming
+## 1. Names: approved and renamed
 
-Proposals only. Don't rename until each one is approved.
+All six were approved and renamed on branch `rename-wire-identifiers`. The test file is now `e2e/.../e2e/GrpcChannelSpec.scala`.
 
 | Where | Now | Proposed | What it is | Status |
 |---|---|---|---|---|
-| `e2e/.../e2e/WireSpec.scala` | `object WireSpec` | `GrpcChannelSpec` | "one channel, many callers": HTTP/2 corruption regression over one gRPC channel | awaiting approval |
-| same file, lines 32, 53 | queues `"wire-java"`, `"wire-zio"` | `"channel-java"`, `"channel-zio"` | queue names used by that spec | awaiting approval |
-| `modules/server/src/test/.../SpecHelper.scala:129` | `Helper.wireMessage(key, body)` | `Helper.protoMessage(key, body)` | builds a `v1.Message` (protobuf) | awaiting approval |
-| `modules/client/src/test/.../codec/QueueCodecsSpec.scala:29` | `wireMessage(id, body)` | `protoMessage(id, body)` | builds a `v1.Message` | awaiting approval |
-| `e2e/.../e2e/Instance.scala:154` | `Instance.wire(duration)` | `Instance.toProto(duration)` | `Duration` → protobuf `Duration` | awaiting approval |
-| `modules/server/src/test/.../codecs/grpc/v1/OutboundSpec.scala:25, 32` | local `val wire` | `val proto` | the encoded protobuf response | awaiting approval |
+| `e2e/.../e2e/WireSpec.scala` | `object WireSpec` | `GrpcChannelSpec` | "one channel, many callers": HTTP/2 corruption regression over one gRPC channel | done |
+| same file, lines 32, 53 | queues `"wire-java"`, `"wire-zio"` | `"channel-java"`, `"channel-zio"` | queue names used by that spec | done |
+| `modules/server/src/test/.../SpecHelper.scala:129` | `Helper.wireMessage(key, body)` | `Helper.protoMessage(key, body)` | builds a `v1.Message` (protobuf) | done |
+| `modules/client/src/test/.../codec/QueueCodecsSpec.scala:29` | `wireMessage(id, body)` | `protoMessage(id, body)` | builds a `v1.Message` | done |
+| `e2e/.../e2e/Instance.scala:154` | `Instance.wire(duration)` | `Instance.toProto(duration)` | `Duration` → protobuf `Duration` | done |
+| `modules/server/src/test/.../codecs/grpc/v1/OutboundSpec.scala:25, 32` | local `val wire` | `val proto` | the encoded protobuf response | done |
 
 References to update with the renames:
 - **`WireSpec`:**
@@ -86,7 +86,7 @@ or override before touching them.
 
 ## 5. Done when
 
-- [ ] Every name in §1 is approved and renamed.
+- [x] Every name in §1 is approved and renamed.
 - [ ] §2 and §3 are done.
 - [ ] `sbt test` passes, and so does the e2e suite (`sbt e2e/test`, which needs Docker).
 - [ ] This finds nothing outside §4:
