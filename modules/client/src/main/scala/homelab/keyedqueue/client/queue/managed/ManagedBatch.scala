@@ -92,7 +92,7 @@ final private[queue] class ManagedBatch(
   /**
    * Report every outcome at once and stop holding the claim.
    *
-   * One call, because the wire states outcomes per message and a claim ends when nothing it owns is left
+   * One call, because `v1.SettleRequest` states outcomes per message and a claim ends when nothing it owns is left
    * owed. A settle that does not land is left alone: the claim lapses on its own lease and the messages
    * are delivered again, which is the path a claim takes when its consumer dies.
    *

@@ -56,56 +56,56 @@ Name the specific type. Line numbers are as on the `rename-wire-identifiers` bra
 
 **Server, gRPC services:** each `@param request the wire request` / `@return the wire response` names the
 method's own types.
-- [ ] `application/grpc/v1/QueueService.scala`
+- [x] `application/grpc/v1/QueueService.scala`
   - 42, 43 → `v1.EnqueueRequest` / `v1.EnqueueResponse`
   - 56, 57 → `v1.DequeueRequest` / `v1.DequeueResponse`
   - 70, 71 → `v1.SettleRequest` / `v1.SettleResponse`
   - 84, 85 → `v1.HeartbeatRequest` / `v1.HeartbeatResponse`
   - 97 "a wire message" → "a `v1.Message`"
-- [ ] `application/grpc/v1/LockService.scala`
+- [x] `application/grpc/v1/LockService.scala`
   - 35, 36 → `v1.AcquireRequest` / `v1.AcquireResponse`
   - 46, 47 → `v1.TryAcquireRequest` / `v1.AcquireResponse`
   - 57, 58 → `v1.ReleaseRequest` / `v1.ReleaseResponse`
   - 68, 69 → `v1.RefreshRequest` / `v1.RefreshResponse`
 
 **Server, codecs:**
-- [ ] `infrastructure/codecs/grpc/v1/Inbound.scala`
+- [x] `infrastructure/codecs/grpc/v1/Inbound.scala`
   - 21 "Wire to domain." → "v1 to domain." (matches `Outbound`'s "Domain to v1.")
   - 66 `@param message the wire message` → "the `v1.Message`"
   - 78 "the wire message could not be read" → "the `v1.EnqueueRequest` could not be read"
-- [ ] `infrastructure/codecs/grpc/v1/Outbound.scala`
+- [x] `infrastructure/codecs/grpc/v1/Outbound.scala`
   - 24 "a wire representation, because the wire is strictly the wider" → "a protobuf representation, because the proto is strictly the wider"
   - 44 "what 'no claim' looks like on the wire" → "… in a `v1.DequeueResponse`"
   - 76, 79 "the wire form of a message" → "the `v1.Message` form"
   - 92, 93 "the wire states it as fields…", "where wire concerns belong" → "`v1.DequeueResponse` states it…", "where protobuf concerns belong"
   - each `@return the wire response`, named after its extension: 85 `v1.EnqueueResponse`, 95 `v1.DequeueResponse`, 102 `v1.SettleResponse`, 106 `v1.HeartbeatResponse`, 115 `v1.AcquireResponse`, 129 `v1.ReleaseResponse`, 133 `v1.RefreshResponse`
-- [ ] `modules/protocol/.../v1/keyed_queue_service.proto` 4, 5 — "the wire jar", "the wire module" → "the `protocol` jar / module" (a module holding DTOs)
+- [x] `modules/protocol/.../v1/keyed_queue_service.proto` 4, 5 — "the wire jar", "the wire module" → "the `protocol` jar / module" (a module holding DTOs)
 
 **Client:**
-- [ ] `codec/QueueCodecs.scala`
+- [x] `codec/QueueCodecs.scala`
   - 19 "the wire states a claim as a receipt…" → "`v1.DequeueResponse` states a claim…"
   - 33 → "the `v1.EnqueueRequest`"
   - 51, 54 → "as `v1.MessageOutcome` states it" / "the `v1.MessageOutcome`"
   - 169, 172 → "as `v1.Outcome` names it" / "the `v1.Outcome`"
-- [ ] `codec/Protos.scala`
+- [x] `codec/Protos.scala`
   - 14, 16 "the times and spans the wire carries", "nothing on the wire bounds these fields" → "the protobuf `Timestamp`s and `Duration`s carry", "nothing in them bounds these fields"
   - 79, 100 → "the protobuf `Timestamp`"; 89, 109 → "the protobuf `Duration`"
-- [ ] `lock/managed/GrpcClient.scala` 57 "the wire says a boolean" → "`v1.ReleaseResponse` says a boolean"
-- [ ] `queue/managed/ManagedBatch.scala` 95 "the wire states outcomes per message" → "`v1.SettleRequest` states outcomes per message"
-- [ ] `queue/model/Message.scala` 12, 13 "what the wire carries", "know better than the wire" → "what the `v1.Message` carries", "… than the `v1.Message`"
-- [ ] `lock/LockClient.scala` 17 "What the wire states as a flag and three fields" → "What `v1.AcquireResponse` states as a flag and three fields"
+- [x] `lock/managed/GrpcClient.scala` 57 "the wire says a boolean" → "`v1.ReleaseResponse` says a boolean"
+- [x] `queue/managed/ManagedBatch.scala` 95 "the wire states outcomes per message" → "`v1.SettleRequest` states outcomes per message"
+- [x] `queue/model/Message.scala` 12, 13 "what the wire carries", "know better than the wire" → "what the `v1.Message` carries", "… than the `v1.Message`"
+- [x] `lock/LockClient.scala` 17 "What the wire states as a flag and three fields" → "What `v1.AcquireResponse` states as a flag and three fields"
 
 **Tests and build:**
-- [ ] `LockCodecsSpec.scala` 18, `QueueCodecsSpec.scala` 18 "Reading the wire's answers, where the wire can state more…" → "Reading the protobuf responses, which can state more…"
-- [ ] `LockCodecsSpec.scala` 64 "Nothing on the wire bounds these fields" → "Nothing in the proto bounds these fields"
-- [ ] `OutboundSpec.scala` 18 "a lease the wire is meant to state" → "a lease the protobuf response is meant to state"
-- [ ] `QueueInputValidationSpec.scala` 153 "reads as zero on the wire" → "reads as zero in the `v1.DequeueRequest`" (the proto3 default)
-- [ ] `build.sbt` 258 "Wire <-> domain mapping" → "Protobuf <-> domain mapping"
+- [x] `LockCodecsSpec.scala` 18, `QueueCodecsSpec.scala` 18 "Reading the wire's answers, where the wire can state more…" → "Reading the protobuf responses, which can state more…"
+- [x] `LockCodecsSpec.scala` 64 "Nothing on the wire bounds these fields" → "Nothing in the proto bounds these fields"
+- [x] `OutboundSpec.scala` 18 "a lease the wire is meant to state" → "a lease the protobuf response is meant to state"
+- [x] `QueueInputValidationSpec.scala` 153 "reads as zero on the wire" → "reads as zero in the `v1.DequeueRequest`" (the proto3 default)
+- [x] `build.sbt` 258 "Wire <-> domain mapping" → "Protobuf <-> domain mapping"
 
 ## 3. Docs where "wire" means a DTO
 
-- [ ] `docs/learning-material/proto-generation.md` 112 "The wire artifact" → "The `protocol` artifact"
-- [ ] `docs/README.md` 72 "what the wire owed it" → "what the protobuf contract owed it"
+- [x] `docs/learning-material/proto-generation.md` 112 "The wire artifact" → "The `protocol` artifact"
+- [x] `docs/README.md` 72 "what the wire owed it" → "what the protobuf contract owed it"
 
 Bump `updated:` in the frontmatter of each doc you edit.
 
@@ -121,7 +121,7 @@ Bump `updated:` in the frontmatter of each doc you edit.
 
 - `GrpcClientSpec.scala` (lock 23, queue 22) "put the right thing on the wire": these run over gRPC's
   **in-process** transport, so there is no network
-- `build.sbt` 193 "the wire tests", 314 "side of the wire"; `docs/architecture/end-to-end-testing.md` 118
+- `build.sbt` 174, 313 "reach past the wire into the implementation" (the process boundary), 193 "the wire tests", 314 "side of the wire"; `docs/architecture/end-to-end-testing.md` 118
   "after touching the substrate or the wire" (meaning the protocol)
 - `MessageEncoder.scala` 70 "costs nothing on the wire" (bytes sent) and `ServiceError.scala` 13 "the other side of a wire"
 - `LuaScript.scala` 25, 224 and `ClaimScript.scala` 25 — the Redis reply format, not a DTO of ours
@@ -139,7 +139,7 @@ where "wire" means a DTO. Confirm or override before touching them.
 ## 5. Done when
 
 - [x] Every name in §1 is approved and renamed.
-- [ ] §2 and §3 are done.
+- [x] §2 and §3 are done (branch `rename-wire-dto-comments`).
 - [ ] `sbt test` passes, and so does the e2e suite (`sbt e2e/test`, which needs Docker).
 - [ ] Everything this finds is in §4 or under "Left as is":
   ```bash

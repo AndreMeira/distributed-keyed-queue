@@ -1,8 +1,8 @@
 // The service contract: four unary calls, a blocking Dequeue, leases renewed by Heartbeat.
 //
 // Separate from keyed_queue.proto so the message types can be published without a transport: a consumer
-// that only handles the data pulls the wire jar, and only one doing RPC pulls this and the ZIO stubs with
-// it. The messages below are imported, not redefined — they are generated once, into the wire module.
+// that only handles the data pulls the `protocol` jar, and only one doing RPC pulls this and the ZIO stubs with
+// it. The messages below are imported, not redefined — they are generated once, into the `protocol` module.
 //
 // Design and rationale: docs/research/phase-1-api.md
 syntax = "proto3";

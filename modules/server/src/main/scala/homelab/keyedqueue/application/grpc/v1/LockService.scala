@@ -32,8 +32,8 @@ final class LockService(monitor: Monitor, useCases: LockUseCases) extends ZioKey
   /**
    * Take the named lock, blocking up to `max_wait`.
    *
-   * @param request the wire request
-   * @return the wire response; `acquired = false` when the wait elapsed; aborts with `INVALID_ARGUMENT`
+   * @param request the `v1.AcquireRequest`
+   * @return the `v1.AcquireResponse`; `acquired = false` when the wait elapsed; aborts with `INVALID_ARGUMENT`
    *         when the name is empty or a duration is not positive
    */
   override def acquire(request: v1.AcquireRequest): IO[StatusException, v1.AcquireResponse] =
@@ -43,8 +43,8 @@ final class LockService(monitor: Monitor, useCases: LockUseCases) extends ZioKey
   /**
    * Take the named lock only if it is free right now.
    *
-   * @param request the wire request
-   * @return the wire response; `acquired = false` when the lock is held or already queued for; aborts with
+   * @param request the `v1.TryAcquireRequest`
+   * @return the `v1.AcquireResponse`; `acquired = false` when the lock is held or already queued for; aborts with
    *         `INVALID_ARGUMENT` when the name is empty or the ttl is not positive
    */
   override def tryAcquire(request: v1.TryAcquireRequest): IO[StatusException, v1.AcquireResponse] =
@@ -54,8 +54,8 @@ final class LockService(monitor: Monitor, useCases: LockUseCases) extends ZioKey
   /**
    * Release a lock this caller holds.
    *
-   * @param request the wire request
-   * @return the wire response; `released = false` when the hold had been revoked; aborts with
+   * @param request the `v1.ReleaseRequest`
+   * @return the `v1.ReleaseResponse`; `released = false` when the hold had been revoked; aborts with
    *         `INVALID_ARGUMENT` when the receipt is not one this service issued
    */
   override def release(request: v1.ReleaseRequest): IO[StatusException, v1.ReleaseResponse] =
@@ -65,8 +65,8 @@ final class LockService(monitor: Monitor, useCases: LockUseCases) extends ZioKey
   /**
    * Push a held lock's lease forward.
    *
-   * @param request the wire request
-   * @return the wire response; `renewed = false` when the hold has been lost; aborts with
+   * @param request the `v1.RefreshRequest`
+   * @return the `v1.RefreshResponse`; `renewed = false` when the hold has been lost; aborts with
    *         `INVALID_ARGUMENT` when the receipt is not one this service issued or the ttl is not positive
    */
   override def refresh(request: v1.RefreshRequest): IO[StatusException, v1.RefreshResponse] =

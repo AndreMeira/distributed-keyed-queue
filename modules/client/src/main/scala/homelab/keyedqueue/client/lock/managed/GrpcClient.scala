@@ -54,7 +54,7 @@ final private[client] class GrpcClient(stub: KeyedLockClient, patience: Duration
     call(within(patience).tryAcquire(v1.TryAcquireRequest(name, proto(ttl)))).map(LockCodecs.decode).absolve
 
   /**
-   * One `Release` call, whose answer needs no reading — the wire says a boolean and so does the port.
+   * One `Release` call, whose answer needs no reading — `v1.ReleaseResponse` says a boolean and so does the port.
    *
    * @param receipt the handle the grant came with
    * @return whether it applied; aborts with the [[ServiceError]] a transport failure amounts to

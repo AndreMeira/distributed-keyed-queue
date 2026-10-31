@@ -18,7 +18,7 @@ import java.time.Instant
 
 
 /**
- * Wire to domain.
+ * v1 to domain.
  *
  * Partial: a request that carries no message at all, or no outcome, is refused here.
  *
@@ -63,7 +63,7 @@ object Inbound:
   /**
    * Read a message on its own, which is what the storage codec needs.
    *
-   * @param message the wire message
+   * @param message the `v1.Message`
    * @return the domain message, or why it could not be read
    */
   def message(message: v1.Message): Either[String, Message] =
@@ -75,7 +75,7 @@ object Inbound:
 
   extension (request: v1.EnqueueRequest)
     /**
-     * @return the domain request; fails with the reasons the wire message could not be read
+     * @return the domain request; fails with the reasons the `v1.EnqueueRequest` could not be read
      */
     def toDomain: partial.Result[EnqueueRequest] = request.transformIntoPartial[EnqueueRequest]
 
