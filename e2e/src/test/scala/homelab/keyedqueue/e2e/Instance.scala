@@ -110,7 +110,7 @@ final case class Instance(name: String, address: String, client: KeyedQueueClien
    * @return the response — `acquired = false` when the wait elapsed; fails when the call does
    */
   def acquire(name: String, ttl: Duration, patience: Duration): Task[AcquireResponse] =
-    locks.acquire(AcquireRequest(name, Some(Instance.wire(ttl)), Some(Instance.wire(patience))))
+    locks.acquire(AcquireRequest(name, Some(Instance.toProto(ttl)), Some(Instance.toProto(patience))))
 
   /**
    * Free a held lock.
@@ -129,7 +129,7 @@ final case class Instance(name: String, address: String, client: KeyedQueueClien
    * @return the response — `renewed = false` when the hold has been lost; fails when the call does
    */
   def refresh(receipt: String, ttl: Duration): Task[RefreshResponse] =
-    locks.refresh(RefreshRequest(receipt, Some(Instance.wire(ttl))))
+    locks.refresh(RefreshRequest(receipt, Some(Instance.toProto(ttl))))
 
 
 object Instance:
@@ -146,9 +146,9 @@ object Instance:
   def claimed(reply: DequeueResponse): Seq[Delivery] = reply.head.toSeq ++ reply.tail
 
   /**
-   * A duration as the wire carries it.
+   * A duration in its protobuf form.
    *
    * @param duration the duration
    * @return its proto form
    */
-  def wire(duration: Duration): ProtoDuration = ProtoDuration(duration.getSeconds, duration.getNano)
+  def toProto(duration: Duration): ProtoDuration = ProtoDuration(duration.getSeconds, duration.getNano)

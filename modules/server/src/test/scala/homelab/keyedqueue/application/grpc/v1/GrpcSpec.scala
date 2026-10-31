@@ -71,7 +71,7 @@ object GrpcSpec extends ZIOSpecDefault:
       test("enqueue, dequeue, settle — the loop a consumer writes") {
         for
           client  <- ZIO.service[KeyedQueueClient]
-          _       <- client.enqueue(EnqueueRequest("jobs", Some(Helper.wireMessage("k1", "hello"))))
+          _       <- client.enqueue(EnqueueRequest("jobs", Some(Helper.protoMessage("k1", "hello"))))
           reply   <- client.dequeue(DequeueRequest("jobs", Some(ProtoDuration(seconds = 2))))
           settled <- client.settle(Helper.settle(reply, Outcome.OUTCOME_DONE))
           empty   <- client.dequeue(DequeueRequest("jobs", Some(ProtoDuration(seconds = 1))))
@@ -87,7 +87,7 @@ object GrpcSpec extends ZIOSpecDefault:
       test("a claim hands over a batch, and each message is settled by name") {
         for
           client  <- ZIO.service[KeyedQueueClient]
-          _       <- ZIO.foreachDiscard(1 to 4)(n => client.enqueue(EnqueueRequest("batch", Some(Helper.wireMessage("k1", s"v$n")))))
+          _       <- ZIO.foreachDiscard(1 to 4)(n => client.enqueue(EnqueueRequest("batch", Some(Helper.protoMessage("k1", s"v$n")))))
           reply   <- client.dequeue(DequeueRequest("batch", Some(ProtoDuration(seconds = 2)), maxBatch = 3))
           settled <- client.settle(Helper.settle(reply, Outcome.OUTCOME_DONE))
           next    <- client.dequeue(DequeueRequest("batch", Some(ProtoDuration(seconds = 2))))
@@ -103,7 +103,7 @@ object GrpcSpec extends ZIOSpecDefault:
         // are superseded, and says so message by message. The key stays its own until nothing is owed.
         for
           client  <- ZIO.service[KeyedQueueClient]
-          _       <- ZIO.foreachDiscard(1 to 3)(n => client.enqueue(EnqueueRequest("partial", Some(Helper.wireMessage("k1", s"v$n")))))
+          _       <- ZIO.foreachDiscard(1 to 3)(n => client.enqueue(EnqueueRequest("partial", Some(Helper.protoMessage("k1", s"v$n")))))
           reply   <- client.dequeue(DequeueRequest("partial", Some(ProtoDuration(seconds = 2)), maxBatch = 3))
           ids      = Helper.claimed(reply).map(_.messageId)
           // v1 and v2 are superseded by v3, so they are acknowledged without being worked.
@@ -123,7 +123,7 @@ object GrpcSpec extends ZIOSpecDefault:
         // nothing; using a token the claim has finished with is refused.
         for
           client <- ZIO.service[KeyedQueueClient]
-          _      <- client.enqueue(EnqueueRequest("replay", Some(Helper.wireMessage("k1", "once"))))
+          _      <- client.enqueue(EnqueueRequest("replay", Some(Helper.protoMessage("k1", "once"))))
           reply  <- client.dequeue(DequeueRequest("replay", Some(ProtoDuration(seconds = 2))))
           first  <- client.settle(Helper.settle(reply, Outcome.OUTCOME_DONE))
           second <- client.settle(Helper.settle(reply, Outcome.OUTCOME_DONE))
@@ -132,7 +132,7 @@ object GrpcSpec extends ZIOSpecDefault:
       test("heartbeat renews what is held and names what is not") {
         for
           client <- ZIO.service[KeyedQueueClient]
-          _      <- client.enqueue(EnqueueRequest("beats", Some(Helper.wireMessage("k1", "work"))))
+          _      <- client.enqueue(EnqueueRequest("beats", Some(Helper.protoMessage("k1", "work"))))
           reply  <- client.dequeue(DequeueRequest("beats", Some(ProtoDuration(seconds = 2))))
           beat   <- client.heartbeat(HeartbeatRequest(Seq(reply.receipt, "not-a-receipt")))
         yield assertTrue(
@@ -143,8 +143,8 @@ object GrpcSpec extends ZIOSpecDefault:
       test("a message with no encoding is refused, and one with no key too") {
         for
           client  <- ZIO.service[KeyedQueueClient]
-          noCodec <- client.enqueue(EnqueueRequest("bad", Some(Helper.wireMessage("k1", "x").copy(encoding = "")))).exit
-          noKey   <- client.enqueue(EnqueueRequest("bad", Some(Helper.wireMessage("", "x")))).exit
+          noCodec <- client.enqueue(EnqueueRequest("bad", Some(Helper.protoMessage("k1", "x").copy(encoding = "")))).exit
+          noKey   <- client.enqueue(EnqueueRequest("bad", Some(Helper.protoMessage("", "x")))).exit
         yield assertTrue(noCodec.isFailure, noKey.isFailure)
       },
       test("a request with two problems is refused once, naming both") {
@@ -152,7 +152,7 @@ object GrpcSpec extends ZIOSpecDefault:
         // carrying every reason, rather than one round trip per mistake.
         for
           client <- ZIO.service[KeyedQueueClient]
-          failed <- client.enqueue(EnqueueRequest("", Some(Helper.wireMessage("", "x")))).flip
+          failed <- client.enqueue(EnqueueRequest("", Some(Helper.protoMessage("", "x")))).flip
           // `flip` gives the error channel, which the stub types as `StatusException`, so there is no other
           // shape to match on. `Option` is for the status itself, which the exception may carry as null.
           status  = Option(failed.getStatus)

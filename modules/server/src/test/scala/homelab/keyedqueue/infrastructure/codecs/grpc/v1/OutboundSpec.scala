@@ -22,14 +22,14 @@ object OutboundSpec extends ZIOSpecDefault:
   def spec: Spec[TestEnvironment & Scope, Any] = suite("Outbound")(
     test("a granted dequeue states the lease span, not only its deadline") {
       val granted = DequeueResponse.fromGrant(Helper.grant("orders", "key-1", "body"))
-      val wire    = granted.toProto
+      val proto   = granted.toProto
       assertTrue(
-        wire.leaseTtl.map(_.seconds).contains(30L),
-        wire.leaseExpiresAt.isDefined,
+        proto.leaseTtl.map(_.seconds).contains(30L),
+        proto.leaseExpiresAt.isDefined,
       )
     },
     test("a heartbeat states the span its renewal runs for") {
-      val wire = HeartbeatResponse(Chunk.empty, Instant.EPOCH, 30.seconds).toProto
-      assertTrue(wire.leaseTtl.map(_.seconds).contains(30L))
+      val proto = HeartbeatResponse(Chunk.empty, Instant.EPOCH, 30.seconds).toProto
+      assertTrue(proto.leaseTtl.map(_.seconds).contains(30L))
     },
   )

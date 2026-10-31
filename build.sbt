@@ -75,7 +75,7 @@ ThisBuild / pomIncludeRepository := { _ => false }
 // grpc-java release notes for the Netty version it ships with, and set nettyVersion to exactly that.
 //
 // Found by the end-to-end suite (e2e/), which is the only thing here that puts real concurrent traffic on a
-// connection. `WireSpec` in that project is the minimal reproduction, kept as a regression guard.
+// connection. `GrpcChannelSpec` in that project is the minimal reproduction, kept as a regression guard.
 //
 // ThisBuild, not per project: a second project resolving its own versions would reintroduce exactly this.
 ThisBuild / dependencyOverrides ++= Seq(
