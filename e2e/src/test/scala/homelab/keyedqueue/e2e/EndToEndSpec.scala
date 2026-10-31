@@ -7,7 +7,7 @@ import zio.test.*
 
 
 /**
- * dkq as it is deployed: two instances, one Valkey, clients over the wire.
+ * dkq as it is deployed: two instances, one Valkey, clients over the network.
  *
  * '''What makes this different from `GrpcSpec`.''' That suite runs the service in the test's own JVM against
  * a container, and proves the API behaves. This one proves the things that only exist in a *deployment*:

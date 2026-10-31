@@ -1,5 +1,5 @@
 ---
-title: "The end-to-end suite — a real deployment, driven over the wire"
+title: "The end-to-end suite — a real deployment, driven over the network"
 type: architecture
 status: current
 updated: 2026-10-31

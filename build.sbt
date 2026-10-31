@@ -284,7 +284,7 @@ lazy val root = project
 
 
 /**
- * The end-to-end suite: several real instances in Docker, one Valkey, clients over the wire.
+ * The end-to-end suite: several real instances in Docker, one Valkey, clients over the network.
  *
  * A separate project rather than another test source folder, because these tests cost minutes and need
  * Docker — `sbt test` must stay something worth running on every save. Run them with `sbt e2e` (which

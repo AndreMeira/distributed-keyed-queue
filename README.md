@@ -174,7 +174,7 @@ The e2e suite runs against a real three-node cluster with
 ```bash
 sbt compile
 sbt test    # unit + integration, against a Testcontainers Valkey (needs Docker)
-sbt e2e     # builds the image, composes two instances, drives them over the wire
+sbt e2e     # builds the image, composes two instances, drives them over the network
 ```
 
 Building requires a GitHub personal access token with `read:packages` in `~/.sbt/1.0/credentials`, because

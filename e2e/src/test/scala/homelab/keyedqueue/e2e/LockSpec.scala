@@ -6,7 +6,7 @@ import zio.test.*
 
 
 /**
- * The lock as it is deployed: two instances, one Valkey, clients over the wire.
+ * The lock as it is deployed: two instances, one Valkey, clients over the network.
  *
  * What only this suite can show: that a hold is a fact about the '''store''', not about the instance that
  * granted it — released through the other instance, surviving the granting instance's death — and that a
