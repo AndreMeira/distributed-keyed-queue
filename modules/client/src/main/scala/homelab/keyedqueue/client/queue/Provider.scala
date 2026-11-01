@@ -78,7 +78,7 @@ trait Provider:
    */
   def batched[A: MessageDecoder as decoder](
     config: BatchConsumerConfig
-  ): URIO[Scope, Consumer[AdapterError, List[A]]] =
+  ): URIO[Scope, Consumer[AdapterError, Chunk[A]]] =
     batchedMessages(config).map: consumer =>
       consumer.mapZIO: messages =>
         ZIO.foreach(messages) { message =>

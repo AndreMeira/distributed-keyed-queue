@@ -2,7 +2,7 @@
 title: "Consuming and producing with the queue client"
 type: learning-material
 status: current
-updated: 2026-09-20
+updated: 2026-11-01
 tags: [client, queue, consumer, producer, heartbeat, schema, zio]
 ---
 
@@ -218,7 +218,7 @@ you.
 batch <- Provider(client).batched[Order](Provider.BatchConsumerConfig("orders", size = 10))
 _     <- batch.consume(handleAll).forever
 
-def handleAll(orders: List[Order]): IO[MyError, Unit] = ???
+def handleAll(orders: Chunk[Order]): IO[MyError, Unit] = ???
 ```
 
 One claim, one outcome: the handler answers and every message is done, it fails and every message comes

@@ -93,7 +93,7 @@ object ManagedBatchSpec extends ZIOSpecDefault:
       for
         client <- fake(claim(readable("m1"), readable("m2"), readable("m3")))
         batch  <- batchOver(client)
-        worked <- Ref.make(List.empty[Order])
+        worked <- Ref.make(Chunk.empty[Order])
         _      <- batch.consume(values => worked.set(values))
         seen   <- worked.get
         given_ <- client.settled.get

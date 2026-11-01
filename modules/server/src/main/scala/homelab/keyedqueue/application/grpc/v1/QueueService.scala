@@ -36,8 +36,8 @@ final class QueueService(
 ) extends ZioKeyedQueueService.KeyedQueue:
 
   /**
-   * Refuses a message that does not say how to read itself: the encoding is decoded here, not validated in
-   * the use case, because the domain has no `Unspecified` to carry inwards.
+   * Refuses an enqueue with no message: a `v1.EnqueueRequest` whose `message` is absent cannot be read into
+   * the domain, so it is refused here rather than in the use case, which has no absent message to carry.
    *
    * @param request the `v1.EnqueueRequest`
    * @return the `v1.EnqueueResponse`; aborts with `INVALID_ARGUMENT` when the message cannot be read
@@ -94,9 +94,9 @@ final class QueueService(
   /**
    * Turn a partial decode into a call that either proceeds or is refused.
    *
-   * A `v1.Message` the domain cannot hold — no envelope, an unspecified encoding or outcome — is the
-   * caller's to fix, so every such failure is `INVALID_ARGUMENT`, and all of them are reported at once
-   * rather than the first.
+   * A request the domain cannot hold — a `v1.EnqueueRequest` without its `message`, or a `v1.SettleRequest`
+   * whose `outcomes` hold an unspecified outcome — is the caller's to fix, so every such failure is
+   * `INVALID_ARGUMENT`, and all of them are reported at once rather than the first.
    *
    * @param result what the transformer produced
    * @tparam A the domain request

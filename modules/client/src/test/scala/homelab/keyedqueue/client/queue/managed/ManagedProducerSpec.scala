@@ -97,7 +97,7 @@ object ManagedProducerSpec extends ZIOSpecDefault:
       for
         client   <- fake
         producer <- Provider(client).producer[Order]("orders")
-        _        <- producer.emitMany(List(order, Order("o-2", "c-9")))
+        _        <- producer.emitMany(Chunk(order, Order("o-2", "c-9")))
         sent     <- client.sent.get
       yield assertTrue(sent.map(_._2.id) == Chunk(MessageId("o-1"), MessageId("o-2")))
     },

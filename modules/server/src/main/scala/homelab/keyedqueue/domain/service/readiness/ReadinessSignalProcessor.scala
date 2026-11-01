@@ -33,7 +33,7 @@ final class ReadinessSignalProcessor(
    * @param wakes what the read announced, each name once
    * @return noop
    */
-  override def process(wakes: List[ReadinessSignal]): IO[ApplicationError.AdapterError, Unit] =
+  override def process(wakes: Chunk[ReadinessSignal]): IO[ApplicationError.AdapterError, Unit] =
     ZIO.foreachDiscard(wakes):
       case ReadinessSignal.Queue(name) => queueReadiness.ready(name)
       case ReadinessSignal.Lock(name)  => lockReadiness.ready(name)
