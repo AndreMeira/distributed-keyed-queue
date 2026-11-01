@@ -46,14 +46,6 @@ enum ServiceError extends ApplicationError.AdapterError:
   /** @return what went wrong, for a log or a report */
   override def message: String = this match
     case Rejected(reason)   => s"the service refused the request: $reason"
-    case Unreachable(cause) => s"the deployment did not answer: ${detail(cause)}"
+    case Unreachable(cause) => s"the deployment did not answer: $cause"
     case Unreadable(reason) => s"the service answered with something unusable: $reason"
-    case Failed(cause)      => s"the call failed: ${detail(cause)}"
-
-  /**
-   * What a transport failure said, or what it is when it said nothing: some exceptions carry no message.
-   *
-   * @param cause what the transport raised
-   * @return its message, or its `toString` when the message is null
-   */
-  private def detail(cause: Throwable): String = Option(cause.getMessage).getOrElse(cause.toString)
+    case Failed(cause)      => s"the call failed: $cause"
