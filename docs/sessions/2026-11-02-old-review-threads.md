@@ -52,6 +52,16 @@ No `of` factories or parameters, and no parameter names that try to make the cal
   `verdicts(settled: …)`.
 - **`HeartbeatSpec.claim(receipt, of: String)`** → `claim(receipt, messageId: String)`.
 
+## To do — fence the token in validation too
+
+Token 0 got past validation as well as the scripts. `LockInputValidation` reads a receipt for shape only, so
+`Claim.decode` accepts any `Long`, including 0 and negatives. The receipt is base64url, not signed, so anyone can
+build one. Fence tokens start at 1 (`INCR`), so a token ≤ 0 was never issued: validation should refuse it as
+`UnreadableReceipt`. This could also be the only fence.
+
+The Lua fix stays either way. `HGET … or 0` was a smell on its own: it made "no entry" look like a token, and an
+ownership check must not match something that doesn't exist.
+
 ## Proposed, not yet approved
 
 - **`Protos.deadline`, `timestamp` and `span`: the `answer: String` parameter** (from #64). It is the label the
