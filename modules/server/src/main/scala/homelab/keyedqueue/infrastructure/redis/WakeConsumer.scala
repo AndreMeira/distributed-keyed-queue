@@ -214,16 +214,17 @@ object WakeConsumer:
       reply.flatMap(_.asScala.toList.headOption).map(_.getId).getOrElse(beginning)
 
   /**
-   * A consumer over every partition's wake stream, each positioned at its end, already reading.
+   * A consumer over every partition's wake stream, not yet positioned and not yet reading.
    *
-   * "From now" is resolved here to a concrete id, so every read resumes from a fixed point and nothing
-   * appended between two reads is stepped over.
+   * Starting it is three steps, in this order, and `Module.init` takes them: [[reachable]], so a partition
+   * with no connection fails startup; [[positioned]], which resolves "from now" to a concrete id per
+   * stream, so every read resumes from a fixed point and nothing appended between two reads is stepped
+   * over; then [[start]], forked. Reading before positioning would read each stream from its beginning.
    *
    * @param connection the blocking connections to read on, and the shared one that resolves the positions
    * @param layout which partitions there are, and the stream each one announces on
    * @param block how long one read waits before going round again
-   * @return the consumer, its readers forked into the scope; aborts with `PartitionConnectionMissing` when
-   *         a partition has no connection, and with `Unavailable` when a stream's position cannot be read
+   * @return the consumer, with nothing running yet; never fails
    */
   def make(connection: Connection, layout: KeyLayout, block: Duration): ZIO[Scope, RedisFailure, WakeConsumer] =
     for

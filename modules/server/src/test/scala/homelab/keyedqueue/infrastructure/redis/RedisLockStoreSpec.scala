@@ -4,8 +4,9 @@ package homelab.keyedqueue.infrastructure.redis
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.SpecHelper
 import homelab.keyedqueue.SpecHelper.Helper
+import homelab.keyedqueue.domain.model.lock.Claim
 import homelab.keyedqueue.domain.service.persistence.LockStore
-import homelab.keyedqueue.domain.types.LockName
+import homelab.keyedqueue.domain.types.{ LockName, Token }
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
 import zio.*
 import zio.test.*
@@ -74,6 +75,17 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
           (_, lost) <- lock.refresh(held.claim, 1.second)
           retaken   <- lock.tryAcquire(LockName("g"), ttl)
         yield assertTrue(early.isEmpty, ok, freed.contains(LockName("g")), !lost, retaken.isDefined)
+      },
+      test("a receipt carrying token 0 neither releases nor refreshes a lock nobody holds") {
+        // Fence tokens start at 1, so 0 is nobody's. A refresh that took it would create a hold no token
+        // backs, refusing everyone else until the lease ran out.
+        for
+          lock         <- ZIO.service[LockStore]
+          forged        = Claim(LockName("z"), Token(0L))
+          released     <- lock.release(forged)
+          (_, renewed) <- lock.refresh(forged, ttl)
+          taken        <- lock.tryAcquire(LockName("z"), ttl)
+        yield assertTrue(!released, !renewed, taken.isDefined)
       },
     ) @@ RedisSpecSupport.Aspect.init @@ SpecHelper.Aspect.common
   }.provideSomeShared[Scope](RedisSpecSupport.config(30.seconds) >+> RedisSpecSupport.layer)

@@ -33,7 +33,8 @@ What is specific to this repo:
   - [`architecture/readiness-and-wake.md`](architecture/readiness-and-wake.md) — how a consumer waits:
     what a readiness holds, why the queue's and the lock's differ, and every path that could lose a wake.
   - [`architecture/states-as-classes.md`](architecture/states-as-classes.md) — the shape the lock's wait is
-    written in, named: defunctionalised recursion, absorbing terminals, trampolined. Wants abstracting.
+    written in, named: defunctionalised recursion, absorbing terminals, trampolined. Superseded: the wait now
+    runs on the toolkit's `Recursion`.
 
   And in `learning-material/`:
   - [`claiming-identity.md`](learning-material/claiming-identity.md) — *superseded*: why a claim taken in

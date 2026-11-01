@@ -108,6 +108,17 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
       val parsed = validation.parse(EnqueueRequest("jobs", Helper.requestMessage("k1", messageId = "")))
       assertTrue(parsed.toEither == Left(NonEmptyChunk(InvalidInput.EmptyMessageId)))
     },
+    test("a message without an encoding is refused: it is how a consumer knows to read the payload") {
+      val parsed = validation.parse(EnqueueRequest("jobs", Helper.requestMessage("k1").copy(encoding = "")))
+      assertTrue(parsed.toEither == Left(NonEmptyChunk(InvalidInput.EmptyEncoding)))
+    },
+    test("an empty encoding is reported with the message's other problems") {
+      val message = Helper.requestMessage("", messageId = "").copy(encoding = "")
+      val parsed  = validation.parse(EnqueueRequest("jobs", message))
+      assertTrue(
+        parsed.toEither == Left(NonEmptyChunk(InvalidInput.EmptyMessageKey, InvalidInput.EmptyMessageId, InvalidInput.EmptyEncoding))
+      )
+    },
     test("a well-formed enqueue is parsed into what the store takes") {
       // As with settle: what comes back carries a QueueName, a MessageKey and a MessageId, none of which
       // the request can express — so the use case has nothing unchecked left to reach for.

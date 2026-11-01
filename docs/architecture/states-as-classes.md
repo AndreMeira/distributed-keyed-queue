@@ -1,12 +1,19 @@
 ---
 title: "A wait written as states — defunctionalised recursion, absorbing terminals, trampolined"
 type: architecture
-status: current
-updated: 2026-09-17
+status: superseded
+updated: 2026-11-02
 tags: [lock, waiting, state-machine, defunctionalisation, trampoline, interruption, patterns]
 ---
 
 # A wait written as states
+
+> **Superseded** by the toolkit's `flow.Recursion`: since #29, `AcquireLifecycle` is an enum whose
+> transitions are `next` methods on the use case, driven by `Recursion` with the terminals named by the
+> caller — the abstraction the follow-up below asked for, written up in
+> [`loop-workflow-recursion.md`](https://github.com/AndreMeira/homelab-toolkit-zio/blob/main/docs/research/loop-workflow-recursion.md).
+> The inner state classes, `next` overrides and hand-written `loop` shown here are the code before that.
+> Kept as written, as the record of the reasoning.
 
 `LockAcquireUseCase` writes its wait as a sealed set of state classes with a transition on each, driven by
 a small runner. The shape reads well and sits on no single named pattern, which makes it hard to look up

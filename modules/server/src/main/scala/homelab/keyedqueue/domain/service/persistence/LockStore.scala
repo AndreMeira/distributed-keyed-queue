@@ -100,8 +100,14 @@ trait LockStore:
    * The grace is part of the refresh contract: a holder may refresh late, up to `grace` past expiry; beyond
    * that its hold may be removed by this pass.
    *
+   * '''The limit bounds one atomic step, not the call.''' What it protects is the store: a backend that
+   * runs the removal as one blocking step (a Redis script) must not hold everything else up for a large
+   * backlog. A backend that splits the call into several such steps applies the limit to each, so a call
+   * may remove more than `limit`; it still returns at least `limit` names whenever any step was full.
+   *
    * @param grace how long past lease expiry a hold survives before it may be removed
-   * @param limit the most holds one pass removes
-   * @return the names freed, oldest lease first; aborts with an `AdapterError` when the store fails
+   * @param limit the most holds one atomic step of the removal takes
+   * @return the names freed, in an order the backend chooses; aborts with an `AdapterError` when the store
+   *         fails
    */
   def trim(grace: Duration, limit: Int): IO[ApplicationError.AdapterError, Chunk[LockName]]

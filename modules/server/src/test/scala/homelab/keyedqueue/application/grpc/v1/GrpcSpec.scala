@@ -4,6 +4,10 @@ package homelab.keyedqueue.application.grpc.v1
 import com.google.protobuf.duration.Duration as ProtoDuration
 import homelab.keyedqueue.SpecHelper
 import homelab.keyedqueue.SpecHelper.Helper
+import homelab.keyedqueue.domain.types.LockName
+import homelab.keyedqueue.infrastructure.redis.Connection
+import homelab.keyedqueue.infrastructure.redis.Module as RedisModule
+import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
 import homelab.keyedqueue.v1.*
 import homelab.keyedqueue.v1.ZioKeyedLockService.KeyedLockClient
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
@@ -19,6 +23,7 @@ import zio.test.*
  * settle it, and be told what it still holds, with no knowledge of keys, leases or Redis.
  */
 object GrpcSpec extends ZIOSpecDefault:
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = {
     suite("KeyedQueue over gRPC")(
@@ -44,17 +49,18 @@ object GrpcSpec extends ZIOSpecDefault:
       },
       test("try-acquire over the network: taken when free, refused when held, refused when queued for") {
         // The verb that says no instead of waiting, over the network. `barging` asks *after* the holder let
-        // go, so what refuses it is whichever came first: the waiter's ticket still queued, or that same
-        // waiter having already won. Which one is a race, so this asserts only that it was refused — the
-        // queued-and-still-refused case is pinned deterministically in LockTryAcquireUseCaseSpec, where a
-        // ticket can be placed with nobody racing to claim it.
+        // go, and only once the waiter's ticket is in Redis, so a ticket is there to refuse it. What refuses
+        // it is whichever came first: the ticket still queued, or that same waiter having already won. Which
+        // one is a race, so this asserts only that it was refused — the queued-and-still-refused case is
+        // pinned deterministically in LockTryAcquireUseCaseSpec, where a ticket can be placed with nobody
+        // racing to claim it.
         for
           lock     <- ZIO.service[KeyedLockClient]
           secs      = (n: Int) => Some(ProtoDuration(n.toLong))
           taken    <- lock.tryAcquire(TryAcquireRequest("try", secs(30)))
           refused  <- lock.tryAcquire(TryAcquireRequest("try", secs(30)))
           queueing <- lock.acquire(AcquireRequest("try", secs(30), secs(5))).fork
-          _        <- ZIO.sleep(300.millis)
+          _        <- queued(LockName("try"))
           _        <- lock.release(ReleaseRequest(taken.receipt))
           barging  <- lock.tryAcquire(TryAcquireRequest("try", secs(30)))
           waited   <- queueing.join
@@ -163,4 +169,27 @@ object GrpcSpec extends ZIOSpecDefault:
         )
       },
     ) @@ GrpcSpecSupport.Aspect.init @@ SpecHelper.Aspect.common
-  }.provideSomeShared[Scope](GrpcSpecSupport.config >+> GrpcSpecSupport.layer)
+  }.provideSomeShared[Scope](
+    GrpcSpecSupport.config >+> GrpcSpecSupport.layer >+> RedisModule.layout >+> RedisModule.connection
+  )
+
+  private object Support {
+
+    /**
+     * Wait until somebody holds a ticket for `name`.
+     *
+     * Read straight from the lock's waiters list: the gRPC API has no call that tells a queued lock from a
+     * held one, and a test that releases before the ticket lands is testing a free, unqueued lock instead.
+     *
+     * @param name the lock
+     * @return noop once the list is non-empty; aborts with the client's `Throwable` when Redis cannot be read
+     */
+    def queued(name: LockName): ZIO[Connection & KeyLayout, Throwable, Unit] =
+      for
+        connection <- ZIO.service[Connection]
+        layout     <- ZIO.service[KeyLayout]
+        waiters     = layout.lock(name).waiters(name)
+        length      = connection.provide(Connection.use(redis => ZIO.fromCompletionStage(redis.llen(waiters))))
+        _          <- (ZIO.sleep(10.millis) *> length).repeatUntil(_ > 0L)
+      yield ()
+  }

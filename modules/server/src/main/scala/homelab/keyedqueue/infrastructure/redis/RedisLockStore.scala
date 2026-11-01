@@ -145,9 +145,13 @@ final class RedisLockStore(
    * Hygiene, not liveness: a lock somebody wants is reclaimed inline by the next grant, so what this frees
    * is what no request would ever reach.
    *
+   * '''The limit is per partition, on purpose.''' One script runs per partition, and a script blocks the
+   * whole server while it runs, so what has to be bounded is the work of one script — `limit` holds — not
+   * of the pass. A pass over every partition may therefore remove up to `limit` times the partition count.
+   *
    * @param grace how long past lease expiry a hold survives before it may be removed
-   * @param limit the most holds one pass removes
-   * @return the names freed, oldest lease first
+   * @param limit the most holds one partition's script removes
+   * @return the names freed, partition by partition, oldest lease first within each
    */
   override def trim(grace: Duration, limit: Int): IO[RedisFailure, Chunk[LockName]] =
     monitor.trace("RedisLockStore.trim"):

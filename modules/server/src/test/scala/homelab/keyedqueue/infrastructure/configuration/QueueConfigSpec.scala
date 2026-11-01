@@ -25,6 +25,9 @@ object QueueConfigSpec extends ZIOSpecDefault:
         config.leaseTtl == 30.seconds, // "30 seconds" in HOCON, a zio.Duration here
         config.sweepInterval == 5.seconds,
         config.sweepLimit == 100,
+        config.lockTrimInterval == 120.seconds,
+        config.lockTrimGrace == 10.minutes,
+        config.lockMaxTtl == 10.minutes,
         config.wakeBlock == 1.second,
         config.maxWait == 30.seconds,
         config.maxBatchLimit == 32,
@@ -39,6 +42,17 @@ object QueueConfigSpec extends ZIOSpecDefault:
         config.maxWait <= config.leaseTtl,
         config.wakeBlock.toMillis > 0,
         config.sweepLimit > 0,
+      )
+    },
+    test("the lock settings are usable: a trim runs, a late holder has a window, a grant has a lease") {
+      // A zero trim interval would spin the trim, a zero grace would remove a holder the moment its lease
+      // lapsed (refresh is meant to forgive lateness up to the grace), and a zero cap would clamp every
+      // grant to nothing.
+      for config <- QueueConfig.load
+      yield assertTrue(
+        config.lockTrimInterval > Duration.Zero,
+        config.lockTrimGrace > Duration.Zero,
+        config.lockMaxTtl > Duration.Zero,
       )
     },
   )
