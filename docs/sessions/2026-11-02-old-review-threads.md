@@ -52,6 +52,12 @@ No `of` factories or parameters, and no parameter names that try to make the cal
   `verdicts(settled: …)`.
 - **`HeartbeatSpec.claim(receipt, of: String)`** → `claim(receipt, messageId: String)`.
 
+## Proposed, not yet approved
+
+- **`Protos.deadline`, `timestamp` and `span`: the `answer: String` parameter** (from #64). It is the label the
+  error message uses, such as `"a delivery"` or `"a grant"`, and "answer" breaks the *choose specific verbs* rule.
+  The proposal is `response`, documented as "the response that carried it, named in the error".
+
 ## Still open
 
 - Adopting the toolkit's `Shutdown`.
