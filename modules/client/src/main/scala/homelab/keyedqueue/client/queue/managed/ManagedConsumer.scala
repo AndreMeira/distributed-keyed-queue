@@ -59,6 +59,6 @@ final private[queue] class ManagedConsumer(
   private def each[E2 >: ServiceError](
     logic: Message.Incoming => IO[E2, Unit]
   )(
-    messages: List[Message.Incoming]
+    messages: Chunk[Message.Incoming]
   ): IO[E2, Unit] =
     ZIO.foreachDiscard(messages)(logic)

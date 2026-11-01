@@ -43,12 +43,12 @@ final private[queue] class ManagedBatch(
    * @return noop once the batch is settled, or once the wait elapsed with nothing to take; aborts with
    *         what the logic aborted with, or with a [[ServiceError]] when a call does not land
    */
-  override def consume[E2 >: ServiceError](logic: List[Message.Incoming] => IO[E2, Unit]): IO[E2, Unit] =
+  override def consume[E2 >: ServiceError](logic: Chunk[Message.Incoming] => IO[E2, Unit]): IO[E2, Unit] =
     ZIO.uninterruptibleMask: restore =>
       restore(client.dequeue(conf.queue, conf.patience, conf.size)).flatMap {
         case Dequeued.Idle           => ZIO.unit
         case Dequeued.Claimed(claim) =>
-          val messages = claim.messages.toList
+          val messages = claim.messages
           heartbeat.hold(claim) *> restore(logic(messages))
             .onExit(exit => settle(claim, worked(exit, messages), backoff(exit)))
       }
@@ -60,7 +60,7 @@ final private[queue] class ManagedBatch(
    * @param messages the claim's messages
    * @return a verdict for each, all of them the same
    */
-  private def worked(exit: Exit[?, Unit], messages: List[Message.Incoming]): List[Verdict] =
+  private def worked(exit: Exit[?, Unit], messages: Chunk[Message.Incoming]): Chunk[Verdict] =
     messages.map(message => Verdict(message.id, outcome(exit)))
 
   /**
@@ -101,5 +101,5 @@ final private[queue] class ManagedBatch(
    * @param retryAfter how long the key waits before anything failed is delivered again
    * @return noop once they have been reported, or once reporting failed
    */
-  private def settle(claim: Claim, verdicts: List[Verdict], retryAfter: Duration): UIO[Unit] =
-    client.settle(claim.receipt, verdicts.toChunk, retryAfter).ignore *> heartbeat.release(claim.receipt)
+  private def settle(claim: Claim, verdicts: Chunk[Verdict], retryAfter: Duration): UIO[Unit] =
+    client.settle(claim.receipt, verdicts, retryAfter).ignore *> heartbeat.release(claim.receipt)

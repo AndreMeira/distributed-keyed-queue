@@ -23,7 +23,7 @@ object ReadinessSignalProcessorSpec extends ZIOSpecDefault:
   /** An input that never delivers: these tests hand wakes to `process` directly. */
   private val silent: ReadinessSignalConsumer = new ReadinessSignalConsumer:
     override def consume[E2 >: ApplicationError.AdapterError](
-      logic: List[ReadinessSignal] => IO[E2, Unit]
+      logic: Chunk[ReadinessSignal] => IO[E2, Unit]
     ): IO[E2, Unit] = ZIO.never
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("ReadinessSignalProcessor")(
@@ -35,7 +35,7 @@ object ReadinessSignalProcessorSpec extends ZIOSpecDefault:
           signal     <- lockReady.subscribe(lock)
           tokens     <- queueReady.subscribe(queue)
           _          <- tokens.await(50.millis) // spend the seed token
-          _          <- ReadinessSignalProcessor(silent, queueReady, lockReady).process(List(ReadinessSignal.Queue(queue)))
+          _          <- ReadinessSignalProcessor(silent, queueReady, lockReady).process(Chunk(ReadinessSignal.Queue(queue)))
           taken      <- tokens.await(1.second)
           woken      <- signal.await.timeout(100.millis)
         yield assertTrue(taken, woken.isEmpty)
@@ -48,7 +48,7 @@ object ReadinessSignalProcessorSpec extends ZIOSpecDefault:
           signal     <- lockReady.subscribe(lock)
           tokens     <- queueReady.subscribe(queue)
           _          <- tokens.await(50.millis)
-          _          <- ReadinessSignalProcessor(silent, queueReady, lockReady).process(List(ReadinessSignal.Lock(lock)))
+          _          <- ReadinessSignalProcessor(silent, queueReady, lockReady).process(Chunk(ReadinessSignal.Lock(lock)))
           woken      <- signal.await.timeout(1.second)
           taken      <- tokens.await(100.millis)
         yield assertTrue(woken.isDefined, !taken)
@@ -61,7 +61,7 @@ object ReadinessSignalProcessorSpec extends ZIOSpecDefault:
           signal     <- lockReady.subscribe(lock)
           tokens     <- queueReady.subscribe(queue)
           _          <- tokens.await(50.millis)
-          _          <- ReadinessSignalProcessor(silent, queueReady, lockReady).process(List(ReadinessSignal.Gap))
+          _          <- ReadinessSignalProcessor(silent, queueReady, lockReady).process(Chunk(ReadinessSignal.Gap))
           woken      <- signal.await.timeout(1.second)
           taken      <- tokens.await(1.second)
         yield assertTrue(woken.isDefined, taken)

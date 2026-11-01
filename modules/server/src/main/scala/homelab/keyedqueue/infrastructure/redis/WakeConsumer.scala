@@ -45,8 +45,8 @@ final class WakeConsumer(
    * @tparam E2 the widened error, admitting `logic`'s failures
    * @return noop once the batch is handled
    */
-  override def consume[E2 >: RedisFailure](logic: List[ReadinessSignal] => IO[E2, Unit]): IO[E2, Unit] =
-    wakes.takeBetween(1, WakeConsumer.drain).flatMap(batch => logic(batch.distinct.toList))
+  override def consume[E2 >: RedisFailure](logic: Chunk[ReadinessSignal] => IO[E2, Unit]): IO[E2, Unit] =
+    wakes.takeBetween(1, WakeConsumer.drain).flatMap(batch => logic(batch.distinct))
 
   /**
    * Read every partition's stream, forever, into the queue.
