@@ -129,7 +129,7 @@ private[client] object QueueCodecs:
   private def message(delivery: v1.Delivery): Either[ServiceError, Message.Incoming] =
     for
       carried <- delivery.message.toRight(ServiceError.Unreadable("a delivery arrived with no message"))
-      sentAt  <- Protos.deadline(carried.sentAt, "a delivery")
+      sentAt  <- Protos.timestamp(carried.sentAt, "a delivery", "send time")
     yield Message.Incoming(
       key = MessageKey(carried.key),
       id = MessageId(delivery.messageId),

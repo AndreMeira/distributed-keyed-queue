@@ -42,9 +42,20 @@ private[client] object Protos:
    * @return the instant it names, or `Unreadable` when it is absent or names no time
    */
   def deadline(stamp: Option[Timestamp], answer: String): Either[ServiceError, Instant] =
+    timestamp(stamp, answer, "deadline")
+
+  /**
+   * The instant a timestamp an answer carried names, whatever that timestamp is for.
+   *
+   * @param stamp the timestamp the answer carried, absent when the service set no field
+   * @param answer what the answer was, to say so in the error
+   * @param field what the timestamp is, to say so in the error
+   * @return the instant it names, or `Unreadable` when it is absent or names no time
+   */
+  def timestamp(stamp: Option[Timestamp], answer: String, field: String): Either[ServiceError, Instant] =
     stamp
-      .toRight(ServiceError.Unreadable(s"$answer arrived with no deadline"))
-      .filterOrElse(namesInstant, ServiceError.Unreadable(s"$answer arrived with a deadline that names no instant"))
+      .toRight(ServiceError.Unreadable(s"$answer arrived with no $field"))
+      .filterOrElse(namesInstant, ServiceError.Unreadable(s"$answer arrived with a $field that names no instant"))
       .map(instant)
 
   /**

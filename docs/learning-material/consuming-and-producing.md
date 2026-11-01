@@ -230,8 +230,10 @@ Two properties worth knowing before you choose a size:
 
 - **Reading is all or nothing.** One message nobody can read keeps the whole claim from the handler,
   because a batch handed over in part is a batch answered for in part.
-- **Settling is not.** Only the message that would not read takes the policy; the ones that read come back,
-  since they are owed work nobody did.
+- **So is settling.** A batch that will not read fails the reading, so the claim settles `Failed`: every
+  message comes back after `retryAfter`, the readable ones with it. To treat an unreadable message
+  differently, take `batchedMessages` and read each message in the handler: answering for it settles the
+  claim `Done`, and `message.attempt` says how many times it has been delivered.
 
 A batch is one claim over one key's messages, so it does not widen how much you work at once across keys —
 it lowers how many round trips one key's backlog costs.

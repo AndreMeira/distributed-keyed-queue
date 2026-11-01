@@ -1,12 +1,16 @@
 ---
 title: "One shape for both readinesses: a scoped signal instead of a callback"
 type: research
-status: current
+status: superseded
 updated: 2026-09-27
 tags: [readiness, queue, lock, interruption, scope, api-shape]
 ---
 
 # One shape for both readinesses
+
+> **Superseded** by [`../architecture/readiness-and-wake.md`](../architecture/readiness-and-wake.md): the
+> refactor this note argued for landed in #51, so the "What differs today" table describes the code before
+> it. Kept as written, as the record of the argument.
 
 `QueueReadiness` and `LockReadiness` answer the same kind of question — "something you were waiting for may
 have happened" — and look nothing alike. Asked on 2026-09-27 whether the difference is earned. Partly: one
