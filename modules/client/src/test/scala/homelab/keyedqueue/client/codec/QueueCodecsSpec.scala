@@ -48,11 +48,6 @@ object QueueCodecsSpec extends ZIOSpecDefault:
       case ServiceError.Unreadable(_) => true
       case _                          => false
 
-  private def said(text: String)(error: ServiceError): Boolean =
-    error match
-      case ServiceError.Unreadable(reason) => reason == text
-      case _                               => false
-
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueCodecs")(
     suite("enqueue")(
       test("a message goes out as an envelope around bytes, stamped with the moment it was sent") {
@@ -102,8 +97,9 @@ object QueueCodecsSpec extends ZIOSpecDefault:
         // Fails if `sent_at` is read as a deadline again: the message would name a deadline it never had.
         def sentAt(at: Option[Timestamp]) = claimed(Some(v1.Delivery("m1", Some(protoMessage("m1", "first").copy(sentAt = at)), 1)))
         assertTrue(
-          QueueCodecs.decode(sentAt(None)).left.exists(said("a delivery arrived with no send time")),
-          QueueCodecs.decode(sentAt(Some(Timestamp(Long.MaxValue, 0)))).left.exists(said("a delivery arrived with a send time that names no instant")),
+          QueueCodecs.decode(sentAt(None)) == Left(ServiceError.Unreadable("a delivery arrived with no send time")),
+          QueueCodecs.decode(sentAt(Some(Timestamp(Long.MaxValue, 0)))) ==
+            Left(ServiceError.Unreadable("a delivery arrived with a send time that names no instant")),
         )
       },
       test("a claim with no lease deadline or no span is refused: nothing could time its beats") {
