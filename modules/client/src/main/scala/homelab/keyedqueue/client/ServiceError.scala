@@ -46,6 +46,6 @@ enum ServiceError extends ApplicationError.AdapterError:
   /** @return what went wrong, for a log or a report */
   override def message: String = this match
     case Rejected(reason)   => s"the service refused the request: $reason"
-    case Unreachable(cause) => s"the deployment did not answer: ${cause.getMessage}"
+    case Unreachable(cause) => s"the deployment did not answer: $cause"
     case Unreadable(reason) => s"the service answered with something unusable: $reason"
-    case Failed(cause)      => s"the call failed: ${cause.getMessage}"
+    case Failed(cause)      => s"the call failed: $cause"

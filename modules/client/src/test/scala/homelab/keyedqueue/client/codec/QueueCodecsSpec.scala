@@ -93,6 +93,15 @@ object QueueCodecsSpec extends ZIOSpecDefault:
         val response = claimed(Some(v1.Delivery("m1", None, 1)))
         assertTrue(QueueCodecs.decode(response).left.exists(unreadable))
       },
+      test("a delivery whose send time is absent or names no instant is refused, and the error says so") {
+        // Fails if `sent_at` is read as a deadline again: the message would name a deadline it never had.
+        def sentAt(at: Option[Timestamp]) = claimed(Some(v1.Delivery("m1", Some(protoMessage("m1", "first").copy(sentAt = at)), 1)))
+        assertTrue(
+          QueueCodecs.decode(sentAt(None)) == Left(ServiceError.Unreadable("a delivery arrived with no send time")),
+          QueueCodecs.decode(sentAt(Some(Timestamp(Long.MaxValue, 0)))) ==
+            Left(ServiceError.Unreadable("a delivery arrived with a send time that names no instant")),
+        )
+      },
       test("a claim with no lease deadline or no span is refused: nothing could time its beats") {
         val noDeadline = claimed(Some(delivery("m1", "first"))).copy(leaseExpiresAt = None)
         val noSpan     = claimed(Some(delivery("m1", "first"))).copy(leaseTtl = None)

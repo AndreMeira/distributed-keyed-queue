@@ -11,7 +11,7 @@ import zio.schema.codec.{ BinaryCodec, DecodeError, ProtobufCodec }
  *
  * It reads whole messages rather than bytes because it is the only thing that sees what a sender said it
  * wrote — the encoding and the payload type. Whether to hold a message to those is the caller's choice:
- * [[MessageDecoder.derive]] reads whatever arrives, MessageDecoder.derive refuses anything a
+ * [[MessageDecoder.derive]] reads whatever arrives, [[MessageDecoder.deriveAs]] refuses anything a
  * sender labelled as something else.
  *
  * @tparam A what it reads

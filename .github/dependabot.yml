@@ -2,8 +2,9 @@
 #
 # Two ecosystems, because two things go stale here for different reasons: the Scala dependencies in
 # build.sbt, and the actions the workflows pin. The second is not an afterthought — the toolkit's v0.0.5
-# release run warned that `actions/setup-java@v4` is deprecated and that `ubuntu-latest` migrates to Ubuntu
-# 26 in October 2026, and nothing was watching for either.
+# release run warned that `actions/setup-java@v4` is deprecated, and nothing was watching for it. It also
+# warned that `ubuntu-latest` migrates to Ubuntu 26 in October 2026; that one is not covered here, because
+# the github-actions updater reads `uses:` only, never `runs-on:`. The runner image is watched by hand.
 #
 # Grouped, and with the build's deliberate pins ignored. Both are about the same thing: a weekly PR that
 # cannot pass CI is how people learn to stop reading Dependabot.

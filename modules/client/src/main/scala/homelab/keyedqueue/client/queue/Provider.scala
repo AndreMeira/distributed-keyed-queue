@@ -37,7 +37,7 @@ trait Provider:
   def messages(config: ConsumerConfig): URIO[Scope, Consumer[AdapterError, Message.Incoming]]
 
   /**
-   * A consumer of one queue's messages that takes a key's together.
+   * A consumer of one queue's messages that takes a key's messages together.
    *
    * Every message of a batch shares one outcome — the logic answered, so all are done, or it did not, so
    * all come back. A caller that needs them settled apart takes [[QueueClient]] underneath, where an
