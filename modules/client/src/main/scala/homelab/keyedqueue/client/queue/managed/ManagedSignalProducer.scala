@@ -19,7 +19,7 @@ import zio.schema.{ DeriveSchema, Schema }
  * @param client what the calls are made through
  * @param queue which queue it sends to
  */
-class ManagedSignalProducer(client: QueueClient, queue: String) extends Producer[ServiceError, Ready] {
+final private[client] class ManagedSignalProducer(client: QueueClient, queue: String) extends Producer[ServiceError, Ready] {
 
   /**
    * Send one signal.
@@ -37,7 +37,7 @@ class ManagedSignalProducer(client: QueueClient, queue: String) extends Producer
 }
 
 
-object ManagedSignalProducer {
+private[client] object ManagedSignalProducer {
 
   /** What signals are written with; what it writes states [[MessageEncoder.unnamed]] as its payload type. */
   given readyEncoder: MessageEncoder[Ready] = {
