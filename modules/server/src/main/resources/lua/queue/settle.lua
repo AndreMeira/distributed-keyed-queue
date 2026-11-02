@@ -25,6 +25,17 @@
 -- token has to stay valid across several calls; what stops a settle applying twice is that settling removes
 -- the id from `owned`, and removing it again finds nothing. The counter moves when the claim ENDS, which is
 -- what invalidates a zombie still holding it.
+-- BENCH (readyAt): a monotonic microsecond clock scores `ready` instead of the counter. TIME is frozen for the
+-- whole script, so several pushes in one call get last + 1, last + 2, and so on.
+local function claimableAt(sequence)
+  local t = redis.call('TIME')
+  local now = tonumber(t[1]) * 1000000 + tonumber(t[2])
+  local last = tonumber(redis.call('GET', sequence) or 0)
+  local score = string.format('%.0f', math.max(now, last + 1))
+  redis.call('SET', sequence, score)
+  return score
+end
+
 local ready, claimed, fence, msgs, payloads, owned, attempts, delayed, wake, sequence =
   KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7], KEYS[8], KEYS[9], KEYS[10]
 local key, token, retryAfter, queue = ARGV[1], tonumber(ARGV[2]), tonumber(ARGV[3]), ARGV[4]
@@ -74,7 +85,7 @@ end
 -- a producer will not add it either, and the watchdog's due-sweep is what puts it back. That is how a
 -- failing message backs off without spinning.
 if redis.call('ZSCORE', delayed, key) == false then
-  redis.call('ZADD', ready, redis.call('INCR', sequence), key)
+  redis.call('ZADD', ready, claimableAt(sequence), key)
   redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'kind', 'q', 'name', queue, 'key', key)
 end
 

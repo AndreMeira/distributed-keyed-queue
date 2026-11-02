@@ -31,6 +31,14 @@ if #popped == 0 then
   return nil
 end
 
+-- BENCH (readyAt): the head is claimable only once its score has passed. Not due means nothing is due, since
+-- every other score is larger: put it back and report nothing claimable.
+local t = redis.call('TIME')
+if tonumber(popped[2]) > tonumber(t[1]) * 1000000 + tonumber(t[2]) then
+  redis.call('ZADD', ready, popped[2], popped[1])
+  return nil
+end
+
 local key = popped[1]
 
 local msgs     = prefix .. ':msgs:' .. key

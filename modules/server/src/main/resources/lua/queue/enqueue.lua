@@ -24,6 +24,17 @@
 -- '''Ids in the list, messages in a hash.''' The list is what carries order; the hash is what carries cargo.
 -- Splitting them is what lets everything else address a message by name — discard this one, look at the next
 -- three — without Redis having to read inside a payload it cannot parse.
+-- BENCH (readyAt): a monotonic microsecond clock scores `ready` instead of the counter. TIME is frozen for the
+-- whole script, so several pushes in one call get last + 1, last + 2, and so on.
+local function claimableAt(sequence)
+  local t = redis.call('TIME')
+  local now = tonumber(t[1]) * 1000000 + tonumber(t[2])
+  local last = tonumber(redis.call('GET', sequence) or 0)
+  local score = string.format('%.0f', math.max(now, last + 1))
+  redis.call('SET', sequence, score)
+  return score
+end
+
 local ready, claimed, delayed, msgs, payloads, wake, sequence =
   KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7]
 local key, id, payload, queue = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
@@ -42,7 +53,7 @@ if redis.call('HSETNX', payloads, id, payload) == 1 then
   if redis.call('ZSCORE', ready, key) == false
     and redis.call('ZSCORE', claimed, key) == false
     and redis.call('ZSCORE', delayed, key) == false then
-    redis.call('ZADD', ready, redis.call('INCR', sequence), key)
+    redis.call('ZADD', ready, claimableAt(sequence), key)
 
     -- Only on the transition, and in the same call that made it claimable: a consumer woken by this entry
     -- cannot arrive before the work it announces, and a crash cannot land between the two.

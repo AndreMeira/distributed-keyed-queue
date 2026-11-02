@@ -22,6 +22,17 @@
 -- `owned` is built here rather than declared in KEYS, because which keys have expired is not known until
 -- the range query runs. That is only safe because every name shares the `prefix` hash tag and therefore one
 -- cluster slot.
+-- BENCH (readyAt): a monotonic microsecond clock scores `ready` instead of the counter. TIME is frozen for the
+-- whole script, so several pushes in one call get last + 1, last + 2, and so on.
+local function claimableAt(sequence)
+  local t = redis.call('TIME')
+  local now = tonumber(t[1]) * 1000000 + tonumber(t[2])
+  local last = tonumber(redis.call('GET', sequence) or 0)
+  local score = string.format('%.0f', math.max(now, last + 1))
+  redis.call('SET', sequence, score)
+  return score
+end
+
 local claimed, ready, fence, delayed, wake, sequence = KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]
 local limit, prefix, queue = tonumber(ARGV[1]), ARGV[2], ARGV[3]
 
@@ -50,7 +61,7 @@ for _, key in ipairs(expired) do
   -- `ready` twice: once now, once when the due sweep finds the backoff elapsed. Two entries mean two
   -- claimers, and although the fence stops the loser corrupting anything, it does the work for nothing.
   if redis.call('ZSCORE', delayed, key) == false then
-    redis.call('ZADD', ready, redis.call('INCR', sequence), key)
+    redis.call('ZADD', ready, claimableAt(sequence), key)
     redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'kind', 'q', 'name', queue, 'key', key)
   end
 end
@@ -61,7 +72,7 @@ local due = redis.call('ZRANGEBYSCORE', delayed, '-inf', now, 'LIMIT', 0, limit)
 
 for _, key in ipairs(due) do
   redis.call('ZREM', delayed, key)
-  redis.call('ZADD', ready, redis.call('INCR', sequence), key)
+  redis.call('ZADD', ready, claimableAt(sequence), key)
   redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'kind', 'q', 'name', queue, 'key', key)
 end
 
