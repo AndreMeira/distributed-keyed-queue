@@ -11,8 +11,7 @@ import homelab.keyedqueue.domain.response.lock.AcquireResponse
 import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.service.readiness.LockReadiness
 import homelab.keyedqueue.domain.service.readiness.LockReadiness.Signal
-import homelab.keyedqueue.domain.service.usecase.lock.LockAcquireUseCase.AcquireLifecycle.*
-import homelab.keyedqueue.domain.service.usecase.lock.LockAcquireUseCase.{ AcquireLifecycle, Waiter, atLeastFloor }
+import homelab.keyedqueue.domain.service.usecase.lock.LockAcquireUseCase.{ AcquireLifecycle as Lifecycle, Waiter, atLeastFloor }
 import homelab.keyedqueue.domain.service.validation.LockInputValidation
 import homelab.keyedqueue.domain.types.Ticket
 import zio.*
@@ -26,6 +25,12 @@ import java.time.Instant
  * A wait is a small machine — see [[AcquireLifecycle]]: ask for the lock, and while somebody else holds it,
  * hold a ticket and park until the event the store named or a release wakes this waiter. The ticket is
  * given up on every exit that is not a grant.
+ *
+ * The call is a scope, and every ask that can grant is acquired in it: a call that does not answer after the
+ * store granted, because it was cancelled, releases the hold rather than leaving it to block everyone until
+ * its lease expires. A release that does not land is left alone, and the hold lapses on its lease, as it
+ * would for a holder that died. A call cancelled after it has answered is beyond this: the response is lost
+ * on its way out, and the hold lapses on its lease.
  *
  * @param store where the lock lives
  * @param validation what turns a request into an demand this service will honour
@@ -61,37 +66,37 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
    * @param waiter who is waiting, for what, and since when
    * @param patience the wait this caller asked for, which the first ask may claim a ticket for
    * @return the hold, or `None` when the patience elapsed first; aborts with an `AdapterError` when the
-   *         store fails
+   *         store fails; a grant is acquired in the scope, released if the call does not answer
    */
-  private def acquire(waiter: Waiter, patience: Duration): IO[AdapterError, Option[Hold]] =
-    Recursion(Demanding(waiter, patience)) {
-      case state: Demanding => next(state)
-      case state: Queued    => next(state)
-      case state            => ZIO.succeed(state)
+  private def acquire(waiter: Waiter, patience: Duration): ZIO[Scope, AdapterError, Option[Hold]] =
+    Recursion(Lifecycle.Demanding(waiter, patience)) {
+      case state: Lifecycle.Demanding => next(state)
+      case state: Lifecycle.Queued    => next(state)
+      case state                      => ZIO.succeed(state)
     }.terminate {
-      case GivenUp       => None
-      case Granted(hold) => Some(hold)
+      case Lifecycle.GivenUp       => None
+      case Lifecycle.Granted(hold) => Some(hold)
     }
 
   /**
    * Ask for the lock: it is granted, or this caller takes a place in the queue.
    *
    * The step is uninterruptible, so a place that reached the store is always observed and its ticket
-   * arrives at the state that withdraws it. The clock is read before the ask, which is the instant a
+   * arrives at the state that withdraws it. The place is acquired in the call's scope, so a grant is
+   * released if the call ends without answering. The clock is read before the ask, which is the instant a
    * recheck delay counts from.
    *
    * @param state the lock to take, and what is left of the patience to claim a ticket for
    * @return the lock, or a place in the queue with the first recheck time; aborts with an `AdapterError`
    *         when the store fails
    */
-  private def next(state: Demanding): IO[AdapterError, AcquireLifecycle] = ZIO.uninterruptible {
+  private def next(state: Lifecycle.Demanding): ZIO[Scope, AdapterError, Lifecycle] = ZIO.uninterruptible {
     for
       now      <- Clock.instant
-      demand    = state.waiter.demand
-      position <- store.place(demand.name, demand.ttl, state.within)
+      position <- place(state.waiter.demand, state.within)
     yield position match
-      case Position.Granted(hold)           => Granted(hold)
-      case Position.Queued(ticket, recheck) => Queued(state.waiter, ticket, now.plus(atLeastFloor(recheck)))
+      case Position.Granted(hold)           => Lifecycle.Granted(hold)
+      case Position.Queued(ticket, recheck) => Lifecycle.Queued(state.waiter, ticket, now.plus(atLeastFloor(recheck)))
   }
 
   /**
@@ -104,15 +109,15 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
    * @return the lock, a later recheck, a fresh start when the queue no longer knows this ticket, or the
    *         end of the wait; aborts with an `AdapterError` when the store fails
    */
-  private def next(state: Queued): IO[AdapterError, AcquireLifecycle] =
+  private def next(state: Lifecycle.Queued): ZIO[Scope, AdapterError, Lifecycle] =
     patienceLeft(state)
       .flatMap:
-        case None           => ZIO.succeed(GivenUp)
+        case None           => ZIO.succeed(Lifecycle.GivenUp)
         case Some(patience) => awaitTurn(state, patience)
       .onExit:
-        case Exit.Success(_: Queued)  => ZIO.unit
-        case Exit.Success(_: Granted) => ZIO.unit
-        case _                        => store.withdraw(state.waiter.demand.name, state.ticket).ignore
+        case Exit.Success(_: Lifecycle.Queued)  => ZIO.unit
+        case Exit.Success(_: Lifecycle.Granted) => ZIO.unit
+        case _                                  => store.withdraw(state.waiter.demand.name, state.ticket).ignore
 
   /**
    * What is left of this waiter's patience.
@@ -120,7 +125,7 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
    * @param state the wait to measure, which carries when it was asked for
    * @return the time still to wait, or `None` when it is spent
    */
-  private def patienceLeft(state: Queued): UIO[Option[Duration]] =
+  private def patienceLeft(state: Lifecycle.Queued): UIO[Option[Duration]] =
     Clock.instant.map: now =>
       val elapsed = Duration.fromInterval(state.waiter.asked, now)
       val left    = state.waiter.demand.patience.minus(elapsed)
@@ -129,27 +134,54 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
   /**
    * Park until the next event or a wake, then ask whether it is this ticket's turn.
    *
-   * The clock is read twice: once to size the park, and once at the ask, which is the instant a `Wait`
-   * delay counts from.
+   * Only the park can be cut short. The ask is acquired in the call's scope, so a grant the store made is
+   * always observed, and released if the call ends without answering. The clock is read twice: once to
+   * size the park, and once at the ask, which is the instant a `Wait` delay counts from.
    *
    * @param state this caller's place in the queue, and when its answer can next change
    * @param patience the patience remaining, which bounds the park
    * @return the state the ask leaves the wait in: the lock, a later recheck, or a fresh start when the
    *         queue no longer knows this ticket; aborts with an `AdapterError` when the store fails
    */
-  private def awaitTurn(state: Queued, patience: Duration): IO[AdapterError, AcquireLifecycle] =
+  private def awaitTurn(state: Lifecycle.Queued, patience: Duration): ZIO[Scope, AdapterError, Lifecycle] =
     for
       waiter   = state.waiter
-      demand   = waiter.demand
       // The shorter of the patience left and the next recheck from now.
       timeout <- Clock.instant.map(now => Duration.fromInterval(now, state.recheckAt) min patience)
       _       <- waiter.signal.await.timeout(timeout).unless(timeout <= Duration.Zero)
       now     <- Clock.instant
-      answer  <- store.ask(demand.name, demand.ttl, state.ticket)
+      answer  <- ask(waiter.demand, state.ticket)
     yield answer match
-      case Turn.Gone          => Demanding(waiter, patience)
-      case Turn.Granted(hold) => Granted(hold)
-      case Turn.Wait(delay)   => Queued(waiter, state.ticket, now.plus(atLeastFloor(delay)))
+      case Turn.Granted(hold) => Lifecycle.Granted(hold)
+      case Turn.Gone          => Lifecycle.Demanding(waiter, patience)
+      case Turn.Wait(delay)   => Lifecycle.Queued(waiter, state.ticket, now.plus(atLeastFloor(delay)))
+
+  /**
+   * Ask for the lock, or for a place in its queue, as a resource of the call's scope: when the call ends
+   * without answering, a grant is released.
+   *
+   * @param demand the lock to take, and how long to hold it
+   * @param within what is left of the patience, which bounds any ticket the store hands out
+   * @return the lock, or a place in the queue; aborts with an `AdapterError` when the store fails
+   */
+  private def place(demand: Demand, within: Duration): ZIO[Scope, AdapterError, Position] =
+    ZIO.acquireReleaseExit(store.place(demand.name, demand.ttl, within)):
+      case Position.Granted(hold) -> Exit.Failure(_) => store.release(hold.claim).ignore
+      case _                                         => ZIO.unit
+
+  /**
+   * Ask whether it is this ticket's turn, as a resource of the call's scope: when the call ends without
+   * answering, a grant is released.
+   *
+   * @param demand the lock queued for, and how long to hold it
+   * @param ticket this caller's place in the queue
+   * @return the lock, a delay before asking again, or `Gone` when the queue no longer knows the ticket;
+   *         aborts with an `AdapterError` when the store fails
+   */
+  private def ask(demand: Demand, ticket: Ticket): ZIO[Scope, AdapterError, Turn] =
+    ZIO.acquireReleaseExit(store.ask(demand.name, demand.ttl, ticket)):
+      case Turn.Granted(hold) -> Exit.Failure(_) => store.release(hold.claim).ignore
+      case _                                     => ZIO.unit
 
 
 object LockAcquireUseCase:

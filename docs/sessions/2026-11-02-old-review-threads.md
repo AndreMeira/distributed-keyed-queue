@@ -35,7 +35,8 @@ These came from Copilot on #8 and still hold.
 
 1. **An acquire interrupted after the grant leaks the hold.** If `store.ask` is interrupted after `grant.lua`
    has granted, `onExit` calls `withdraw`, which cannot find the ticket. The hold then blocks everyone until its
-   lease expires.
+   lease expires. *Fixed later the same day on branch `lock-acquire-handback`, the way the queue's 10d5a27
+   was: grants are acquired in the call's scope. `place` and `tryAcquire` had the same leak.*
 2. **`abandon.lua` wakes nobody.** When the head ticket withdraws, the waiters behind it sleep until that
    ticket's old deadline. A waiter with less patience can time out on a free lock.
 3. **The grant is O(n²) under contention.** Every waiter behind the head scans the list with `LRANGE`, and one

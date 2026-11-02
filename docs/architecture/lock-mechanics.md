@@ -109,6 +109,10 @@ Two details make this sound rather than merely plausible:
   be missed, and the waiter would sleep until its recheck for no reason.
 - **The ticket is withdrawn on every exit that is not a grant** — patience spent, caller interrupted, effect
   failed. A ticket left behind holds up the queue until its deadline.
+- **A grant nobody receives is released.** Every store call that can grant (`place`, `ask`, `tryAcquire`) is
+  acquired in the call's scope, with a release that hands a grant back when the call fails or is cancelled. A call cancelled after the store granted, but before it answered, releases
+  the hold at once instead of blocking everyone until the lease expires (`LockHandBackSpec`). A response
+  already on its way out is beyond this: the hold lapses on its lease.
 
 ## The code
 
