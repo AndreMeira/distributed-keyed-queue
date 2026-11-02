@@ -13,8 +13,7 @@ import homelab.keyedqueue.domain.service.maintenance.Watchdog
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.readiness.QueueReadiness
 import homelab.keyedqueue.domain.service.readiness.QueueReadiness.Signal
-import homelab.keyedqueue.domain.service.usecase.queue.DequeueUseCase.DequeueLifecycle.*
-import homelab.keyedqueue.domain.service.usecase.queue.DequeueUseCase.DequeueLifecycle
+import homelab.keyedqueue.domain.service.usecase.queue.DequeueUseCase.DequeueLifecycle as Lifecycle
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
 import zio.*
 
@@ -82,12 +81,12 @@ final class DequeueUseCase(
    *         store fails; a grant is acquired in the scope, see [[acquireClaim]]
    */
   private def claim(demand: Demand, asked: Instant, signal: Signal): ZIO[Scope, AdapterError, Option[Grant]] =
-    Recursion(Waiting(demand, asked, signal)) {
-      case state: Waiting => next(state)
-      case state          => ZIO.succeed(state)
+    Recursion(Lifecycle.Waiting(demand, asked, signal)) {
+      case state: Lifecycle.Waiting => next(state)
+      case state                    => ZIO.succeed(state)
     }.terminate {
-      case GivenUp        => None
-      case Granted(grant) => Some(grant)
+      case Lifecycle.GivenUp        => None
+      case Lifecycle.Granted(grant) => Some(grant)
     }
 
   /**
@@ -97,9 +96,9 @@ final class DequeueUseCase(
    * @return the grant, the same wait to continue, or the end of the patience; aborts with an `AdapterError`
    *         when the store fails
    */
-  private def next(state: Waiting): ZIO[Scope, AdapterError, DequeueLifecycle] =
+  private def next(state: Lifecycle.Waiting): ZIO[Scope, AdapterError, Lifecycle] =
     patienceLeft(state).flatMap:
-      case None       => ZIO.succeed(GivenUp)
+      case None       => ZIO.succeed(Lifecycle.GivenUp)
       case Some(left) => awaitWork(state, left)
 
   /**
@@ -108,7 +107,7 @@ final class DequeueUseCase(
    * @param state the wait to measure, which carries when it was asked for
    * @return the time still to wait, or `None` when it is spent
    */
-  private def patienceLeft(state: Waiting): UIO[Option[Duration]] =
+  private def patienceLeft(state: Lifecycle.Waiting): UIO[Option[Duration]] =
     Clock.instant.map: now =>
       val left = state.demand.patience.minus(Duration.fromInterval(state.asked, now))
       Option.when(left.toMillis > 0)(left)
@@ -126,18 +125,18 @@ final class DequeueUseCase(
    * @return the grant, the same wait to continue, or the end of the patience when no token came in time;
    *         aborts with an `AdapterError` when the store fails
    */
-  private def awaitWork(state: Waiting, patience: Duration): ZIO[Scope, AdapterError, DequeueLifecycle] =
+  private def awaitWork(state: Lifecycle.Waiting, patience: Duration): ZIO[Scope, AdapterError, Lifecycle] =
     ZIO.uninterruptibleMask { restore =>
       restore(state.signal.await(patience)).flatMap:
-        case false => ZIO.succeed(GivenUp)
+        case false => ZIO.succeed(Lifecycle.GivenUp)
         case true  =>
           acquireClaim(state.demand)
             .map:
-              case Some(grant) => Granted(grant)
+              case Some(grant) => Lifecycle.Granted(grant)
               case None        => state
             .onExit:
-              case Exit.Success(_: Waiting) => ZIO.unit
-              case _                        => readiness.ready(state.demand.queue)
+              case Exit.Success(_: Lifecycle.Waiting) => ZIO.unit
+              case _                                  => readiness.ready(state.demand.queue)
     }
 
   /**
@@ -148,19 +147,9 @@ final class DequeueUseCase(
    * @return the claim, or `None` when nothing was claimable; aborts with an `AdapterError` when the store fails
    */
   private def acquireClaim(demand: Demand): ZIO[Scope, AdapterError, Option[Grant]] =
-    ZIO.acquireReleaseExit(store.attemptClaim(demand.queue, demand.batch))(handBackUnanswered)
-
-  /**
-   * Hand back a claim whose call did not answer.
-   *
-   * @param claimed what the claim found
-   * @param ended how the call's scope closed
-   * @return noop; never fails
-   */
-  private def handBackUnanswered(claimed: Option[Grant], ended: Exit[Any, Any]): UIO[Unit] =
-    claimed match
-      case Some(grant) if !ended.isSuccess => handBack(grant)
-      case _                               => ZIO.unit
+    ZIO.acquireReleaseExit(store.attemptClaim(demand.queue, demand.batch)):
+      case Some(grant) -> Exit.Failure(_) => handBack(grant)
+      case _                              => ZIO.unit
 
   /**
    * Return every message of a grant to its key, claimable again at once. A settle that does not land is
@@ -170,9 +159,9 @@ final class DequeueUseCase(
    * @return noop; never fails
    */
   private def handBack(grant: Grant): UIO[Unit] =
-    store
-      .settle(Settlement(grant.claim, grant.messages.map(owned => Outcome(owned.id, Verdict.Failed)), None))
-      .ignore
+    val outcomes   = grant.messages.map(owned => Outcome(owned.id, Verdict.Failed))
+    val settlement = Settlement(grant.claim, outcomes, None)
+    store.settle(settlement).ignore
 
   /**
    * Present what the store returned as the answer the caller gets.
