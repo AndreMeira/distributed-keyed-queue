@@ -48,6 +48,12 @@ These came from Copilot on #8 and still hold.
    remaining lists wait for the next interval. Now documented; a fix would change what the script returns, or
    bound the list deletion itself.
 
+5. **A ticket from a cancelled first ask is not withdrawn** (found while fixing item 1). `next(Demanding)` is
+   uninterruptible, so a cancel held by its `place` lands just after the step and drops the `Queued` state it
+   returned. Only `next(Queued)` withdraws a ticket, so this one stays in the queue until its deadline, and
+   the waiters behind it wait for nobody. A fix would acquire the ticket in the call's scope too, withdrawn
+   when the call does not answer.
+
 ## Approved, not done yet
 
 No `of` factories or parameters, and no parameter names that try to make the call read as a sentence:
