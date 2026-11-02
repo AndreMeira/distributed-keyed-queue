@@ -22,8 +22,12 @@ final class LockCleanup(store: LockStore, config: LockCleanup.Config):
   /**
    * Trim abandoned holds, for ever.
    *
-   * A pass that hits its limit is repeated at once: hitting the limit means there is more to remove. The
-   * interval is a gap between passes, not a rate.
+   * A pass that hits its limit is repeated at once: hitting the limit means there may be more to remove.
+   * The store applies the limit per atomic step (per partition, on Redis), and this judges the total of
+   * holds freed, so a pass whose steps were each partly full can be repeated with less to do; one with a
+   * step that freed a full `limit` of holds is never left waiting for the tick. Only holds are counted: a pass
+   * that filled its budget of dead waiter lists but freed fewer holds is not repeated, and the remaining
+   * lists wait for the next interval. The interval is a gap between passes, not a rate.
    *
    * @return never completes on its own; the schedule has no end
    */

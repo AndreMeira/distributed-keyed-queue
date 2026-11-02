@@ -114,7 +114,7 @@ Two details make this sound rather than merely plausible:
 
 | piece | role |
 |---|---|
-| `LockAcquireUseCase` | the waiting: enter, hold a ticket, park until the next known event, ask again (`queued` → `awaitTurn` → `turn`) |
+| `LockAcquireUseCase` | the waiting: enter, hold a ticket, park until the next known event, ask again (`next(Demanding)` → `next(Queued)` → `awaitTurn`) |
 | `RedisLockStore` | the adapter: one method per script, and no waiting — `place`, `ask`, `withdraw`, `tryAcquire`, `release`, `refresh`, `trim` |
 | `LockReadiness` | per-name mailboxes; a wake reaches **every** subscriber and is **dropped** if nobody waits |
 | `QueueReadiness` | the queue's counterpart, for contrast: one token to **one** consumer, and **kept** if nobody waits |
@@ -131,10 +131,13 @@ because a waiter subscribes before it enters. Handing the lock's wakes to the qu
 single token to a waiter that may not be next, and the head sleeps: that was a real stall, caught by the
 contention spec.
 
-**The waiting loop, in three methods** — in `LockAcquireUseCase`, not in the adapter. `awaitTurn` computes
-the window (the shorter of the remaining patience and the time to the next recheck) and parks; `turn` asks
-the store, which runs `grant.lua`, and interprets the three answers — granted, wait-this-long, ticket-gone; a gone ticket means the whole enter is redone, since the
-ticket expired while its owner was still willing to wait.
+**The waiting loop, as states** — in `LockAcquireUseCase`, not in the adapter. The wait is an enum,
+`AcquireLifecycle`, driven by the toolkit's `Recursion` until it is `Granted` or `GivenUp`. `next(Demanding)`
+calls `place`: granted at once, or a ticket and a first recheck time. `next(Queued)` checks the patience
+left and withdraws the ticket on every exit but staying queued and being granted. `awaitTurn` computes the
+window (the shorter of the remaining patience and the time to the next recheck), parks, then calls `ask`,
+which runs `grant.lua`, and interprets the three answers — granted, wait-this-long, ticket-gone. A gone
+ticket goes back to `Demanding`, since the ticket expired while its owner was still willing to wait.
 
 ## Where to look next
 

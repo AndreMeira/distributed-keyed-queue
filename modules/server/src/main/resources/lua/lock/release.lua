@@ -14,7 +14,10 @@
 local held, tokens, wake = KEYS[1], KEYS[2], KEYS[3]
 local name, token = ARGV[1], tonumber(ARGV[2])
 
-if tonumber(redis.call('HGET', tokens, name) or 0) ~= token then
+-- An absent entry is nobody's lock, so no token matches it. Fence tokens start at 1, but the receipt can carry
+-- any number, and a fallback to 0 would let a receipt saying 0 act on a lock nobody holds.
+local current = redis.call('HGET', tokens, name)
+if not current or tonumber(current) ~= token then
   return 0
 end
 
