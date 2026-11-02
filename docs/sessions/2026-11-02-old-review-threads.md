@@ -41,6 +41,12 @@ These came from Copilot on #8 and still hold.
 3. **The grant is O(n²) under contention.** Every waiter behind the head scans the list with `LRANGE`, and one
    release wakes all of them.
 
+4. **A trim's `limit` counts items, not work** (from Copilot on #65). `trim.lua` also deletes up to `limit` dead
+   waiter lists. A `DEL` on a list costs as much as the list is long, and nothing caps the tickets in one. The
+   deleted lists are not returned either, so `LockCleanup` cannot tell that the list budget was full, and the
+   remaining lists wait for the next interval. Now documented; a fix would change what the script returns, or
+   bound the list deletion itself.
+
 ## Approved, not done yet
 
 No `of` factories or parameters, and no parameter names that try to make the call read as a sentence:

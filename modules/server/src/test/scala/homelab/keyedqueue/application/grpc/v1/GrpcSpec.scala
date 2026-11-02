@@ -60,12 +60,14 @@ object GrpcSpec extends ZIOSpecDefault:
           taken    <- lock.tryAcquire(TryAcquireRequest("try", secs(30)))
           refused  <- lock.tryAcquire(TryAcquireRequest("try", secs(30)))
           queueing <- lock.acquire(AcquireRequest("try", secs(30), secs(5))).fork
-          _        <- queued(LockName("try"))
+          // Bounded by the acquire's patience: once that has run out, the ticket can no longer appear.
+          observed <- queued(LockName("try")).timeout(5.seconds).map(_.isDefined)
           _        <- lock.release(ReleaseRequest(taken.receipt))
           barging  <- lock.tryAcquire(TryAcquireRequest("try", secs(30)))
           waited   <- queueing.join
           noName   <- lock.tryAcquire(TryAcquireRequest("", secs(30))).exit
         yield assertTrue(
+          observed,          // the waiter's ticket reached Redis before the release
           taken.acquired,
           taken.fence > 0L,
           !refused.acquired, // held

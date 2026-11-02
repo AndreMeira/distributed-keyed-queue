@@ -103,7 +103,9 @@ trait LockStore:
    * '''The limit bounds one atomic step, not the call.''' What it protects is the store: a backend that
    * runs the removal as one blocking step (a Redis script) must not hold everything else up for a large
    * backlog. A backend that splits the call into several such steps applies the limit to each, so a call
-   * may remove more than `limit`; it still returns at least `limit` names whenever any step was full.
+   * may remove more than `limit`; it still returns at least `limit` names whenever any step removed
+   * `limit` holds. Other cleanup a backend does in the same step, such as dead waiter lists, is not
+   * reported here.
    *
    * @param grace how long past lease expiry a hold survives before it may be removed
    * @param limit the most holds one atomic step of the removal takes
