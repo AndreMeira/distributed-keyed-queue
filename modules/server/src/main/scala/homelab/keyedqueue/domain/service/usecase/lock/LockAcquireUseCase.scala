@@ -60,8 +60,10 @@ final class LockAcquireUseCase(store: LockStore, validation: LockInputValidation
   /**
    * Follow one caller's wait from its first ask until the lock is held or the patience is spent.
    *
-   * A step is interruptible — a waiter parks inside one — and the space between two steps is not, so a
-   * step's own handlers are what decide the fate of the ticket it holds.
+   * A cancel lands inside a queued step, a park or its ask, where the step's `onExit` withdraws the ticket.
+   * Only the first ask, `next(Demanding)`, is uninterruptible as a whole: a cancel held by it lands just
+   * after the step and drops the state it returned. A grant in it is released by the call's scope, and a
+   * ticket in it is not withdrawn and lapses at its deadline.
    *
    * @param waiter who is waiting, for what, and since when
    * @param patience the wait this caller asked for, which the first ask may claim a ticket for
