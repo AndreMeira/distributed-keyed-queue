@@ -36,14 +36,14 @@ object LockSpec extends ZIOSpecDefault:
     },
     test("a release on one instance grants the waiter parked on the other (A2)") {
       for
-        dkq               <- ZIO.service[Deployment]
-        name               = dkq.lock("handover")
-        held              <- dkq.a.acquire(name, ttl = 30.seconds, patience = 1.second)
-        waiter            <- dkq.b.acquire(name, ttl = 30.seconds, patience = 15.seconds).timed.fork
-        _                 <- ZIO.sleep(500.millis)
-        _                 <- dkq.a.release(held.receipt)
-        (took, granted)   <- waiter.join
-        _                 <- dkq.b.release(granted.receipt)
+        dkq             <- ZIO.service[Deployment]
+        name             = dkq.lock("handover")
+        held            <- dkq.a.acquire(name, ttl = 30.seconds, patience = 1.second)
+        waiter          <- dkq.b.acquire(name, ttl = 30.seconds, patience = 15.seconds).timed.fork
+        _               <- ZIO.sleep(500.millis)
+        _               <- dkq.a.release(held.receipt)
+        (took, granted) <- waiter.join
+        _               <- dkq.b.release(granted.receipt)
       yield assertTrue(
         granted.acquired,
         took > 400.millis, // it really waited on a held lock…
@@ -108,5 +108,5 @@ object LockSpec extends ZIOSpecDefault:
     } @@ TestAspect.after(Compose.revive("dkq-a").orDie) @@ TestAspect.ifEnvNotSet("DKQ_E2E_ENDPOINTS"),
   ).provideShared(Deployment.layer)
     @@ TestAspect.withLiveClock // every wait here is a real one; a virtual clock would prove nothing
-    @@ TestAspect.sequential   // the tests share a deployment, and one of them kills half of it
+    @@ TestAspect.sequential // the tests share a deployment, and one of them kills half of it
     @@ TestAspect.timeout(10.minutes)
