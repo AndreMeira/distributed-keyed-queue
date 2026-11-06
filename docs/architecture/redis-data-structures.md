@@ -2,7 +2,7 @@
 title: "What dkq keeps in Redis, and what each structure is for"
 type: architecture
 status: current
-updated: 2026-09-26
+updated: 2026-11-06
 tags: [redis, keys, data-structures, lua, claims, ordering, streams]
 ---
 
@@ -148,12 +148,21 @@ while the claim is still alive, so both `settle.lua`'s claim-end and the watchdo
 consumers claim it — the fence stops the loser corrupting anything, but it works for nothing.
 `QueueStoreSpec` has a regression test for exactly this.
 
+The same partial nack is why the due sweep must check `claimed` before it publishes a key whose backoff has
+ended. The backoff can end while the holder is still working the rest of its batch, and publishing the key
+then lets a second claim take it from under the first: two workers on one key, and the first one's
+remaining settles refused. The sweep removes the elapsed backoff and leaves the key to whoever ends the
+claim (`RedisQueueStoreSpec`, "a backoff that falls due while its claim lives does not hand the key to
+anyone else").
+
 ## The watchdog's two sweeps
 
 1. **Lapsed claims** — `ZRANGEBYSCORE claimed -inf now`: `DEL owned:<key>`, advance `fence`, clear the
    lease, and score the key back into `ready` unless `delayed` says otherwise. Nothing moves, because
    nothing had moved.
-2. **Elapsed backoffs** — `ZRANGEBYSCORE delayed -inf now`: back into `ready`, with a fresh score.
+2. **Elapsed backoffs** — `ZRANGEBYSCORE delayed -inf now`: the backoff is removed, and the key goes back
+   into `ready` with a fresh score, unless a claim still holds it. Then the claim's end or a reclaim puts
+   it back, since nothing in `delayed` holds it any longer.
 
 There used to be a third, draining the holding list of a connection that died mid-claim. With the claim in
 one script there is no such list and no such moment: **the lease is the only thing that expires.**

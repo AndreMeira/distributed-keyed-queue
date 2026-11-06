@@ -243,6 +243,31 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           ready  <- ZIO.fromCompletionStage(redis.zcard(layout.queue(queue).ready)).orDie
         yield assertTrue(ready == 1L)
       },
+      test("a backoff that falls due while its claim lives does not hand the key to anyone else") {
+        // A partial nack sets a backoff and leaves the claim alive, and the backoff ends while the holder is
+        // still working the rest of the batch. Publishing the key then would let a second claim take it from
+        // under the first: two workers on one key. The sweep must leave it to the claim's end.
+        for
+          worker  <- ZIO.service[QueueStore]
+          queue    = QueueName("backoff-while-held")
+          key      = MessageKey("k1")
+          _       <- ZIO.foreachDiscard(List("a", "b"))(m => worker.enqueue(Submission(queue, Helper.message(key, m))))
+          held    <- worker.attemptClaim(queue, 2)
+          batch    = held.get
+          // Nack the first with a short backoff; the second stays owed, so the claim lives on.
+          _       <- worker.settle(Helper.settlement(batch.claim, NonEmptyChunk(batch.messages(0).id -> Verdict.Failed), 200.millis))
+          _       <- ZIO.sleep(500.millis) // the backoff is over, the lease is not
+          swept   <- worker.sweep(queue, 100)
+          blocked <- worker.attemptClaim(queue, 1)
+          // The holder settles what it still owed; the claim ends, and the key comes back at once.
+          _       <- worker.settle(Helper.settlement(batch.claim, NonEmptyChunk(batch.messages(1).id -> Verdict.Done)))
+          after   <- worker.attemptClaim(queue, 1)
+        yield assertTrue(
+          blocked.isEmpty,
+          swept.released.map(_.toString) == Chunk("k1"), // its backoff is over, though the key stays with its claim
+          after.map(_.messages.map(_.id).toChunk) == Some(Chunk(batch.messages(0).id)),
+        )
+      },
       test("a sweep names what it reclaimed and what it released") {
         // The one port method whose answer nothing else asserts. Two keys, repaired for different reasons:
         // k1's holder went silent and its lease lapsed, k2 was nacked with a backoff that has since fallen

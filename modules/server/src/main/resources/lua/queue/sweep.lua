@@ -61,8 +61,16 @@ local due = redis.call('ZRANGEBYSCORE', delayed, '-inf', now, 'LIMIT', 0, limit)
 
 for _, key in ipairs(due) do
   redis.call('ZREM', delayed, key)
-  redis.call('ZADD', ready, redis.call('INCR', sequence), key)
-  redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'kind', 'q', 'name', queue, 'key', key)
+
+  -- Not while a claim still holds the key. A partial nack sets the backoff and leaves the claim alive, and
+  -- the backoff may end while the holder is still working the rest of its batch: publishing the key then
+  -- would let a second claim take it from under the first. With the backoff gone, whoever ends the claim
+  -- puts the key back — settle.lua at its end, or the reclaim above — since both push when `delayed` holds
+  -- nothing for it.
+  if redis.call('ZSCORE', claimed, key) == false then
+    redis.call('ZADD', ready, redis.call('INCR', sequence), key)
+    redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'kind', 'q', 'name', queue, 'key', key)
+  end
 end
 
 return { expired, due }
