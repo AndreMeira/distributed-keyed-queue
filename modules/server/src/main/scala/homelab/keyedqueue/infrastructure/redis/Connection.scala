@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.redis
 
 
-import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, RedisKey }
+import homelab.keyedqueue.infrastructure.redis.keys.KeyLayout
 import io.lettuce.core.api.StatefulRedisConnection
 import io.lettuce.core.cluster.RedisClusterClient
 import io.lettuce.core.cluster.api.StatefulRedisClusterConnection
@@ -68,21 +68,6 @@ final case class Connection(shared: Connection.Commands, blocking: Map[KeyLayout
 object Connection:
 
   /**
-   * How much longer than the longest wait a blocking connection's command timeout runs.
-   *
-   * A command timeout shorter than the block it is asked to make turns a read doing exactly what it was
-   * told into a timeout, so the ceiling has to clear it — see `redis-streams-with-lettuce.md`.
-   */
-  private val listeningSlack: Duration = 10.seconds
-
-  /** Keys as UTF-8 strings, values as raw bytes. */
-  private val codec: RedisCodec[String, Array[Byte]] =
-    RedisCodec.of(StringCodec.UTF8, ByteArrayCodec.INSTANCE)
-
-  /** The two clients this object knows how to open. */
-  private type Client = RedisClient | RedisClusterClient
-
-  /**
    * The shared connection's commands, through Lettuce's asynchronous API: each call answers a future, so one
    * in flight parks a fiber rather than a thread.
    *
@@ -100,6 +85,35 @@ object Connection:
    */
   opaque type Blocking <: RedisClusterCommands[String, Array[Byte]] =
     RedisClusterCommands[String, Array[Byte]]
+
+  /** The two clients this object knows how to open. */
+  private type Client = RedisClient | RedisClusterClient
+
+  /** A connection opened by [[connect]], from either client. */
+  private type Stateful =
+    StatefulRedisConnection[String, Array[Byte]] | StatefulRedisClusterConnection[String, Array[Byte]]
+
+  /**
+   * How much longer than the longest wait a blocking connection's command timeout runs.
+   *
+   * A command timeout shorter than the block it is asked to make turns a read doing exactly what it was
+   * told into a timeout, so the ceiling has to clear it — see `redis-streams-with-lettuce.md`.
+   */
+  private val listeningSlack: Duration = 10.seconds
+
+  /** Keys as UTF-8 strings, values as raw bytes. */
+  private val codec: RedisCodec[String, Array[Byte]] =
+    RedisCodec.of(StringCodec.UTF8, ByteArrayCodec.INSTANCE)
+
+  /**
+   * What is needed to reach Redis, and to time the connections.
+   *
+   * @param maxWait the longest wait a caller may ask for; both command ceilings are derived from it
+   * @param redisUrl where the substrate lives — one server, or a seed node of a cluster
+   * @param cluster whether `redisUrl` names a cluster; Lettuce has no URL scheme that tells the two apart,
+   *                so it is said here
+   */
+  final case class Config(maxWait: Duration, redisUrl: String, cluster: Boolean)
 
   /**
    * Ask for the connection in the environment, and run something with it.
@@ -124,16 +138,6 @@ object Connection:
    */
   def useBlocking[R, E, A](effect: Blocking => ZIO[R, E, A]): ZIO[R & Blocking, E, A] =
     ZIO.serviceWithZIO[Connection.Blocking](effect)
-
-  /**
-   * What is needed to reach Redis, and to time the connections.
-   *
-   * @param maxWait the longest wait a caller may ask for; both command ceilings are derived from it
-   * @param redisUrl where the substrate lives — one server, or a seed node of a cluster
-   * @param cluster whether `redisUrl` names a cluster; Lettuce has no URL scheme that tells the two apart,
-   *                so it is said here
-   */
-  final case class Config(maxWait: Duration, redisUrl: String, cluster: Boolean)
 
   /**
    * Every connection the deployment will hold, opened here and closed with the scope: the shared one, and
@@ -194,10 +198,6 @@ object Connection:
           RedisClusterClient.create(uri)
       }(client => ZIO.attempt(client.shutdown()).ignore)
       .mapError(error => RedisFailure.Unavailable(s"cannot reach $url: ${error.getMessage}"))
-
-  /** A connection opened by [[connect]], from either client. */
-  private type Stateful =
-    StatefulRedisConnection[String, Array[Byte]] | StatefulRedisClusterConnection[String, Array[Byte]]
 
   /**
    * A connection from whichever client [[client]] returned, closed with the scope.
