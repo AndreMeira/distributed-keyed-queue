@@ -34,12 +34,11 @@ final private[queue] class Heartbeat(client: QueueClient, scope: Scope, state: R
    * @param claim what was granted, whose lease times the beats from here
    * @return noop once it is held
    */
-  def hold(claim: Claim): UIO[Unit] =
-    ZIO.uninterruptible:
-      for
-        alone <- register(claim)
-        _     <- ZIO.when(alone)(beating.interruptible.forkIn(scope))
-      yield ()
+  def hold(claim: Claim): UIO[Unit] = ZIO.uninterruptible:
+    for
+      isFirst <- register(claim)
+      _       <- beating.interruptible.forkIn(scope).when(isFirst)
+    yield ()
 
   /**
    * Drop a claim from the set the beat renews.
@@ -62,12 +61,9 @@ final private[queue] class Heartbeat(client: QueueClient, scope: Scope, state: R
    *
    * @return noop once every settle has been sent, or has failed
    */
-  private def handBackAll: UIO[Unit] =
-    state
-      .getAndSet(State.Idle)
-      .flatMap:
-        case State.Idle             => ZIO.unit
-        case State.Beating(held, _) => ZIO.foreachParDiscard(held.values)(handBack)
+  private def handBackAll: UIO[Unit] = state.getAndSet(State.Idle).flatMap:
+    case State.Idle             => ZIO.unit
+    case State.Beating(held, _) => ZIO.foreachParDiscard(held.values)(handBack)
 
   /**
    * Settle a claim nobody will finish: every message failed, delivered again at once.
@@ -75,10 +71,10 @@ final private[queue] class Heartbeat(client: QueueClient, scope: Scope, state: R
    * @param claim what is still held
    * @return noop once the settle has been sent, or has failed
    */
-  private def handBack(claim: Claim): UIO[Unit] =
-    client
-      .settle(claim.receipt, claim.messages.map(message => Verdict(message.id, Verdict.Outcome.Failed)).toChunk, Duration.Zero)
-      .ignore
+  private def handBack(claim: Claim): UIO[Unit] = {
+    val verdicts = claim.messages.map(message => Verdict(message.id, Verdict.Outcome.Failed))
+    client.settle(claim.receipt, verdicts.toChunk, Duration.Zero).ignore
+  }
 
   /**
    * Renew what is held, for as long as anything is.
@@ -98,9 +94,13 @@ final private[queue] class Heartbeat(client: QueueClient, scope: Scope, state: R
    * @param claim what was granted
    * @return whether there was no beat, so this claim is what starts one
    */
-  private def register(claim: Claim): UIO[Boolean] = state.modify:
-    case State.Idle             => true  -> State.Beating(Map(claim.receipt -> claim), claim.leaseTtl.dividedBy(2))
-    case State.Beating(held, _) => false -> State.Beating(held + (claim.receipt -> claim), claim.leaseTtl.dividedBy(2))
+  private def register(claim: Claim): UIO[Boolean] = {
+    val holding  = Map(claim.receipt -> claim)
+    val interval = claim.leaseTtl.dividedBy(2)
+    state.modify:
+      case State.Idle             => true  -> State.Beating(holding, interval)
+      case State.Beating(held, _) => false -> State.Beating(held ++ holding, interval)
+  }
 
   /**
    * How long until the next beat, taking the registry back to idle when it holds nothing.
@@ -123,20 +123,9 @@ final private[queue] class Heartbeat(client: QueueClient, scope: Scope, state: R
    *
    * @return noop once the beat has been sent, or skipped
    */
-  private def renewing: UIO[Unit] =
-    for
-      held <- outstanding
-      _    <- ZIO.unless(held.isEmpty)(beat(held))
-    yield ()
-
-  /**
-   * The receipts held right now.
-   *
-   * @return what there is to renew, which is none while idle
-   */
-  private def outstanding: UIO[Set[Receipt]] = state.get.map:
-    case State.Idle             => Set.empty
-    case State.Beating(held, _) => held.keySet
+  private def renewing: UIO[Unit] = state.get.flatMap:
+    case State.Beating(held, _) if held.nonEmpty => beat(held.keySet)
+    case _                                       => ZIO.unit
 
   /**
    * Send one beat for what is held.
