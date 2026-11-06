@@ -137,15 +137,26 @@ This is a schema bump to `v4`, with the drain ceremony in [`redis-cluster.md`](.
 2. The settle use case sends this instance's backoff tick source a request for `now + retryAfter`.
 3. The latch fires at that time, the tick source swaps the latch and emits a tick, and the mover runs the
    backoff script on every partition.
-4. The script moves the due key into `ready` and appends a wake for its queue. Consumers on every instance
-   learn of it through the stream, exactly as they do today.
+4. The script removes the elapsed delay and, **only if the key is not in `claimed`**, moves it into `ready`
+   and appends a wake for its queue. Consumers on every instance learn of it through the stream, exactly as
+   they do today.
+   - **Why the check matters:** a partial nack can set the delay while the rest of the batch is still owned
+     (`settle.lua` returns with the claim alive). Publishing that key would let `claim.lua` grant it again
+     while the original claim is valid, which breaks E1.
+   - **A key still claimed is left out of `ready`.** With its delay removed, the claim's end or a reclaim
+     publishes it, since both push when `delayed` holds nothing for the key.
+   - **Today's watchdog has the same gap:** `sweep.lua`'s due sweep pushes without checking `claimed`. It
+     is being fixed on its own, ahead of any of this.
 5. The script answers with the next due time, which arms the new latch.
 
 ### A scheduled message
 
 1. The schedule use case writes the message into `{p}:scheduled` and its payload into
-   `{p}:scheduled:payloads`, in one script.
-2. It sends this instance's schedule tick source a request for the due time.
+   `{p}:scheduled:payloads`, in one script. The script answers with how long until the message is due,
+   "in X ms" on the store's clock.
+2. It sends this instance's schedule tick source a request for `now_local + X`. It never sends the due
+   time itself, which is an instant on the store's clock, while the latch sleeps on the instance's (see
+   point 4 below).
 3. On the tick, the schedule script moves each due message into its key's line:
    - `HSETNX` the key's `payloads`;
    - `RPUSH` its `msgs`;

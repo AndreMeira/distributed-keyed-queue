@@ -179,6 +179,20 @@ mover, which feeds the next due time back.
 
 The full design, still exploration: [`tick-driven-mover.md`](../research/tick-driven-mover.md).
 
+### Found in review (2026-11-06): the due sweep publishes a key that is still claimed
+
+Copilot's review of the mover note found a gap that today's watchdog has too.
+- **What happens:** a partial nack with `retry_after` writes `delayed` while the rest of the batch is
+  still owned, and `settle.lua` returns with the claim alive. If the backoff ends first, `sweep.lua`'s due
+  sweep runs `ZREM delayed`, `ZADD ready`, `XADD wake` without checking `claimed`.
+- **The result:** another consumer's claim pops the key, overwrites the lease and advances the fence. It
+  receives the messages the first consumer is still working, and that consumer's remaining settles are
+  refused. E1 breaks.
+- **Who is exposed:** the managed client settles a batch in one call, so its claims end in the same
+  script and it is not exposed. A consumer settling piece by piece through the raw API is.
+- **The fix:** remove the elapsed delay, and publish only a key absent from `claimed`. The claim's end or
+  a reclaim publishes it otherwise. It ships on its own PR, with a regression test.
+
 ## 2. Key stickiness (larger, several research rounds)
 
 **Goal:** messages of one key go preferably to the same consumer pod, a little like partition assignment

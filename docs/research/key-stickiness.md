@@ -47,8 +47,11 @@ Kafka's rebalancing, and every strategy below should be judged by how much of th
 
 - **No consumer identity.** R3 says recovery does not depend on one, and no request carries one. A claim
   is identified by its receipt, nothing else. Stickiness of any kind needs a consumer id, with a lifecycle
-  (heartbeat, expiry). The `Heartbeat` RPC already runs on a fixed tick per consumer, so it is the obvious
-  carrier.
+  (heartbeat, expiry). The `Heartbeat` RPC is a natural carrier, but not as the managed client uses it
+  today: its `Heartbeat` beats only while it holds claims, at half the granted lease, and stops when the
+  last one is settled. A consumer waiting for work would then look dead, and its keys would move for
+  nothing. Membership needs a beat that also runs while the consumer is idle: a separate membership beat,
+  or a heartbeat kept alive for the consumer's whole lifetime.
 - **Accidental stickiness already exists.** [`guarantees.md`](../architecture/guarantees.md) notes that
   "the instance that just finished a key is often the one that takes it next", so a hot key tends to stay
   put. Nobody has measured how often. That is the baseline any design has to beat.
