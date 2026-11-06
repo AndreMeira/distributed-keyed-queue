@@ -25,60 +25,7 @@ import java.time.Instant
  * status read wrong, would pass everything else in this module.
  */
 object GrpcClientSpec extends ZIOSpecDefault:
-
-  private val until   = Timestamp(1_700_000_000L, 0)
-  private val moment  = Instant.ofEpochSecond(1_700_000_000L)
-  private val span    = ProtoDuration(30L, 0)
-  private val granted = v1.AcquireResponse(acquired = true, "receipt", 7L, Some(until), Some(span))
-  private val renewed = v1.RefreshResponse(renewed = true, Some(until), Some(span))
-
-  /** A service that answers the same way every time, and keeps what it was sent. */
-  final private class Recording(seen: Ref[Chunk[Any]]) extends KeyedLock:
-    override def acquire(request: v1.AcquireRequest): IO[StatusException, v1.AcquireResponse]       =
-      seen.update(_ :+ request).as(granted)
-    override def tryAcquire(request: v1.TryAcquireRequest): IO[StatusException, v1.AcquireResponse] =
-      seen.update(_ :+ request).as(granted)
-    override def release(request: v1.ReleaseRequest): IO[StatusException, v1.ReleaseResponse]       =
-      seen.update(_ :+ request).as(v1.ReleaseResponse(released = true))
-    override def refresh(request: v1.RefreshRequest): IO[StatusException, v1.RefreshResponse]       =
-      seen.update(_ :+ request).as(renewed)
-
-  /** A service that refuses everything with one status, for the reading of a failure. */
-  final private class Refusing(status: Status) extends KeyedLock:
-    private def refused: IO[StatusException, Nothing]                                               =
-      ZIO.fail(StatusException(status))
-    override def acquire(request: v1.AcquireRequest): IO[StatusException, v1.AcquireResponse]       = refused
-    override def tryAcquire(request: v1.TryAcquireRequest): IO[StatusException, v1.AcquireResponse] = refused
-    override def release(request: v1.ReleaseRequest): IO[StatusException, v1.ReleaseResponse]       = refused
-    override def refresh(request: v1.RefreshRequest): IO[StatusException, v1.RefreshResponse]       = refused
-
-  /**
-   * Serve one lock service and dial it, both closed with the scope.
-   *
-   * @param service what answers the calls
-   * @return a client talking to it over an in-process channel
-   */
-  private def served(service: KeyedLock): ZIO[Scope, Throwable | ServiceError, LockClient] =
-    val name = InProcessServerBuilder.generateName()
-    for
-      _      <- ScopedServer.fromServiceList(
-                  InProcessServerBuilder.forName(name).directExecutor(),
-                  ServiceList.add(service),
-                )
-      client <- LockClient.scoped(ZManagedChannel(InProcessChannelBuilder.forName(name).directExecutor()))
-    yield client
-
-  /**
-   * A client over a service that refuses with one status.
-   *
-   * @param status what every call comes back with
-   * @return what the client made of a refused acquire
-   */
-  private def refusedBy(status: Status): ZIO[Scope, Throwable | ServiceError, Either[ServiceError, Acquired]] =
-    for
-      client <- served(Refusing(status))
-      answer <- client.acquire("a-key", 1.second, 1.second).either
-    yield answer
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("GrpcClient")(
     test("an acquire carries the name and both spans, and a grant reads back as a hold") {
@@ -135,3 +82,59 @@ object GrpcClientSpec extends ZIOSpecDefault:
         .map(answer => assertTrue(answer.left.exists(_.isInstanceOf[ServiceError.Failed])))
     },
   )
+
+  private object Support:
+
+    val until   = Timestamp(1_700_000_000L, 0)
+    val moment  = Instant.ofEpochSecond(1_700_000_000L)
+    val span    = ProtoDuration(30L, 0)
+    val granted = v1.AcquireResponse(acquired = true, "receipt", 7L, Some(until), Some(span))
+    val renewed = v1.RefreshResponse(renewed = true, Some(until), Some(span))
+
+    /** A service that answers the same way every time, and keeps what it was sent. */
+    final class Recording(seen: Ref[Chunk[Any]]) extends KeyedLock:
+      override def acquire(request: v1.AcquireRequest): IO[StatusException, v1.AcquireResponse]       =
+        seen.update(_ :+ request).as(granted)
+      override def tryAcquire(request: v1.TryAcquireRequest): IO[StatusException, v1.AcquireResponse] =
+        seen.update(_ :+ request).as(granted)
+      override def release(request: v1.ReleaseRequest): IO[StatusException, v1.ReleaseResponse]       =
+        seen.update(_ :+ request).as(v1.ReleaseResponse(released = true))
+      override def refresh(request: v1.RefreshRequest): IO[StatusException, v1.RefreshResponse]       =
+        seen.update(_ :+ request).as(renewed)
+
+    /** A service that refuses everything with one status, for the reading of a failure. */
+    final class Refusing(status: Status) extends KeyedLock:
+      private def refused: IO[StatusException, Nothing]                                               =
+        ZIO.fail(StatusException(status))
+      override def acquire(request: v1.AcquireRequest): IO[StatusException, v1.AcquireResponse]       = refused
+      override def tryAcquire(request: v1.TryAcquireRequest): IO[StatusException, v1.AcquireResponse] = refused
+      override def release(request: v1.ReleaseRequest): IO[StatusException, v1.ReleaseResponse]       = refused
+      override def refresh(request: v1.RefreshRequest): IO[StatusException, v1.RefreshResponse]       = refused
+
+    /**
+     * Serve one lock service and dial it, both closed with the scope.
+     *
+     * @param service what answers the calls
+     * @return a client talking to it over an in-process channel
+     */
+    def served(service: KeyedLock): ZIO[Scope, Throwable | ServiceError, LockClient] =
+      val name = InProcessServerBuilder.generateName()
+      for
+        _      <- ScopedServer.fromServiceList(
+                    InProcessServerBuilder.forName(name).directExecutor(),
+                    ServiceList.add(service),
+                  )
+        client <- LockClient.scoped(ZManagedChannel(InProcessChannelBuilder.forName(name).directExecutor()))
+      yield client
+
+    /**
+     * A client over a service that refuses with one status.
+     *
+     * @param status what every call comes back with
+     * @return what the client made of a refused acquire
+     */
+    def refusedBy(status: Status): ZIO[Scope, Throwable | ServiceError, Either[ServiceError, Acquired]] =
+      for
+        client <- served(Refusing(status))
+        answer <- client.acquire("a-key", 1.second, 1.second).either
+      yield answer

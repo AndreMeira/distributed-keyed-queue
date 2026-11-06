@@ -15,45 +15,7 @@ import java.time.Instant
  * runs, and the lock comes back on every exit.
  */
 object ManagedDistributedLockSpec extends ZIOSpecDefault:
-
-  /** The lease the fake service grants, which is what the renewals are timed by. */
-  private val lease = 40.millis
-
-  private val hold = Hold(Receipt("handle"), Fence(1L), Instant.EPOCH, lease)
-
-  /** A client that answers as told and records what it was asked to do. */
-  final private class Fake(
-    granted: Option[Hold],
-    refreshes: Ref[Chunk[Duration]],
-    releases: Ref[Int],
-    renewed: Promise[Nothing, Unit],
-    lostAfter: Int,
-    granting: Option[Duration],
-  ) extends LockClient:
-    override def acquire(name: String, ttl: Duration, maxWait: Duration): IO[ServiceError, Acquired] =
-      ZIO.succeed(granted.fold(Acquired.Unavailable)(Acquired.Granted.apply))
-    override def tryAcquire(name: String, ttl: Duration): IO[ServiceError, Acquired]                 =
-      acquire(name, ttl, Duration.Zero)
-    override def release(receipt: Receipt): IO[ServiceError, Boolean]                                =
-      releases.update(_ + 1).as(true)
-    override def refresh(receipt: Receipt, ttl: Duration): IO[ServiceError, Refreshed]               =
-      refreshes
-        .updateAndGet(_ :+ ttl)
-        .tap(_ => renewed.succeed(()))
-        .map: asked =>
-          if asked.length > lostAfter then Refreshed.Lost
-          else Refreshed.Renewed(Instant.EPOCH, granting.getOrElse(ttl))
-
-  private def fake(
-    granted: Option[Hold],
-    lostAfter: Int = Int.MaxValue,
-    granting: Option[Duration] = None,
-  ) =
-    for
-      refreshes <- Ref.make(Chunk.empty[Duration])
-      releases  <- Ref.make(0)
-      renewed   <- Promise.make[Nothing, Unit]
-    yield (Fake(granted, refreshes, releases, renewed, lostAfter, granting), refreshes, releases, renewed)
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("DistributedLock")(
     test("no grant means the effect never runs") {
@@ -155,3 +117,44 @@ object ManagedDistributedLockSpec extends ZIOSpecDefault:
       yield assertTrue(answer.contains("finished"), pushed.length == 1, back == 1)
     },
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(30.seconds)
+
+  private object Support:
+
+    /** The lease the fake service grants, which is what the renewals are timed by. */
+    val lease = 40.millis
+
+    val hold = Hold(Receipt("handle"), Fence(1L), Instant.EPOCH, lease)
+
+    /** A client that answers as told and records what it was asked to do. */
+    final class Fake(
+      granted: Option[Hold],
+      refreshes: Ref[Chunk[Duration]],
+      releases: Ref[Int],
+      renewed: Promise[Nothing, Unit],
+      lostAfter: Int,
+      granting: Option[Duration],
+    ) extends LockClient:
+      override def acquire(name: String, ttl: Duration, maxWait: Duration): IO[ServiceError, Acquired] =
+        ZIO.succeed(granted.fold(Acquired.Unavailable)(Acquired.Granted.apply))
+      override def tryAcquire(name: String, ttl: Duration): IO[ServiceError, Acquired]                 =
+        acquire(name, ttl, Duration.Zero)
+      override def release(receipt: Receipt): IO[ServiceError, Boolean]                                =
+        releases.update(_ + 1).as(true)
+      override def refresh(receipt: Receipt, ttl: Duration): IO[ServiceError, Refreshed]               =
+        refreshes
+          .updateAndGet(_ :+ ttl)
+          .tap(_ => renewed.succeed(()))
+          .map: asked =>
+            if asked.length > lostAfter then Refreshed.Lost
+            else Refreshed.Renewed(Instant.EPOCH, granting.getOrElse(ttl))
+
+    def fake(
+      granted: Option[Hold],
+      lostAfter: Int = Int.MaxValue,
+      granting: Option[Duration] = None,
+    ) =
+      for
+        refreshes <- Ref.make(Chunk.empty[Duration])
+        releases  <- Ref.make(0)
+        renewed   <- Promise.make[Nothing, Unit]
+      yield (Fake(granted, refreshes, releases, renewed, lostAfter, granting), refreshes, releases, renewed)

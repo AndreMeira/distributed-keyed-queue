@@ -21,9 +21,7 @@ import zio.test.*
  * is the guilty one.
  */
 object GrpcChannelSpec extends ZIOSpecDefault:
-
-  private val calls   = 200
-  private val threads = 8
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("one channel, many callers")(
     test("the Java blocking stub, from plain threads") {
@@ -58,18 +56,23 @@ object GrpcChannelSpec extends ZIOSpecDefault:
     },
   ).provideShared(Deployment.layer) @@ TestAspect.withLiveClock @@ TestAspect.sequential @@ TestAspect.timeout(5.minutes)
 
-  /**
-   * A message with no interesting content.
-   *
-   * @param key the key to file it under
-   * @param body its payload
-   * @return the protobuf message
-   */
-  private def message(key: String, body: String): Message =
-    Message(
-      key = key,
-      messageId = s"$key/$body",
-      payloadType = "e2e.Text/v1",
-      encoding = "application/json",
-      payload = ByteString.copyFromUtf8(body),
-    )
+  private object Support:
+
+    val calls   = 200
+    val threads = 8
+
+    /**
+     * A message with no interesting content.
+     *
+     * @param key the key to file it under
+     * @param body its payload
+     * @return the protobuf message
+     */
+    def message(key: String, body: String): Message =
+      Message(
+        key = key,
+        messageId = s"$key/$body",
+        payloadType = "e2e.Text/v1",
+        encoding = "application/json",
+        payload = ByteString.copyFromUtf8(body),
+      )

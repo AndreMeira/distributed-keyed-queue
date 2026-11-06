@@ -17,13 +17,7 @@ import zio.test.*
  * the parsed value, not the response.
  */
 object LockInputValidationSpec extends ZIOSpecDefault:
-
-  private val validation =
-    LockInputValidation(LockInputValidation.Config(maxWait = 30.seconds, maxTtl = 10.minutes))
-
-  /** A claim as a holder would carry it, and the receipt the service would have issued for it. */
-  private val claim   = Claim(LockName("resource"), Token(7))
-  private val receipt = claim.reference
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("LockInputValidation")(
     test("a well-formed acquire passes through unchanged") {
@@ -89,3 +83,12 @@ object LockInputValidationSpec extends ZIOSpecDefault:
       assertTrue(parsed.toEither.exists((named, ttl) => named == claim && ttl == 10.minutes))
     },
   )
+
+  private object Support:
+
+    val validation =
+      LockInputValidation(LockInputValidation.Config(maxWait = 30.seconds, maxTtl = 10.minutes))
+
+    /** A claim as a holder would carry it, and the receipt the service would have issued for it. */
+    val claim   = Claim(LockName("resource"), Token(7))
+    val receipt = claim.reference

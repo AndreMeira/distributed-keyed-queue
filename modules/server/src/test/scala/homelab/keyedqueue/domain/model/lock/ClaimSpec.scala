@@ -13,9 +13,7 @@ import zio.test.*
  * the cases below are about content that used to collide with the separator.
  */
 object ClaimSpec extends ZIOSpecDefault:
-
-  private def roundTrips(claim: Claim) =
-    assertTrue(Claim.decode(claim.reference).contains(claim))
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("Claim")(
     test("a reference reads back") {
@@ -36,3 +34,8 @@ object ClaimSpec extends ZIOSpecDefault:
       )
     },
   )
+
+  private object Support:
+
+    def roundTrips(claim: Claim) =
+      assertTrue(Claim.decode(claim.reference).contains(claim))

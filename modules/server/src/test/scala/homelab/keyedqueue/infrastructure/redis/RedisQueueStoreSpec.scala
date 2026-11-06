@@ -21,11 +21,7 @@ import zio.test.*
  * a second substrate has to pass them unchanged.
  */
 object RedisQueueStoreSpec extends ZIOSpecDefault:
-
-  private val leaseTtl = 2.seconds
-
-  /** The layout these tests read and write under. */
-  private val layout: KeyLayout = KeyLayout.single
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = {
     suite("QueueStore over Redis")(
@@ -300,3 +296,10 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
       },
     ) @@ RedisSpecSupport.Aspect.init @@ SpecHelper.Aspect.common
   }.provideSomeShared[Scope](RedisSpecSupport.config(leaseTtl) >+> RedisSpecSupport.layer)
+
+  private object Support:
+
+    val leaseTtl = 2.seconds
+
+    /** The layout these tests read and write under. */
+    val layout: KeyLayout = KeyLayout.single

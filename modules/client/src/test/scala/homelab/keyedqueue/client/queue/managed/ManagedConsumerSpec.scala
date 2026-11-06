@@ -17,64 +17,8 @@ import java.time.Instant
  * settled however the work ends.
  */
 object ManagedConsumerSpec extends ZIOSpecDefault:
-
-  final case class Order(id: String)
-
-  private given Schema[Order] = DeriveSchema.gen[Order]
-
+  import Support.{ *, given }
   import homelab.keyedqueue.client.queue.MessageDecoder.auto.given
-
-  private val lease = 40.millis
-
-  /** Long enough that a loaded runner is not the thing under test, short enough to fail a beat that waits
-    * out a cadence of its own. */
-  private val soon    = lease * 25
-  private val encoder = MessageEncoder.derive[Order]
-  private val order   = Order("o-1")
-
-  private def message(attempt: Int = 1, payload: Chunk[Byte] = encoder.encode(order)): Message.Incoming =
-    Message.Incoming(MessageKey("k1"), MessageId("m1"), "order.v1", encoder.encoding, payload, Instant.EPOCH, attempt)
-
-  private def claim(of: Message.Incoming): Dequeued =
-    Dequeued.Claimed(Claim(Receipt("r1"), NonEmptyChunk(of), Instant.EPOCH, lease, backlogDepth = 0))
-
-  /** A client that hands out scripted answers and records what it was told. */
-  final private class Fake(
-    answers: Ref[Chunk[Dequeued]],
-    val settled: Ref[Chunk[Verdict]],
-    val beats: Queue[Chunk[Receipt]],
-  ) extends QueueClient:
-
-    override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
-      ZIO.succeed(Enqueued(0L))
-
-    override def dequeue(queue: String, maxWait: Duration, maxBatch: Int): IO[ServiceError, Dequeued] =
-      answers.modify {
-        case answer +: rest => (answer, rest)
-        case _              => (Dequeued.Idle, Chunk.empty)
-      }
-
-    override def settle(
-      receipt: Receipt,
-      verdicts: Chunk[Verdict],
-      retryAfter: Duration,
-    ): IO[ServiceError, Settled] =
-      settled.update(_ ++ verdicts).as(Settled.Applied)
-
-    override def heartbeat(receipts: Chunk[Receipt]): IO[ServiceError, Renewed] =
-      beats.offer(receipts).as(Renewed(Chunk.empty, Instant.EPOCH, lease))
-
-  private def fake(scripted: Dequeued*) =
-    for
-      answers <- Ref.make(Chunk.fromIterable(scripted))
-      settled <- Ref.make(Chunk.empty[Verdict])
-      beats   <- Queue.unbounded[Chunk[Receipt]]
-    yield Fake(answers, settled, beats)
-
-  private def consumerOver(client: QueueClient) =
-    Provider(client).consumer[Order](
-      Provider.ConsumerConfig("orders", patience = 1.second)
-    )
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("ManagedConsumer")(
     test("a message that reads is handed over, and settled done when the logic answers") {
@@ -178,6 +122,64 @@ object ManagedConsumerSpec extends ZIOSpecDefault:
     },
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(30.seconds)
 
-  /** A caller's own reading, which answers for a message it cannot take rather than failing. */
-  private def dropping(message: Message.Incoming): UIO[Unit] =
-    ZIO.succeed(MessageDecoder[Order].decode(message)).unit
+  private object Support:
+
+    final case class Order(id: String)
+
+    given Schema[Order] = DeriveSchema.gen[Order]
+
+    val lease = 40.millis
+
+    /** Long enough that a loaded runner is not the thing under test, short enough to fail a beat that waits
+      * out a cadence of its own. */
+    val soon    = lease * 25
+    val encoder = MessageEncoder.derive[Order]
+    val order   = Order("o-1")
+
+    def message(attempt: Int = 1, payload: Chunk[Byte] = encoder.encode(order)): Message.Incoming =
+      Message.Incoming(MessageKey("k1"), MessageId("m1"), "order.v1", encoder.encoding, payload, Instant.EPOCH, attempt)
+
+    def claim(of: Message.Incoming): Dequeued =
+      Dequeued.Claimed(Claim(Receipt("r1"), NonEmptyChunk(of), Instant.EPOCH, lease, backlogDepth = 0))
+
+    /** A client that hands out scripted answers and records what it was told. */
+    final class Fake(
+      answers: Ref[Chunk[Dequeued]],
+      val settled: Ref[Chunk[Verdict]],
+      val beats: Queue[Chunk[Receipt]],
+    ) extends QueueClient:
+
+      override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
+        ZIO.succeed(Enqueued(0L))
+
+      override def dequeue(queue: String, maxWait: Duration, maxBatch: Int): IO[ServiceError, Dequeued] =
+        answers.modify {
+          case answer +: rest => (answer, rest)
+          case _              => (Dequeued.Idle, Chunk.empty)
+        }
+
+      override def settle(
+        receipt: Receipt,
+        verdicts: Chunk[Verdict],
+        retryAfter: Duration,
+      ): IO[ServiceError, Settled] =
+        settled.update(_ ++ verdicts).as(Settled.Applied)
+
+      override def heartbeat(receipts: Chunk[Receipt]): IO[ServiceError, Renewed] =
+        beats.offer(receipts).as(Renewed(Chunk.empty, Instant.EPOCH, lease))
+
+    def fake(scripted: Dequeued*) =
+      for
+        answers <- Ref.make(Chunk.fromIterable(scripted))
+        settled <- Ref.make(Chunk.empty[Verdict])
+        beats   <- Queue.unbounded[Chunk[Receipt]]
+      yield Fake(answers, settled, beats)
+
+    def consumerOver(client: QueueClient) =
+      Provider(client).consumer[Order](
+        Provider.ConsumerConfig("orders", patience = 1.second)
+      )
+
+    /** A caller's own reading, which answers for a message it cannot take rather than failing. */
+    def dropping(message: Message.Incoming): UIO[Unit] =
+      ZIO.succeed(MessageDecoder[Order].decode(message)).unit

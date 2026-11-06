@@ -16,15 +16,7 @@ import zio.test.*
  * needs it, which is the wrong place to discover it.
  */
 object ReadinessSignalProcessorSpec extends ZIOSpecDefault:
-
-  private val queue = QueueName("orders")
-  private val lock  = LockName("route-7")
-
-  /** An input that never delivers: these tests hand wakes to `process` directly. */
-  private val silent: ReadinessSignalConsumer = new ReadinessSignalConsumer:
-    override def consume[E2 >: ApplicationError.AdapterError](
-      logic: Chunk[ReadinessSignal] => IO[E2, Unit]
-    ): IO[E2, Unit] = ZIO.never
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("ReadinessSignalProcessor")(
     test("a queue wake reaches the queue's readiness, and not the lock's") {
@@ -67,3 +59,14 @@ object ReadinessSignalProcessorSpec extends ZIOSpecDefault:
         yield assertTrue(woken.isDefined, taken)
     },
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(1.minute)
+
+  private object Support:
+
+    val queue = QueueName("orders")
+    val lock  = LockName("route-7")
+
+    /** An input that never delivers: these tests hand wakes to `process` directly. */
+    val silent: ReadinessSignalConsumer = new ReadinessSignalConsumer:
+      override def consume[E2 >: ApplicationError.AdapterError](
+        logic: Chunk[ReadinessSignal] => IO[E2, Unit]
+      ): IO[E2, Unit] = ZIO.never

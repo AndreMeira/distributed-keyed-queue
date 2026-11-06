@@ -25,12 +25,7 @@ import zio.test.*
  * directly. Only the tests about `orFail` — the step that turns problems into a refusal — are effectful.
  */
 object QueueInputValidationSpec extends ZIOSpecDefault:
-
-  private val validation = QueueInputValidation(QueueInputValidation.Config(maxWait = 30.seconds, maxBatchLimit = 32))
-
-  /** The claim a settle names, and the receipt a consumer would have been handed for it. */
-  private val claim   = Claim(QueueName("jobs"), MessageKey("k1"), Token(1))
-  private val receipt = claim.reference
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueInputValidation")(
     test("a settle naming an empty id, or the same id twice, is refused") {
@@ -200,3 +195,11 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
       )
     },
   )
+
+  private object Support:
+
+    val validation = QueueInputValidation(QueueInputValidation.Config(maxWait = 30.seconds, maxBatchLimit = 32))
+
+    /** The claim a settle names, and the receipt a consumer would have been handed for it. */
+    val claim   = Claim(QueueName("jobs"), MessageKey("k1"), Token(1))
+    val receipt = claim.reference

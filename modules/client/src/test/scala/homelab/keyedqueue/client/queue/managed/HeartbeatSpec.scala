@@ -16,81 +16,85 @@ import java.time.Instant
  * when its scope closes is handed back.
  */
 object HeartbeatSpec extends ZIOSpecDefault:
+  import Support.*
 
-  private val lease = 20.millis
+  def spec: Spec[TestEnvironment & Scope, Any] =
+    suite("Heartbeat")(
+      test("holding a new claim right after releasing the last one does not start a second beat") {
+        // Counted against what a single beat can send, which is a ceiling a slow runner only falls under:
+        // sleeping a cadence between beats is what bounds it, so the count rises above this only when
+        // there is more than one beat sending. Taking the first bounds the cadence, which the ceiling
+        // assumes and cannot itself check.
+        for
+          client    <- counting
+          heartbeat <- Heartbeat.make(client)
+          _         <- heartbeat.hold(claim("r1", "m1"))
+          first     <- client.beats.take.timeout(soon)
+          _         <- heartbeat.release(Receipt("r1")) *> heartbeat.hold(claim("r2", "m2"))
+          _         <- client.beats.takeAll
+          _         <- ZIO.sleep(window)
+          sent      <- client.beats.size
+        yield assertTrue(first.isDefined, sent <= alone + 2)
+      },
+      test("a claim still held when the scope closes is handed back, every message failed, with no wait") {
+        for
+          client <- counting
+          _      <- ZIO.scoped:
+                      Heartbeat
+                        .make(client)
+                        .flatMap: heartbeat =>
+                          heartbeat.hold(claim("r1", "m1")) *>
+                            heartbeat.hold(claim("r2", "m2")) *>
+                            heartbeat.release(Receipt("r2"))
+          sent   <- client.settles.takeAll
+        yield assertTrue(sent == Chunk((Receipt("r1"), Chunk(Verdict(MessageId("m1"), Verdict.Outcome.Failed)), Duration.Zero)))
+      },
+    ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(30.seconds)
 
-  /** Ten cadences, so the window counts beats rather than catching one. */
-  private val window = lease * 5
+  private object Support:
 
-  /** The most one beat sends in the window: a cadence is half the lease, and one falls on its edge. */
-  private val alone = (window.toMillis / (lease.toMillis / 2) + 1).toInt
+    val lease = 20.millis
 
-  /** Long enough that a loaded runner is not the thing under test, short enough to fail a beat keeping to
-    * a span of its own rather than to the lease it was granted. */
-  private val soon = lease * 25
+    /** Ten cadences, so the window counts beats rather than catching one. */
+    val window = lease * 5
 
-  private def message(id: String): Message.Incoming =
-    Message.Incoming(MessageKey("k1"), MessageId(id), "order.v1", "application/json", Chunk.empty, Instant.EPOCH, 1)
+    /** The most one beat sends in the window: a cadence is half the lease, and one falls on its edge. */
+    val alone = (window.toMillis / (lease.toMillis / 2) + 1).toInt
 
-  private def claim(receipt: String, of: String): Claim =
-    Claim(Receipt(receipt), NonEmptyChunk(message(of)), Instant.EPOCH, lease, backlogDepth = 0)
+    /** Long enough that a loaded runner is not the thing under test, short enough to fail a beat keeping to
+      * a span of its own rather than to the lease it was granted. */
+    val soon = lease * 25
 
-  /** A client that records every beat and every settle, and answers each beat on the same lease. */
-  final private class Counting(
-    val beats: Queue[Chunk[Receipt]],
-    val settles: Queue[(Receipt, Chunk[Verdict], Duration)],
-  ) extends QueueClient:
+    def message(id: String): Message.Incoming =
+      Message.Incoming(MessageKey("k1"), MessageId(id), "order.v1", "application/json", Chunk.empty, Instant.EPOCH, 1)
 
-    override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
-      ZIO.succeed(Enqueued(0L))
+    def claim(receipt: String, of: String): Claim =
+      Claim(Receipt(receipt), NonEmptyChunk(message(of)), Instant.EPOCH, lease, backlogDepth = 0)
 
-    override def dequeue(queue: String, maxWait: Duration, maxBatch: Int): IO[ServiceError, Dequeued] =
-      ZIO.succeed(Dequeued.Idle)
+    /** A client that records every beat and every settle, and answers each beat on the same lease. */
+    final class Counting(
+      val beats: Queue[Chunk[Receipt]],
+      val settles: Queue[(Receipt, Chunk[Verdict], Duration)],
+    ) extends QueueClient:
 
-    override def settle(
-      receipt: Receipt,
-      verdicts: Chunk[Verdict],
-      retryAfter: Duration,
-    ): IO[ServiceError, Settled] =
-      settles.offer((receipt, verdicts, retryAfter)).as(Settled.Applied)
+      override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
+        ZIO.succeed(Enqueued(0L))
 
-    override def heartbeat(receipts: Chunk[Receipt]): IO[ServiceError, Renewed] =
-      beats.offer(receipts).as(Renewed(Chunk.empty, Instant.EPOCH, lease))
+      override def dequeue(queue: String, maxWait: Duration, maxBatch: Int): IO[ServiceError, Dequeued] =
+        ZIO.succeed(Dequeued.Idle)
 
-  private def counting: UIO[Counting] =
-    for
-      beats   <- Queue.unbounded[Chunk[Receipt]]
-      settles <- Queue.unbounded[(Receipt, Chunk[Verdict], Duration)]
-    yield Counting(beats, settles)
+      override def settle(
+        receipt: Receipt,
+        verdicts: Chunk[Verdict],
+        retryAfter: Duration,
+      ): IO[ServiceError, Settled] =
+        settles.offer((receipt, verdicts, retryAfter)).as(Settled.Applied)
 
-  def spec: Spec[TestEnvironment & Scope, Any] = suite("Heartbeat")(
-    test("a claim taken as the last one is settled joins the beat rather than starting a second") {
-      // Counted against what a single beat can send, which is a ceiling a slow runner only falls under:
-      // sleeping a cadence between beats is what bounds it, so the count rises above this only when
-      // there is more than one beat sending. Taking the first bounds the cadence, which the ceiling
-      // assumes and cannot itself check.
+      override def heartbeat(receipts: Chunk[Receipt]): IO[ServiceError, Renewed] =
+        beats.offer(receipts).as(Renewed(Chunk.empty, Instant.EPOCH, lease))
+
+    def counting: UIO[Counting] =
       for
-        client    <- counting
-        heartbeat <- Heartbeat.make(client)
-        _         <- heartbeat.hold(claim("r1", "m1"))
-        first     <- client.beats.take.timeout(soon)
-        _         <- heartbeat.release(Receipt("r1")) *> heartbeat.hold(claim("r2", "m2"))
-        _         <- client.beats.takeAll
-        _         <- ZIO.sleep(window)
-        sent      <- client.beats.size
-      yield assertTrue(first.isDefined, sent <= alone + 2)
-    },
-    test("a claim still held when the scope closes is handed back, every message failed, with no wait") {
-      for
-        client <- counting
-        _      <- ZIO.scoped:
-                    Heartbeat
-                      .make(client)
-                      .flatMap: heartbeat =>
-                        heartbeat.hold(claim("r1", "m1")) *>
-                          heartbeat.hold(claim("r2", "m2")) *>
-                          heartbeat.release(Receipt("r2"))
-        sent   <- client.settles.takeAll
-      yield assertTrue(sent == Chunk((Receipt("r1"), Chunk(Verdict(MessageId("m1"), Verdict.Outcome.Failed)), Duration.Zero)))
-    },
-  ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(30.seconds)
+        beats   <- Queue.unbounded[Chunk[Receipt]]
+        settles <- Queue.unbounded[(Receipt, Chunk[Verdict], Duration)]
+      yield Counting(beats, settles)

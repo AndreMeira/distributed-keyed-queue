@@ -14,9 +14,7 @@ import zio.test.*
  * those, and the unsubscribe a closing scope performs.
  */
 object LockReadinessSpec extends ZIOSpecDefault:
-
-  private val lock      = LockName("orders")
-  private val elsewhere = LockName("elsewhere")
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("LockReadiness")(
     test("a wake reaches every waiter on the name") {
@@ -91,3 +89,8 @@ object LockReadinessSpec extends ZIOSpecDefault:
       yield assertTrue(woken.isDefined, quiet.isEmpty)
     },
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(30.seconds)
+
+  private object Support:
+
+    val lock      = LockName("orders")
+    val elsewhere = LockName("elsewhere")
