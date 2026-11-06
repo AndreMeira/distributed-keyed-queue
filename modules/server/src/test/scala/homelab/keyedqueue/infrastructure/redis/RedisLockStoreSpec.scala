@@ -21,8 +21,7 @@ import zio.test.*
  * cross-instance and fairness tests below turn on exactly that, with nothing polling.
  */
 object RedisLockStoreSpec extends ZIOSpecDefault:
-
-  private val ttl = 1.second
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = {
     suite("RedisLockStore")(
@@ -89,3 +88,7 @@ object RedisLockStoreSpec extends ZIOSpecDefault:
       },
     ) @@ RedisSpecSupport.Aspect.init @@ SpecHelper.Aspect.common
   }.provideSomeShared[Scope](RedisSpecSupport.config(30.seconds) >+> RedisSpecSupport.layer)
+
+  private object Support:
+
+    val ttl = 1.second

@@ -21,32 +21,7 @@ import java.time.Instant
  * testing are the ones where those disagree.
  */
 object QueueCodecsSpec extends ZIOSpecDefault:
-
-  private val stamp  = Timestamp(1_700_000_000L, 0)
-  private val moment = Instant.ofEpochSecond(1_700_000_000L)
-  private val span   = ProtoDuration(30L, 0)
-
-  private def protoMessage(id: String, body: String): v1.Message =
-    v1.Message("k1", id, "order.v2", "application/json", Some(stamp), ByteString.copyFromUtf8(body))
-
-  private def delivery(id: String, body: String, attempt: Int = 1): v1.Delivery =
-    v1.Delivery(id, Some(protoMessage(id, body)), attempt)
-
-  private def claimed(head: Option[v1.Delivery], tail: Seq[v1.Delivery] = Seq.empty): v1.DequeueResponse =
-    v1.DequeueResponse("receipt", head, tail, Some(stamp), 4, Some(span))
-
-  private def claimOf(response: v1.DequeueResponse): Option[Claim] =
-    QueueCodecs.decode(response).toOption.flatMap(granted)
-
-  private def granted(dequeued: Dequeued): Option[Claim] =
-    dequeued match
-      case Dequeued.Claimed(claim) => Some(claim)
-      case Dequeued.Idle           => None
-
-  private def unreadable(error: ServiceError): Boolean =
-    error match
-      case ServiceError.Unreadable(_) => true
-      case _                          => false
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("QueueCodecs")(
     suite("enqueue")(
@@ -148,3 +123,31 @@ object QueueCodecsSpec extends ZIOSpecDefault:
       },
     ),
   )
+
+  private object Support:
+
+    val stamp  = Timestamp(1_700_000_000L, 0)
+    val moment = Instant.ofEpochSecond(1_700_000_000L)
+    val span   = ProtoDuration(30L, 0)
+
+    def protoMessage(id: String, body: String): v1.Message =
+      v1.Message("k1", id, "order.v2", "application/json", Some(stamp), ByteString.copyFromUtf8(body))
+
+    def delivery(id: String, body: String, attempt: Int = 1): v1.Delivery =
+      v1.Delivery(id, Some(protoMessage(id, body)), attempt)
+
+    def claimed(head: Option[v1.Delivery], tail: Seq[v1.Delivery] = Seq.empty): v1.DequeueResponse =
+      v1.DequeueResponse("receipt", head, tail, Some(stamp), 4, Some(span))
+
+    def claimOf(response: v1.DequeueResponse): Option[Claim] =
+      QueueCodecs.decode(response).toOption.flatMap(granted)
+
+    def granted(dequeued: Dequeued): Option[Claim] =
+      dequeued match
+        case Dequeued.Claimed(claim) => Some(claim)
+        case Dequeued.Idle           => None
+
+    def unreadable(error: ServiceError): Boolean =
+      error match
+        case ServiceError.Unreadable(_) => true
+        case _                          => false

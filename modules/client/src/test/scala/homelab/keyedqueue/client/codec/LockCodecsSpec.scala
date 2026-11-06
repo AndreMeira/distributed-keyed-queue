@@ -21,15 +21,7 @@ import java.time.Instant
  * are the ones where those disagree.
  */
 object LockCodecsSpec extends ZIOSpecDefault:
-
-  private val until  = Timestamp(1_700_000_000L, 500)
-  private val span   = ProtoDuration(30L, 0)
-  private val moment = Instant.ofEpochSecond(1_700_000_000L, 500)
-
-  private def unreadable(error: ServiceError): Boolean =
-    error match
-      case ServiceError.Unreadable(_) => true
-      case _                          => false
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("LockCodecs")(
     suite("acquired")(
@@ -109,3 +101,14 @@ object LockCodecsSpec extends ZIOSpecDefault:
       },
     ),
   )
+
+  private object Support:
+
+    val until  = Timestamp(1_700_000_000L, 500)
+    val span   = ProtoDuration(30L, 0)
+    val moment = Instant.ofEpochSecond(1_700_000_000L, 500)
+
+    def unreadable(error: ServiceError): Boolean =
+      error match
+        case ServiceError.Unreadable(_) => true
+        case _                          => false

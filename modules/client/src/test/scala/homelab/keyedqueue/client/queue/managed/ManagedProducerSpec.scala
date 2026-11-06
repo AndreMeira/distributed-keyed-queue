@@ -16,40 +16,7 @@ import java.time.Instant
  * What a producer adds over the client: a value names itself, and the envelope is built from what it said.
  */
 object ManagedProducerSpec extends ZIOSpecDefault:
-
-  final case class Order(id: String, customer: String)
-
-  private given Schema[Order] = DeriveSchema.gen[Order]
-
-  private given MessageEncoder[Order] = MessageEncoder.deriveAs[Order]("order.v2")
-
-  private val order = Order("o-1", "c-9")
-
-  /** Names an order by its own id, and orders it against the customer it belongs to. */
-  private given Partition[Order] with
-    override def messageId(value: Order): MessageId   = MessageId(value.id)
-    override def messageKey(value: Order): MessageKey = MessageKey(value.customer)
-
-  /** A client that records what it was asked to send. */
-  final private class Fake(val sent: Ref[Chunk[(String, Message.Outgoing)]]) extends QueueClient:
-
-    override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
-      sent.update(_ :+ (queue, message)).as(Enqueued(3L))
-
-    override def dequeue(queue: String, maxWait: Duration, maxBatch: Int): IO[ServiceError, Dequeued] =
-      ZIO.succeed(Dequeued.Idle)
-
-    override def settle(
-      receipt: Receipt,
-      verdicts: Chunk[Verdict],
-      retryAfter: Duration,
-    ): IO[ServiceError, Settled] =
-      ZIO.succeed(Settled.Applied)
-
-    override def heartbeat(receipts: Chunk[Receipt]): IO[ServiceError, Renewed] =
-      ZIO.succeed(Renewed(Chunk.empty, Instant.EPOCH, 30.seconds))
-
-  private def fake = Ref.make(Chunk.empty[(String, Message.Outgoing)]).map(Fake(_))
+  import Support.{ *, given }
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("ManagedProducer")(
     test("a value is sent under the name and key it gives for itself") {
@@ -102,3 +69,39 @@ object ManagedProducerSpec extends ZIOSpecDefault:
       yield assertTrue(sent.map(_._2.id) == Chunk(MessageId("o-1"), MessageId("o-2")))
     },
   )
+
+  private object Support:
+
+    final case class Order(id: String, customer: String)
+
+    given Schema[Order] = DeriveSchema.gen[Order]
+
+    given MessageEncoder[Order] = MessageEncoder.deriveAs[Order]("order.v2")
+
+    val order = Order("o-1", "c-9")
+
+    /** Names an order by its own id, and orders it against the customer it belongs to. */
+    given Partition[Order] with
+      override def messageId(value: Order): MessageId   = MessageId(value.id)
+      override def messageKey(value: Order): MessageKey = MessageKey(value.customer)
+
+    /** A client that records what it was asked to send. */
+    final class Fake(val sent: Ref[Chunk[(String, Message.Outgoing)]]) extends QueueClient:
+
+      override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
+        sent.update(_ :+ (queue, message)).as(Enqueued(3L))
+
+      override def dequeue(queue: String, maxWait: Duration, maxBatch: Int): IO[ServiceError, Dequeued] =
+        ZIO.succeed(Dequeued.Idle)
+
+      override def settle(
+        receipt: Receipt,
+        verdicts: Chunk[Verdict],
+        retryAfter: Duration,
+      ): IO[ServiceError, Settled] =
+        ZIO.succeed(Settled.Applied)
+
+      override def heartbeat(receipts: Chunk[Receipt]): IO[ServiceError, Renewed] =
+        ZIO.succeed(Renewed(Chunk.empty, Instant.EPOCH, 30.seconds))
+
+    def fake = Ref.make(Chunk.empty[(String, Message.Outgoing)]).map(Fake(_))

@@ -92,8 +92,11 @@ object Deployment:
                      .unless(addresses.size == 2)
       clients   <- ZIO.foreach(addresses)(connect)
       run       <- ZIO.withRandom(Random.RandomLive)(Random.nextInt).map(value => f"${value & 0xffffff}%06x")
-      instances  = Compose.instances.zip(addresses).zip(clients).map:
-                     case (name, address, (queue, lock)) => Instance(name, address, queue, lock)
+      instances  = Compose.instances
+                     .zip(addresses)
+                     .zip(clients)
+                     .map:
+                       case (name, address, (queue, lock)) => Instance(name, address, queue, lock)
       deployment = Deployment(instances(0), instances(1), run)
       _         <- ZIO.foreachDiscard(deployment.both)(ready)
     yield deployment

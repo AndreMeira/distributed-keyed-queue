@@ -18,15 +18,7 @@ import java.time.Instant
  * by something that agrees with whatever wrote it.
  */
 object PayloadSpec extends ZIOSpecDefault:
-
-  final case class Order(id: String, lines: Int)
-
-  private given Schema[Order] = DeriveSchema.gen[Order]
-
-  private val order = Order("o-1", 3)
-
-  private def arrived(payload: Chunk[Byte], encoding: String, payloadType: String): Message.Incoming =
-    Message.Incoming(MessageKey("k1"), MessageId("m1"), payloadType, encoding, payload, Instant.EPOCH, attempt = 1)
+  import Support.{ *, given }
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("payloads")(
     test("a value written by the schema encoder is read back by the schema decoder") {
@@ -86,3 +78,14 @@ object PayloadSpec extends ZIOSpecDefault:
       )
     },
   )
+
+  private object Support:
+
+    final case class Order(id: String, lines: Int)
+
+    given Schema[Order] = DeriveSchema.gen[Order]
+
+    val order = Order("o-1", 3)
+
+    def arrived(payload: Chunk[Byte], encoding: String, payloadType: String): Message.Incoming =
+      Message.Incoming(MessageKey("k1"), MessageId("m1"), payloadType, encoding, payload, Instant.EPOCH, attempt = 1)

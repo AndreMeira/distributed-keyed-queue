@@ -19,74 +19,8 @@ import java.time.Instant
  * failed halfway through, and a batch carrying a message the caller's own reading will not take.
  */
 object ManagedBatchSpec extends ZIOSpecDefault:
-
-  final case class Order(id: String)
-
-  private given Schema[Order] = DeriveSchema.gen[Order]
-
+  import Support.{ *, given }
   import MessageDecoder.auto.given
-
-  private val lease   = 40.millis
-  private val encoder = MessageEncoder.derive[Order]
-
-  private def order(id: String): Order = Order(id)
-
-  private def message(id: String, payload: Chunk[Byte], attempt: Int = 1): Message.Incoming =
-    Message.Incoming(MessageKey("k1"), MessageId(id), "order.v1", encoder.encoding, payload, Instant.EPOCH, attempt)
-
-  private def readable(id: String): Message.Incoming =
-    message(id, encoder.encode(order(id)))
-
-  private def unreadable(id: String): Message.Incoming =
-    message(id, Chunk(9.toByte))
-
-  private def claim(of: Message.Incoming*): Dequeued =
-    Dequeued.Claimed(
-      Claim(Receipt("r1"), NonEmptyChunk.fromIterable(of.head, of.tail), Instant.EPOCH, lease, backlogDepth = 0)
-    )
-
-  /** A client that hands out one scripted claim and records what it was told. */
-  final private class Fake(
-    answers: Ref[Chunk[Dequeued]],
-    val settled: Ref[Chunk[Verdict]],
-    val asked: Ref[Chunk[Int]],
-    val waits: Ref[Chunk[Duration]],
-  ) extends QueueClient:
-
-    override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
-      ZIO.succeed(Enqueued(0L))
-
-    override def dequeue(queue: String, maxWait: Duration, maxBatch: Int): IO[ServiceError, Dequeued] =
-      asked.update(_ :+ maxBatch) *> answers.modify {
-        case answer +: rest => (answer, rest)
-        case _              => (Dequeued.Idle, Chunk.empty)
-      }
-
-    override def settle(
-      receipt: Receipt,
-      verdicts: Chunk[Verdict],
-      retryAfter: Duration,
-    ): IO[ServiceError, Settled] =
-      settled.update(_ ++ verdicts) *> waits.update(_ :+ retryAfter).as(Settled.Applied)
-
-    override def heartbeat(receipts: Chunk[Receipt]): IO[ServiceError, Renewed] =
-      ZIO.succeed(Renewed(Chunk.empty, Instant.EPOCH, lease))
-
-  private def fake(scripted: Dequeued*) =
-    for
-      answers <- Ref.make(Chunk.fromIterable(scripted))
-      settled <- Ref.make(Chunk.empty[Verdict])
-      asked   <- Ref.make(Chunk.empty[Int])
-      waits   <- Ref.make(Chunk.empty[Duration])
-    yield Fake(answers, settled, asked, waits)
-
-  private def batchOver(client: QueueClient, size: Int = 3, retryAfter: Duration = Duration.Zero) =
-    Provider(client).batched[Order](
-      Provider.BatchConsumerConfig("orders", size, patience = 1.second, retryAfter = retryAfter)
-    )
-
-  private def verdicts(of: Chunk[Verdict]): Map[String, Verdict.Outcome] =
-    of.map(verdict => (verdict.id: String) -> verdict.outcome).toMap
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("ManagedBatch")(
     test("a batch the logic answered is settled done, every message of it") {
@@ -181,6 +115,74 @@ object ManagedBatchSpec extends ZIOSpecDefault:
     },
   ) @@ TestAspect.withLiveClock @@ TestAspect.timeout(30.seconds)
 
-  /** A caller's own reading, which answers for a message it cannot take rather than failing. */
-  private def readingOrDropping(message: Message.Incoming): UIO[Unit] =
-    ZIO.succeed(MessageDecoder[Order].decode(message)).unit
+  private object Support:
+
+    final case class Order(id: String)
+
+    given Schema[Order] = DeriveSchema.gen[Order]
+
+    val lease   = 40.millis
+    val encoder = MessageEncoder.derive[Order]
+
+    def order(id: String): Order = Order(id)
+
+    def message(id: String, payload: Chunk[Byte], attempt: Int = 1): Message.Incoming =
+      Message.Incoming(MessageKey("k1"), MessageId(id), "order.v1", encoder.encoding, payload, Instant.EPOCH, attempt)
+
+    def readable(id: String): Message.Incoming =
+      message(id, encoder.encode(order(id)))
+
+    def unreadable(id: String): Message.Incoming =
+      message(id, Chunk(9.toByte))
+
+    def claim(of: Message.Incoming*): Dequeued =
+      Dequeued.Claimed(
+        Claim(Receipt("r1"), NonEmptyChunk.fromIterable(of.head, of.tail), Instant.EPOCH, lease, backlogDepth = 0)
+      )
+
+    /** A client that hands out one scripted claim and records what it was told. */
+    final class Fake(
+      answers: Ref[Chunk[Dequeued]],
+      val settled: Ref[Chunk[Verdict]],
+      val asked: Ref[Chunk[Int]],
+      val waits: Ref[Chunk[Duration]],
+    ) extends QueueClient:
+
+      override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
+        ZIO.succeed(Enqueued(0L))
+
+      override def dequeue(queue: String, maxWait: Duration, maxBatch: Int): IO[ServiceError, Dequeued] =
+        asked.update(_ :+ maxBatch) *> answers.modify {
+          case answer +: rest => (answer, rest)
+          case _              => (Dequeued.Idle, Chunk.empty)
+        }
+
+      override def settle(
+        receipt: Receipt,
+        verdicts: Chunk[Verdict],
+        retryAfter: Duration,
+      ): IO[ServiceError, Settled] =
+        settled.update(_ ++ verdicts) *> waits.update(_ :+ retryAfter).as(Settled.Applied)
+
+      override def heartbeat(receipts: Chunk[Receipt]): IO[ServiceError, Renewed] =
+        ZIO.succeed(Renewed(Chunk.empty, Instant.EPOCH, lease))
+
+    def fake(scripted: Dequeued*) =
+      for
+        answers <- Ref.make(Chunk.fromIterable(scripted))
+        settled <- Ref.make(Chunk.empty[Verdict])
+        asked   <- Ref.make(Chunk.empty[Int])
+        waits   <- Ref.make(Chunk.empty[Duration])
+      yield Fake(answers, settled, asked, waits)
+
+    def batchOver(client: QueueClient, size: Int = 3, retryAfter: Duration = Duration.Zero) =
+      Provider(client).batched[Order](
+        Provider.BatchConsumerConfig("orders", size, patience = 1.second, retryAfter = retryAfter)
+      )
+
+    def verdicts(of: Chunk[Verdict]): Map[String, Verdict.Outcome] =
+      of.map(verdict => (verdict.id: String) -> verdict.outcome).toMap
+
+    /** A caller's own reading, which answers for a message it cannot take rather than failing. */
+    def readingOrDropping(message: Message.Incoming): UIO[Unit] =
+      ZIO.succeed(MessageDecoder[Order].decode(message)).unit

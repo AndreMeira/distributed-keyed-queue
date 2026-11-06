@@ -20,15 +20,7 @@ import zio.test.*
  * }}}
  */
 object ThroughputSpec extends ZIOSpecDefault:
-
-  /** keys × consumers, chosen to show which of the two binds — see docs/research/throughput-first-numbers.md. */
-  private val shapes = Chunk((8, 8), (16, 16), (64, 8), (64, 16), (64, 32), (128, 64), (256, 128))
-
-  /** Messages per key. Enough that startup is not what is being measured. */
-  private val perKey = 15
-
-  /** Runs per shape; the median is reported, because the slowest run is usually something else on the box. */
-  private val rounds = 3
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("indicators")(
     test("how long the first message waits on a queue the instance has only just started watching") {
@@ -136,113 +128,124 @@ object ThroughputSpec extends ZIOSpecDefault:
     @@ TestAspect.timeout(20.minutes)
     @@ TestAspect.ifEnvSet("DKQ_THROUGHPUT")
 
-  /**
-   * One shape, once: fill a fresh queue, drain it with `consumers` consumers, and report four rates — the
-   * fill alone, the drain alone timed from the moment the queue is full, the dequeues alone, and the whole
-   * run.
-   *
-   * The dequeue rate counts only the time consumers spent inside the dequeue calls that delivered a message:
-   * the summed duration of those calls, divided across the consumers, is how long one would take if all it
-   * did was dequeue.
-   *
-   * The queue name carries the round so each run starts empty — a shape that inherited another's leftovers
-   * would measure the wrong thing.
-   *
-   * @param dkq the deployment to drive
-   * @param name what to call this run's queue
-   * @param keys how many keys to spread the messages over
-   * @param consumers how many consumers to drain with, round-robin across both instances
-   * @return messages per second for the fill, the drain, the dequeues and the whole run
-   */
-  private def once(dkq: Deployment, name: String, keys: Int, consumers: Int): Task[Rates] =
-    val partitions = Chunk.fromIterable(0 until keys).map(index => s"k$index")
-    val expected   = keys * perKey
-    for
-      queue   <- ZIO.succeed(dkq.queue(name))
-      started <- Clock.instant
-      _       <- ZIO.foreachParDiscard(partitions.zipWithIndex): (key, offset) =>
-                   ZIO.foreachDiscard(0 until perKey)(index => dkq(index + offset).enqueue(queue, key, index.toString))
-      filled  <- Clock.instant
-      seen    <- Ref.make(Chunk.empty[Consumer.Handled])
-      _       <- ZIO.foreachParDiscard(0 until consumers)(index => Consumer.drain(dkq(index), queue, 3.seconds, Duration.Zero, seen))
-      handled <- seen.get
-      // To the last message handled, not to when the consumers gave up: each ends by waiting out its
-      // patience on an empty queue, and counting that would report the patience instead of the rate.
-      finished = handled.map(_.releasedAt.toEpochMilli).maxOption.getOrElse(started.toEpochMilli)
-      filling  = math.max(filled.toEpochMilli - started.toEpochMilli, 1)
-      draining = math.max(finished - filled.toEpochMilli, 1)
-      overall  = math.max(finished - started.toEpochMilli, 1)
-      dequeues = math.max(handled.map(one => one.claimedAt.toEpochMilli - one.askedAt.toEpochMilli).sum, 1)
-    yield Rates(
-      filling = expected * 1000.0 / filling,
-      draining = expected * 1000.0 / draining,
-      dequeuing = expected * consumers * 1000.0 / dequeues,
-      overall = expected * 1000.0 / overall,
+  private object Support:
+
+    /** keys × consumers, chosen to show which of the two binds — see docs/research/throughput-first-numbers.md. */
+    val shapes = Chunk((8, 8), (16, 16), (64, 8), (64, 16), (64, 32), (128, 64), (256, 128))
+
+    /** Messages per key. Enough that startup is not what is being measured. */
+    val perKey = 15
+
+    /** Runs per shape; the median is reported, because the slowest run is usually something else on the box. */
+    val rounds = 3
+
+    /**
+     * One shape, once: fill a fresh queue, drain it with `consumers` consumers, and report four rates — the
+     * fill alone, the drain alone timed from the moment the queue is full, the dequeues alone, and the whole
+     * run.
+     *
+     * The dequeue rate counts only the time consumers spent inside the dequeue calls that delivered a message:
+     * the summed duration of those calls, divided across the consumers, is how long one would take if all it
+     * did was dequeue.
+     *
+     * The queue name carries the round so each run starts empty — a shape that inherited another's leftovers
+     * would measure the wrong thing.
+     *
+     * @param dkq the deployment to drive
+     * @param name what to call this run's queue
+     * @param keys how many keys to spread the messages over
+     * @param consumers how many consumers to drain with, round-robin across both instances
+     * @return messages per second for the fill, the drain, the dequeues and the whole run
+     */
+    def once(dkq: Deployment, name: String, keys: Int, consumers: Int): Task[Rates] =
+      val partitions = Chunk.fromIterable(0 until keys).map(index => s"k$index")
+      val expected   = keys * perKey
+      for
+        queue   <- ZIO.succeed(dkq.queue(name))
+        started <- Clock.instant
+        _       <- ZIO.foreachParDiscard(partitions.zipWithIndex): (key, offset) =>
+                     ZIO.foreachDiscard(0 until perKey)(index => dkq(index + offset).enqueue(queue, key, index.toString))
+        filled  <- Clock.instant
+        seen    <- Ref.make(Chunk.empty[Consumer.Handled])
+        _       <- ZIO.foreachParDiscard(0 until consumers)(index => Consumer.drain(dkq(index), queue, 3.seconds, Duration.Zero, seen))
+        handled <- seen.get
+        // To the last message handled, not to when the consumers gave up: each ends by waiting out its
+        // patience on an empty queue, and counting that would report the patience instead of the rate.
+        finished = handled.map(_.releasedAt.toEpochMilli).maxOption.getOrElse(started.toEpochMilli)
+        filling  = math.max(filled.toEpochMilli - started.toEpochMilli, 1)
+        draining = math.max(finished - filled.toEpochMilli, 1)
+        overall  = math.max(finished - started.toEpochMilli, 1)
+        dequeues = math.max(handled.map(one => one.claimedAt.toEpochMilli - one.askedAt.toEpochMilli).sum, 1)
+      yield Rates(
+        filling = expected * 1000.0 / filling,
+        draining = expected * 1000.0 / draining,
+        dequeuing = expected * consumers * 1000.0 / dequeues,
+        overall = expected * 1000.0 / overall,
+      )
+
+    /**
+     * What one run of a shape measured.
+     *
+     * @param filling messages per second over the fill alone: every enqueue, until the queue is full
+     * @param draining messages per second over the drain alone — a dequeue and a settle per message — timed from
+     *                 the moment the queue is full
+     * @param dequeuing messages per second over the time consumers spent inside the dequeues that delivered
+     *                  them
+     * @param overall messages per second over the whole run: filling the queue, then draining it
+     */
+    final case class Rates(filling: Double, draining: Double, dequeuing: Double, overall: Double)
+
+    /**
+     * One line of the sweep's table: a shape, and the median of each rate over its runs.
+     *
+     * @param keys how many keys the messages were spread over
+     * @param consumers how many consumers drained them
+     * @param filling the fill rate, in messages per second
+     * @param draining the drain rate, in messages per second
+     * @param dequeuing the dequeue rate, in messages per second
+     * @param overall the rate over the whole run, in messages per second
+     */
+    final case class Row(
+      keys: Int,
+      consumers: Int,
+      filling: Double,
+      draining: Double,
+      dequeuing: Double,
+      overall: Double,
     )
 
-  /**
-   * What one run of a shape measured.
-   *
-   * @param filling messages per second over the fill alone: every enqueue, until the queue is full
-   * @param draining messages per second over the drain alone — a dequeue and a settle per message — timed from
-   *                 the moment the queue is full
-   * @param dequeuing messages per second over the time consumers spent inside the dequeues that delivered
-   *                  them
-   * @param overall messages per second over the whole run: filling the queue, then draining it
-   */
-  final private case class Rates(filling: Double, draining: Double, dequeuing: Double, overall: Double)
+    /**
+     * The middle run, so one slow round does not become the number.
+     *
+     * @param rates what each round measured
+     * @return the median
+     */
+    def median(rates: Seq[Double]): Double = rates.sorted.apply(rates.size / 2)
 
-  /**
-   * One line of the sweep's table: a shape, and the median of each rate over its runs.
-   *
-   * @param keys how many keys the messages were spread over
-   * @param consumers how many consumers drained them
-   * @param filling the fill rate, in messages per second
-   * @param draining the drain rate, in messages per second
-   * @param dequeuing the dequeue rate, in messages per second
-   * @param overall the rate over the whole run, in messages per second
-   */
-  final private case class Row(
-    keys: Int,
-    consumers: Int,
-    filling: Double,
-    draining: Double,
-    dequeuing: Double,
-    overall: Double,
-  )
+    /**
+     * Print a set of timings in the terms that matter here: the middle, the tail, the worst.
+     *
+     * @param label what was measured
+     * @param timings the measurements in millis, sorted
+     * @return the line to print
+     */
+    def summary(label: String, timings: Chunk[Long]): String =
+      if timings.isEmpty then s"$label: nothing measured"
+      else
+        val at = (percent: Int) => timings(math.min(timings.size - 1, timings.size * percent / 100))
+        f"$label over ${timings.size} messages: median ${at(50)}ms, p95 ${at(95)}ms, max ${timings.last}ms"
 
-  /**
-   * The middle run, so one slow round does not become the number.
-   *
-   * @param rates what each round measured
-   * @return the median
-   */
-  private def median(rates: Seq[Double]): Double = rates.sorted.apply(rates.size / 2)
-
-  /**
-   * Print a set of timings in the terms that matter here: the middle, the tail, the worst.
-   *
-   * @param label what was measured
-   * @param timings the measurements in millis, sorted
-   * @return the line to print
-   */
-  private def summary(label: String, timings: Chunk[Long]): String =
-    if timings.isEmpty then s"$label: nothing measured"
-    else
-      val at = (percent: Int) => timings(math.min(timings.size - 1, timings.size * percent / 100))
-      f"$label over ${timings.size} messages: median ${at(50)}ms, p95 ${at(95)}ms, max ${timings.last}ms"
-
-  /**
-   * Print the sweep as a table, so two runs can be diffed by eye: the fill, the drain, the dequeues, and the
-   * whole run.
-   *
-   * @param results one row per shape
-   * @return noop
-   */
-  private def report(results: Seq[Row]): UIO[Unit] =
-    val header =
-      f"${"keys"}%6s ${"consumers"}%10s ${"fill msg/s"}%11s ${"drain msg/s"}%12s ${"dequeue msg/s"}%14s ${"overall msg/s"}%14s"
-    val rows   = results.map(row =>
-      f"${row.keys}%6d ${row.consumers}%10d ${row.filling}%11.0f ${row.draining}%12.0f ${row.dequeuing}%14.0f ${row.overall}%14.0f"
-    )
-    Console.printLine((header +: rows).mkString("\n")).orDie
+    /**
+     * Print the sweep as a table, so two runs can be diffed by eye: the fill, the drain, the dequeues, and the
+     * whole run.
+     *
+     * @param results one row per shape
+     * @return noop
+     */
+    def report(results: Seq[Row]): UIO[Unit] =
+      val header =
+        f"${"keys"}%6s ${"consumers"}%10s ${"fill msg/s"}%11s ${"drain msg/s"}%12s ${"dequeue msg/s"}%14s ${"overall msg/s"}%14s"
+      val rows   = results.map(row =>
+        f"${row.keys}%6d ${row.consumers}%10d ${row.filling}%11.0f ${row.draining}%12.0f ${row.dequeuing}%14.0f ${row.overall}%14.0f"
+      )
+      Console.printLine((header +: rows).mkString("\n")).orDie

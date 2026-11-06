@@ -24,9 +24,7 @@ import zio.test.*
  * afterwards for a post-mortem.
  */
 object EndToEndSpec extends ZIOSpecDefault:
-
-  /** The instances' lease, from `docker-compose.e2e.yml`; the waits below are all reasoned from it. */
-  private val lease = 5.seconds
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("dkq, deployed")(
     test("a message enqueued on one instance is dequeued from the other") {
@@ -177,8 +175,8 @@ object EndToEndSpec extends ZIOSpecDefault:
       yield assertTrue(
         bodies == Seq(Some("v1"), Some("v2"), Some("v3")), // producer order, across the deployment
         held.backlogDepth == 0,
-        blocked.head.isEmpty, // the claim was still alive on the other instance
-        drained.head.isEmpty, // and by then the key was empty
+        blocked.head.isEmpty,                              // the claim was still alive on the other instance
+        drained.head.isEmpty,                              // and by then the key was empty
       )
     },
     test("under load nothing is lost, nothing is delivered twice, and every key keeps its order") {
@@ -217,3 +215,8 @@ object EndToEndSpec extends ZIOSpecDefault:
     @@ TestAspect.withLiveClock // every wait here is a real one; a virtual clock would prove nothing
     @@ TestAspect.sequential // the tests share a deployment, and one of them kills half of it
     @@ TestAspect.timeout(10.minutes)
+
+  private object Support:
+
+    /** The instances' lease, from `docker-compose.e2e.yml`; the waits below are all reasoned from it. */
+    val lease = 5.seconds

@@ -18,8 +18,7 @@ import zio.test.*
  * free lock somebody is already queued for, which only the ticket list knows about.
  */
 object LockTryAcquireUseCaseSpec extends ZIOSpecDefault:
-
-  private def asking(name: String) = TryAcquireRequest(name, 30.seconds)
+  import Support.*
 
   def spec: Spec[TestEnvironment & Scope, Any] = {
     suite("LockTryAcquireUseCase")(
@@ -62,3 +61,7 @@ object LockTryAcquireUseCaseSpec extends ZIOSpecDefault:
   }.provideSomeShared[Scope](
     RedisSpecSupport.config(30.seconds) >+> RedisSpecSupport.layer >+> UseCaseSpecSupport.tryAcquireLayer
   )
+
+  private object Support:
+
+    def asking(name: String) = TryAcquireRequest(name, 30.seconds)
