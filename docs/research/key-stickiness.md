@@ -74,6 +74,9 @@ Five shapes, from no server change to a large one. They can combine.
 
 ### A. Shard the queues themselves, in the client
 
+> Worked out in detail, including how to share the shards fairly and where membership comes from, in
+> [`lock-based-stickiness.md`](lock-based-stickiness.md).
+
 The producer sends key `k` to `orders.<hash(k) % N>` instead of `orders`. Each consumer works some of the
 N shard queues. This needs no server change: N queues are N ordinary queues, and a shard queue is a
 different partition (`hash(queue) % 16`), so shards also spread across cluster slots.
