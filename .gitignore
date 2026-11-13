@@ -10,3 +10,4 @@ project/target/
 .DS_Store
 *.class
 *.log
+.scala-build/
