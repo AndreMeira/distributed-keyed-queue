@@ -48,6 +48,9 @@ services:
       # The doorbell's read goes round quickly here so that a queue an instance has only just started
       # serving is heard about within a test's patience rather than a second later.
       DKQ_WAKE_BLOCK: 200 millis
+      # The schedule timer's backstop, short so that a schedule whose accepting instance was killed is moved by
+      # the other one within a test's patience rather than a minute later.
+      DKQ_SCHEDULE_BACKSTOP: 5 seconds
     depends_on:
       redis:
         condition: service_healthy
