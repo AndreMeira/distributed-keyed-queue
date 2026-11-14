@@ -137,6 +137,8 @@ object GrpcClientSpec extends ZIOSpecDefault:
         seen.update(_ :+ request).as(v1.SettleResponse(v1.Applied.APPLIED_OK))
       override def heartbeat(request: v1.HeartbeatRequest): IO[StatusException, v1.HeartbeatResponse] =
         seen.update(_ :+ request).as(renewal)
+      override def schedule(request: v1.ScheduleRequest): IO[StatusException, v1.ScheduleResponse]    =
+        seen.update(_ :+ request).as(v1.ScheduleResponse(scheduled = true))
 
     /** A service that never answers, for the deadline that stops a caller waiting on it. */
     final class Hanging extends KeyedQueue:
@@ -144,6 +146,7 @@ object GrpcClientSpec extends ZIOSpecDefault:
       override def dequeue(request: v1.DequeueRequest): IO[StatusException, v1.DequeueResponse]       = ZIO.never
       override def settle(request: v1.SettleRequest): IO[StatusException, v1.SettleResponse]          = ZIO.never
       override def heartbeat(request: v1.HeartbeatRequest): IO[StatusException, v1.HeartbeatResponse] = ZIO.never
+      override def schedule(request: v1.ScheduleRequest): IO[StatusException, v1.ScheduleResponse]    = ZIO.never
 
     /** A service that refuses everything with one status, for the reading of a failure. */
     final class Refusing(status: Status) extends KeyedQueue:
@@ -153,6 +156,7 @@ object GrpcClientSpec extends ZIOSpecDefault:
       override def dequeue(request: v1.DequeueRequest): IO[StatusException, v1.DequeueResponse]       = refused
       override def settle(request: v1.SettleRequest): IO[StatusException, v1.SettleResponse]          = refused
       override def heartbeat(request: v1.HeartbeatRequest): IO[StatusException, v1.HeartbeatResponse] = refused
+      override def schedule(request: v1.ScheduleRequest): IO[StatusException, v1.ScheduleResponse]    = refused
 
     /**
      * Serve one queue service and dial it, both closed with the scope.

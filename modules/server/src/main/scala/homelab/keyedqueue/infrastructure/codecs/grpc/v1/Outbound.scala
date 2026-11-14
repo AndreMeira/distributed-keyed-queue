@@ -61,6 +61,10 @@ object Outbound:
   private given Transformer[Duration, ProtoDuration] =
     duration => ProtoDuration(seconds = duration.getSeconds, nanos = duration.getNano)
 
+  // proto3 wraps a message field in an Option; a response always has its delay.
+  private given Transformer[Duration, Option[ProtoDuration]] =
+    duration => Some(duration.transformInto[ProtoDuration])
+
   private given Transformer[Instant, Option[Timestamp]] =
     instant => Some(instant.transformInto[Timestamp])
 
@@ -99,6 +103,10 @@ object Outbound:
     def toProto: v1.DequeueResponse = response match
       case DequeueResponse.Empty             => v1.DequeueResponse()
       case granted: DequeueResponse.NonEmpty => granted.transformInto[v1.DequeueResponse]
+
+  extension (response: ScheduleResponse)
+    /** @return the `v1.ScheduleResponse` */
+    def toProto: v1.ScheduleResponse = response.transformInto[v1.ScheduleResponse]
 
   extension (response: SettleResponse)
     /** @return the `v1.SettleResponse` */

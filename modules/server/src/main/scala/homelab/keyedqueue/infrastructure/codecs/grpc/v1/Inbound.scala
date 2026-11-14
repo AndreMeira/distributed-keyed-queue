@@ -7,7 +7,7 @@ import com.google.protobuf.timestamp.Timestamp
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.queue.Message
 import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
-import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, HeartbeatRequest, SettleRequest }
+import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, HeartbeatRequest, ScheduleRequest, SettleRequest }
 import homelab.keyedqueue.domain.request.lock.*
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.v1
@@ -119,6 +119,13 @@ object Inbound:
      * @return the domain request, or a [[DecodingError]] when the `v1.EnqueueRequest` has no message
      */
     def toDomain: Either[DecodingError, EnqueueRequest] = decoded(request.transformIntoPartial[EnqueueRequest])
+
+  extension (request: v1.ScheduleRequest)
+    /**
+     * @return the domain request, or a [[DecodingError]] when the `v1.ScheduleRequest` has no message; an absent
+     *         `deliver_after` reads as zero, which validation refuses with the request's other problems
+     */
+    def toDomain: Either[DecodingError, ScheduleRequest] = decoded(request.transformIntoPartial[ScheduleRequest])
 
   extension (request: v1.DequeueRequest)
     /** @return the domain request, or a [[DecodingError]] saying why the `v1.DequeueRequest` cannot be read */

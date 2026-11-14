@@ -170,6 +170,45 @@ object GrpcSpec extends ZIOSpecDefault:
           status.flatMap(reported => Option(reported.getDescription)).exists(_.contains("a message key is required")),
         )
       },
+      test("a scheduled message is delivered once it falls due, moved by the server's own mover") {
+        // End to end inside one server: the schedule is recorded, the timer fires at the due time, the mover
+        // appends the message and wakes the queue, and the parked dequeue is handed it.
+        for
+          client    <- ZIO.service[KeyedQueueClient]
+          scheduled <- client.schedule(ScheduleRequest("later", Some(Helper.protoMessage("k1", "soon")), Some(millis(300))))
+          started   <- Clock.instant
+          reply     <- client.dequeue(DequeueRequest("later", Some(ProtoDuration(seconds = 3))))
+          ended     <- Clock.instant
+        yield assertTrue(
+          scheduled.scheduled,
+          scheduled.dueIn.contains(millis(300)),
+          Helper.bodies(reply) == Seq("soon"),
+          Duration.fromInterval(started, ended) >= 200.millis,
+        )
+      },
+      test("a schedule repeating an id still scheduled answers scheduled = false, with the first one's time") {
+        for
+          client <- ZIO.service[KeyedQueueClient]
+          first  <- client.schedule(ScheduleRequest("once", Some(Helper.protoMessage("k1", "m")), Some(ProtoDuration(seconds = 60))))
+          second <- client.schedule(ScheduleRequest("once", Some(Helper.protoMessage("k1", "m")), Some(ProtoDuration(seconds = 1))))
+        yield assertTrue(first.scheduled, !second.scheduled, second.dueIn.exists(_.seconds > 1L))
+      },
+      test("a schedule with no delay, or one beyond the horizon, is refused as INVALID_ARGUMENT with its reason") {
+        for
+          client  <- ZIO.service[KeyedQueueClient]
+          absent  <- client.schedule(ScheduleRequest("refused", Some(Helper.protoMessage("k1", "m")), None)).flip
+          tooLate <- client.schedule(ScheduleRequest("refused", Some(Helper.protoMessage("k1", "m")), Some(ProtoDuration(seconds = 8 * 86_400)))).flip
+        yield assertTrue(
+          invalid(absent).exists(_.contains("deliver_after is required")),
+          invalid(tooLate).exists(_.contains("deliver_after cannot exceed")),
+        )
+      },
+      test("a schedule with no message cannot be decoded, and is refused as INVALID_ARGUMENT with its reason") {
+        for
+          client <- ZIO.service[KeyedQueueClient]
+          failed <- client.schedule(ScheduleRequest("refused", None, Some(ProtoDuration(seconds = 1)))).flip
+        yield assertTrue(invalid(failed).exists(_.contains("a message is required")))
+      },
       test("an enqueue with no message cannot be decoded, and is refused as INVALID_ARGUMENT with its reason") {
         // Refused by the codec, before validation: the domain has no absent message to carry. Matched by its
         // type in `QueueService.status`, since the `DecodingError` marker alone would also cover our own
@@ -189,6 +228,24 @@ object GrpcSpec extends ZIOSpecDefault:
   )
 
   private object Support {
+
+    /**
+     * A protobuf duration of so many milliseconds.
+     *
+     * @param value the milliseconds
+     * @return the duration
+     */
+    def millis(value: Int): ProtoDuration =
+      ProtoDuration(seconds = value / 1000L, nanos = (value % 1000) * 1_000_000)
+
+    /**
+     * The description of a refusal, when it is an `INVALID_ARGUMENT`.
+     *
+     * @param failed what the call failed with
+     * @return the description, or `None` when the status is another one or carries no description
+     */
+    def invalid(failed: StatusException): Option[String] =
+      Option(failed.getStatus).filter(_.getCode == Status.Code.INVALID_ARGUMENT).flatMap(status => Option(status.getDescription))
 
     /**
      * Wait until somebody holds a ticket for `name`.
