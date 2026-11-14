@@ -8,7 +8,9 @@ import homelab.keyedqueue.domain.types.*
  *
  * Handed to a consumer as an opaque [[Claim.Ref]] so it cannot reason about the fencing scheme or do
  * arithmetic on it. Forgery is not a threat model: the store validates the token against the key's current
- * generation, so a made-up reference buys nothing a guessed one would not.
+ * generation, so a made-up reference buys nothing a guessed one would not. The one thing a made-up reference
+ * could carry that a granted one cannot is a queue name with a colon, which validation refuses on the way in,
+ * so [[Claim.decode]] refuses it too.
  *
  * @param queue the queue the message was taken from
  * @param key the key being held
@@ -19,7 +21,8 @@ final case class Claim(queue: QueueName, key: MessageKey, token: Token):
   /**
    * Encode as the opaque string a consumer carries.
    *
-   * The fields go through [[Obfuscated]], so a queue name or a key may hold anything.
+   * The fields go through [[Obfuscated]], so a key may hold anything, as may a queue name, though the names
+   * this service grants claims in hold no colon.
    *
    * @return the reference
    */
@@ -54,12 +57,16 @@ object Claim:
    * receipt among the claims the consumer has lost — refusing the whole call there would cost it the
    * renewals that were good.
    *
+   * A queue name holding a colon is refused here as well as on the way in: no claim is granted in one, and
+   * the store's keys for one could alias another queue's (see `QueueInputValidation`).
+   *
    * @param reference the opaque string from the consumer
-   * @return the claim it names, or `None` when it is not one we issued
+   * @return the claim it names, or `None` when it is not one we issued: unreadable, a token that is not a
+   *         number, or a queue name holding a colon
    */
   def decode(reference: String): Option[Claim] =
     Obfuscated(reference).decoded match
-      case Some(Seq(queue, key, token)) =>
+      case Some(Seq(queue, key, token)) if !queue.contains(':') =>
         for generation <- token.toLongOption
         yield Claim(QueueName(queue), MessageKey(key), Token(generation))
-      case _                            => None
+      case _                                                    => None

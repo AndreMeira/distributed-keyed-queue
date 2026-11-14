@@ -16,6 +16,14 @@ enum InvalidInput extends ValidationError.InvalidInput:
   /** No queue was named. There is no default queue. */
   case EmptyQueueName
 
+  /**
+   * A queue name held a colon.
+   *
+   * The store builds a queue's keys by joining its name and a key with colons, so a colon in the name could
+   * spell another queue's key. Keys and message ids may hold any character.
+   */
+  case ColonInQueueName
+
   /** No key was given. Every message sharing one empty key would be serialised behind the others. */
   case EmptyMessageKey
 
@@ -87,6 +95,7 @@ enum InvalidInput extends ValidationError.InvalidInput:
    */
   override def message: String = this match
     case EmptyQueueName                     => "a queue name is required"
+    case ColonInQueueName                   => "a queue name cannot contain ':'"
     case EmptyMessageKey                    => "a message key is required: it is what ordering is defined by"
     case EmptyMessageId                     => "a message id is required: it is what a message is addressed by"
     case EmptyEncoding                      => "an encoding is required: it is how a consumer knows to read the payload"

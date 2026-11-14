@@ -23,7 +23,8 @@ about *handing out*, not about the order effects land in.
 
 ## Vocabulary
 
-- **Queue** — an address. Messages sent to different queues share nothing.
+- **Queue** — an address. Messages sent to different queues share nothing. Its name is required and may not
+  contain `:`; a key and a message id may hold any character.
 - **Key** — what ordering and exclusivity are defined by. Chosen by the producer; every message carries one.
 - **Message id** — a message's name, unique among the messages currently queued for its key.
 - **Claim** — a consumer's exclusive hold on a key, covering one or more of its messages. Identified by a

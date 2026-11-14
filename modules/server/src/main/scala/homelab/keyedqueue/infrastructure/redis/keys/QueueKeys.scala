@@ -10,6 +10,10 @@ import homelab.keyedqueue.domain.types.*
  * key a script touches hashes into one slot, including the wake stream the partition shares between its
  * queues, and a schema's leftovers stay findable by pattern.
  *
+ * The names are unambiguous because a queue name holds no colon (validation refuses one): the queue's part ends
+ * where its name does, and the segments after it (`ready`, `seq`, `msgs:<key>`, …) are distinct, so no two
+ * queue and key pairs spell the same key, whatever a key holds.
+ *
  * See `docs/architecture/redis-cluster.md` and `docs/research/schema-versioned-keys.md`.
  *
  * @param tag the hash tag of the partition these keys fall in

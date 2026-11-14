@@ -11,7 +11,8 @@ import zio.test.*
  *
  * Keys come from the caller's domain, so the encoding cannot reserve a character. Each field is encoded
  * separately and joined with a dot, which base64url cannot produce — so the cases below are about content
- * that used to collide with the separator.
+ * that used to collide with the separator. A queue name may hold anything but a colon, which validation
+ * refuses, so a receipt naming one is not one this service issued.
  */
 object ClaimSpec extends ZIOSpecDefault:
   import Support.*
@@ -26,6 +27,9 @@ object ClaimSpec extends ZIOSpecDefault:
     test("a key holding a space reads back") {
       roundTrips(Claim(QueueName("orders"), MessageKey("order 42 line 1"), Token(7)))
     },
+    test("a key holding a colon reads back") {
+      roundTrips(Claim(QueueName("orders"), MessageKey("a:ready"), Token(7)))
+    },
     test("a key holding the separator reads back") {
       roundTrips(Claim(QueueName("a.b"), MessageKey("c.d"), Token(7)))
     },
@@ -39,6 +43,9 @@ object ClaimSpec extends ZIOSpecDefault:
         Claim.decode("a.b").isEmpty,
         Claim.decode("a.b.c.d").isEmpty,
       )
+    },
+    test("a reference naming a queue that holds a colon is refused: no claim is granted in one") {
+      assertTrue(Claim.decode(Claim(QueueName("jobs:msgs:a"), MessageKey("k1"), Token(7)).reference).isEmpty)
     },
     test("a reference whose token is not a number is refused") {
       val forged = Seq("orders", "k-1", "not-a-token")

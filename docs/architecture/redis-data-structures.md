@@ -22,7 +22,9 @@ Everything a queue owns is prefixed `{p:<partition>}:v4:q:<queue>`, where the pa
 lives in, and `v4` is the schema version every key carries
 ([`../research/schema-versioned-keys.md`](../research/schema-versioned-keys.md)). Five structures belong to
 the queue and three to a key inside it; `wake` and `delayed` belong to the partition and are shared by every
-queue in it. `{Q}` below is one queue's prefix, `{W}` its partition's (version included in both):
+queue in it. `{Q}` below is one queue's prefix, `{W}` its partition's (version included in both). A queue name
+holds no `:` (validation refuses one), so `{Q}` ends where the name does and no queue and key can spell
+another queue's key; a key may hold anything:
 
 | key | type | maps | written by |
 |---|---|---|---|

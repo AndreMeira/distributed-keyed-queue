@@ -39,7 +39,7 @@ Per partition, not per queue, so a pass of the mover is one script per partition
 | `{W}:scheduled:payloads` | hash | member → the message, until it is moved |
 
 A **member** is the message's identity: `<byte length of queue>:<queue><byte length of key>:<key><message id>`,
-for example `6:orders3:c42nudge`. Queue names, keys and ids may hold any character, so no separator is safe; the
+for example `6:orders3:c42nudge`. Keys and ids may hold any character, so no separator is safe; the
 lengths are UTF-8 byte lengths, which is what Lua's `#` counts. Only Lua writes or reads one: `schedule.lua`
 builds it from the queue, key and id it receives, and `move.lua` splits it.
 

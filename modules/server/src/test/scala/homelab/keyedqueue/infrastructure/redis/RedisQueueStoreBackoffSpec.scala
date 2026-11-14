@@ -74,10 +74,10 @@ object RedisQueueStoreBackoffSpec extends ZIOSpecDefault:
           _      <- release(store, queue)
         yield assertTrue(moved.moved == 1, during.isEmpty)
       },
-      test("a queue and a key holding colons and multi-byte characters survive the member's encoding") {
+      test("a queue holding multi-byte characters and a key holding a colon survive the member's encoding") {
         for
           store <- ZIO.service[QueueStore]
-          queue  = QueueName("q:é:backoff")
+          queue  = QueueName("q-é-backoff")
           key    = MessageKey("k:ü")
           _     <- store.enqueue(Submission(queue, Helper.message(key, "m1")))
           first <- claimed(store, queue)

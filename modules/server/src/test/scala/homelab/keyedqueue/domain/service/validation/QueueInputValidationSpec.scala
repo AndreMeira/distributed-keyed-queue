@@ -178,6 +178,32 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
         noKey == ValidationError(NonEmptyChunk(InvalidInput.EmptyMessageKey)),
       )
     },
+    test("a queue name holding a colon is refused on every verb that names a queue") {
+      // A colon in the name would let one queue and key spell another queue's Redis key (#77).
+      val refused = Chunk(
+        validation.parse(EnqueueRequest("jobs:msgs:a", Helper.requestMessage("k1"))).toEither,
+        validation.parse(ScheduleRequest("jobs:msgs:a", Helper.requestMessage("k1"), 5.minutes)).toEither,
+        validation.parse(DequeueRequest("jobs:msgs:a", 1.second, maxBatch = 1)).toEither,
+      )
+      assertTrue(refused.forall(_.left.map(_.toChunk) == Left(Chunk(InvalidInput.ColonInQueueName))))
+    },
+    test("a queue name's colon is reported with the request's other problems, and an empty name only as empty") {
+      val colon = validation.parse(EnqueueRequest(":", Helper.requestMessage("")))
+      val empty = validation.parse(EnqueueRequest("", Helper.requestMessage("k1")))
+      assertTrue(
+        colon.toEither == Left(NonEmptyChunk(InvalidInput.ColonInQueueName, InvalidInput.EmptyMessageKey)),
+        empty.toEither == Left(NonEmptyChunk(InvalidInput.EmptyQueueName)),
+      )
+    },
+    test("a key and a message id may hold colons") {
+      val parsed = validation.parse(EnqueueRequest("jobs", Helper.requestMessage("a:ready", messageId = "m:1")))
+      assertTrue(parsed.toEither.map(_.message.key) == Right(MessageKey("a:ready")))
+    },
+    test("a settle whose receipt names a queue holding a colon is refused as unreadable") {
+      val forged = Claim(QueueName("jobs:msgs:a"), MessageKey("k1"), Token(1)).reference
+      val parsed = validation.parse(SettleRequest(forged, Chunk(MessageOutcome("m1", Verdict.Done)), Duration.Zero))
+      assertTrue(parsed.toEither == Left(NonEmptyChunk(InvalidInput.UnreadableReceipt)))
+    },
     test("a dequeue that will not wait is refused, and so is one that never said") {
       // Rejected rather than served: a claim that will not wait is a different operation from the one this
       // API offers. An absent `max_wait` is `None` in the `v1.DequeueRequest`, which `Inbound` reads as zero, so
