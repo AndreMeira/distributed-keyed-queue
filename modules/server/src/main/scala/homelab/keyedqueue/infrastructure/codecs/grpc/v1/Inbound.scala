@@ -12,6 +12,7 @@ import homelab.keyedqueue.domain.request.lock.*
 import homelab.keyedqueue.domain.types.*
 import homelab.keyedqueue.v1
 import io.scalaland.chimney.dsl.*
+import io.scalaland.chimney.partial.Result.{ fromErrorString as fail, fromValue as succeed }
 import io.scalaland.chimney.{ PartialTransformer, Transformer, partial }
 import zio.{ Chunk, Duration, duration2DurationOps }
 
@@ -94,13 +95,13 @@ object Inbound:
    * terms. Adding the parts as ZIO durations instead overflows past those 292 years.
    */
   private given PartialTransformer[ProtoDuration, Duration] = PartialTransformer: duration =>
-    if wellFormed(duration) then partial.Result.fromValue(Duration.fromJava(JavaDuration.ofSeconds(duration.seconds, duration.nanos.toLong)))
-    else partial.Result.fromErrorString(s"a duration needs seconds within ±$maxDurationSeconds and nanos within ±$maxNanos, of the same sign")
+    if wellFormed(duration) then succeed(Duration.fromJava(JavaDuration.ofSeconds(duration.seconds, duration.nanos.toLong)))
+    else fail(s"a duration needs seconds within ±$maxDurationSeconds and nanos within ±$maxNanos, of the same sign")
 
   /** A timestamp in protobuf's range, read; any other refused. */
   private given PartialTransformer[Timestamp, Instant] = PartialTransformer: stamp =>
-    if wellFormed(stamp) then partial.Result.fromValue(Instant.ofEpochSecond(stamp.seconds, stamp.nanos.toLong))
-    else partial.Result.fromErrorString(s"a timestamp needs seconds between 0001-01-01 and 9999-12-31 and nanos from 0 to $maxNanos")
+    if wellFormed(stamp) then succeed(Instant.ofEpochSecond(stamp.seconds, stamp.nanos.toLong))
+    else fail(s"a timestamp needs seconds between 0001-01-01 and 9999-12-31 and nanos from 0 to $maxNanos")
 
   /**
    * An absent duration reads as zero, which validation then refuses: a caller must say how long it will
@@ -108,14 +109,14 @@ object Inbound:
    * with the others in one pass, in the vocabulary of the domain. A present one is range-checked.
    */
   private given PartialTransformer[Option[ProtoDuration], Duration] = PartialTransformer:
-    case None        => partial.Result.fromValue(Duration.Zero)
+    case None        => succeed(Duration.Zero)
     case Some(proto) => proto.transformIntoPartial[Duration]
 
   /** A settle that does not say what the consumer decided cannot be acted on. */
   private given PartialTransformer[v1.Outcome, Verdict] = PartialTransformer:
-    case v1.Outcome.OUTCOME_DONE   => partial.Result.fromValue(Verdict.Done)
-    case v1.Outcome.OUTCOME_FAILED => partial.Result.fromValue(Verdict.Failed)
-    case other                     => partial.Result.fromErrorString(s"an outcome is required, got ${other.name}")
+    case v1.Outcome.OUTCOME_DONE   => succeed(Verdict.Done)
+    case v1.Outcome.OUTCOME_FAILED => succeed(Verdict.Failed)
+    case other                     => fail(s"an outcome is required, got ${other.name}")
 
   /**
    * An enqueue without a message is a request with nothing in it. Chimney would refuse the absent field on
@@ -123,7 +124,7 @@ object Inbound:
    */
   private given PartialTransformer[Option[v1.Message], EnqueueRequest.Message] = PartialTransformer:
     case Some(message) => message.transformIntoPartial[EnqueueRequest.Message]
-    case None          => partial.Result.fromErrorString("a message is required")
+    case None          => fail("a message is required")
 
   /**
    * Read a message on its own, which is what the storage codec needs.
