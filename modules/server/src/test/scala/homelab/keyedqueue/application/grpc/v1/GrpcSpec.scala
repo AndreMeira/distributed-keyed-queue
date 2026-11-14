@@ -170,6 +170,19 @@ object GrpcSpec extends ZIOSpecDefault:
           status.flatMap(reported => Option(reported.getDescription)).exists(_.contains("a message key is required")),
         )
       },
+      test("an enqueue with no message cannot be decoded, and is refused as INVALID_ARGUMENT with its reason") {
+        // Refused by the codec, before validation: the domain has no absent message to carry. Matched by its
+        // type in `QueueService.status`, since the `DecodingError` marker alone would also cover our own
+        // decoding defects, which must stay INTERNAL.
+        for
+          client <- ZIO.service[KeyedQueueClient]
+          failed <- client.enqueue(EnqueueRequest("jobs", None)).flip
+          status  = Option(failed.getStatus)
+        yield assertTrue(
+          status.map(_.getCode).contains(Status.Code.INVALID_ARGUMENT),
+          status.flatMap(reported => Option(reported.getDescription)).exists(_.contains("a message is required")),
+        )
+      },
     ) @@ GrpcSpecSupport.Aspect.init @@ SpecHelper.Aspect.common
   }.provideSomeShared[Scope](
     GrpcSpecSupport.config >+> GrpcSpecSupport.layer >+> RedisModule.layout >+> RedisModule.connection

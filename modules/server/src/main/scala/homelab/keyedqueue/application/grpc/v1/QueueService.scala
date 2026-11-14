@@ -1,15 +1,13 @@
 package homelab.keyedqueue.application.grpc.v1
 
 
-import homelab.common.error.{ ApplicationError, ValidationError }
+import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.service.usecase.queue.*
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Inbound.*
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Outbound.*
 import homelab.keyedqueue.v1
 import homelab.keyedqueue.v1.ZioKeyedQueueService
-import io.grpc.{ Status, StatusException }
-import io.scalaland.chimney.partial
 import zio.*
 
 
@@ -21,7 +19,11 @@ import zio.*
  *
  * A dequeue that found nothing and a settle whose claim was revoked are ordinary outcomes of an
  * at-least-once queue, so they are fields in the response where a caller has to look at them. Only genuine
- * faults become a `Status`, and that mapping lives in [[status]] rather than in each handler.
+ * faults fail the call, with the domain's own errors: [[Module]] turns them into a `Status` once for the whole
+ * service ([[errors.GrpcError]]), so no handler chooses one.
+ *
+ * Hence the generic `GKeyedQueue[Any, ApplicationError]` rather than the generated `KeyedQueue`, whose methods
+ * must already fail with a `StatusException`. Its methods take a call context, unused here.
  *
  * Every RPC is measured here, under the name of the RPC: a handler is the whole of one call — decode, use
  * case, encode — so what is timed is what the caller experienced. See
@@ -33,20 +35,22 @@ import zio.*
 final class QueueService(
   monitor: Monitor,
   useCases: QueueUseCases,
-) extends ZioKeyedQueueService.KeyedQueue:
+) extends ZioKeyedQueueService.GKeyedQueue[Any, ApplicationError]:
 
   /**
    * Refuses an enqueue with no message: a `v1.EnqueueRequest` whose `message` is absent cannot be read into
    * the domain, so it is refused here rather than in the use case, which has no absent message to carry.
    *
    * @param request the `v1.EnqueueRequest`
-   * @return the `v1.EnqueueResponse`; aborts with `INVALID_ARGUMENT` when the message cannot be read
+   * @param context the call's context, unused
+   * @return the `v1.EnqueueResponse`; aborts with `DecodingError` when the message is absent, and with the
+   *         use case's errors
    */
-  override def enqueue(request: v1.EnqueueRequest): IO[StatusException, v1.EnqueueResponse] =
+  override def enqueue(request: v1.EnqueueRequest, context: Any): IO[ApplicationError, v1.EnqueueResponse] =
     monitor.measure("QueueService.enqueue"):
       for
-        safe     <- decoded(request.toDomain)
-        response <- useCases.enqueue(safe).mapError(status)
+        safe     <- ZIO.fromEither(request.toDomain)
+        response <- useCases.enqueue(safe)
       yield response.toProto
 
   /**
@@ -54,13 +58,15 @@ final class QueueService(
    * `delivery` rather than a status, so a quiet queue is not an error.
    *
    * @param request the `v1.DequeueRequest`
-   * @return the `v1.DequeueResponse`, whose delivery is absent when nothing became ready
+   * @param context the call's context, unused
+   * @return the `v1.DequeueResponse`, whose delivery is absent when nothing became ready; aborts with the use
+   *         case's errors
    */
-  override def dequeue(request: v1.DequeueRequest): IO[StatusException, v1.DequeueResponse] =
+  override def dequeue(request: v1.DequeueRequest, context: Any): IO[ApplicationError, v1.DequeueResponse] =
     monitor.measure("QueueService.dequeue"):
       for
-        safe     <- decoded(request.toDomain)
-        response <- useCases.dequeue(safe).mapError(status)
+        safe     <- ZIO.fromEither(request.toDomain)
+        response <- useCases.dequeue(safe)
       yield response.toProto
 
   /**
@@ -68,13 +74,15 @@ final class QueueService(
    * would let a retrying client treat it as a transport problem.
    *
    * @param request the `v1.SettleRequest`
-   * @return the `v1.SettleResponse`; aborts with `INVALID_ARGUMENT` when the outcome is unspecified
+   * @param context the call's context, unused
+   * @return the `v1.SettleResponse`; aborts with `DecodingError` when an outcome is unspecified, and with the
+   *         use case's errors
    */
-  override def settle(request: v1.SettleRequest): IO[StatusException, v1.SettleResponse] =
+  override def settle(request: v1.SettleRequest, context: Any): IO[ApplicationError, v1.SettleResponse] =
     monitor.measure("QueueService.settle"):
       for
-        safe     <- decoded(request.toDomain)
-        response <- useCases.settle(safe).mapError(status)
+        safe     <- ZIO.fromEither(request.toDomain)
+        response <- useCases.settle(safe)
       yield response.toProto
 
   /**
@@ -82,59 +90,13 @@ final class QueueService(
    * ones, so a single bad handle does not cost a consumer the claims it still holds.
    *
    * @param request the `v1.HeartbeatRequest`
-   * @return the `v1.HeartbeatResponse`, naming what the caller no longer holds
+   * @param context the call's context, unused
+   * @return the `v1.HeartbeatResponse`, naming what the caller no longer holds; aborts with the use case's
+   *         errors
    */
-  override def heartbeat(request: v1.HeartbeatRequest): IO[StatusException, v1.HeartbeatResponse] =
+  override def heartbeat(request: v1.HeartbeatRequest, context: Any): IO[ApplicationError, v1.HeartbeatResponse] =
     monitor.measure("QueueService.heartbeat"):
       for
-        safe     <- decoded(request.toDomain)
-        response <- useCases.heartbeat(safe).mapError(status)
+        safe     <- ZIO.fromEither(request.toDomain)
+        response <- useCases.heartbeat(safe)
       yield response.toProto
-
-  /**
-   * Turn a partial decode into a call that either proceeds or is refused.
-   *
-   * A request the domain cannot hold — a `v1.EnqueueRequest` without its `message`, or a `v1.SettleRequest`
-   * whose `outcomes` hold an unspecified outcome — is the caller's to fix, so every such failure is
-   * `INVALID_ARGUMENT`, and all of them are reported at once rather than the first.
-   *
-   * @param result what the transformer produced
-   * @tparam A the domain request
-   * @return the request; aborts with `INVALID_ARGUMENT` describing everything wrong with the message
-   */
-  private def decoded[A](result: partial.Result[A]): IO[StatusException, A] =
-    ZIO.fromEither(
-      result.asEitherErrorPathMessageStrings.left
-        .map(errors => reject(errors.map((path, reason) => s"$path: $reason").mkString("; ")))
-    )
-
-  /**
-   * Refuse a call the caller must change to make work.
-   *
-   * @param reason what is wrong, in terms of the request rather than of the implementation
-   * @return the status to fail with
-   */
-  private def reject(reason: String): StatusException =
-    StatusException(Status.INVALID_ARGUMENT.withDescription(reason))
-
-  /**
-   * Map a failure to a gRPC status.
-   *
-   * By category, not by identity: the toolkit's marker traits say what a failure means — the caller sent
-   * something wrong, the trouble will pass, or it is ours to fix — and those are the three answers gRPC has
-   * room for. A new failure is therefore classified by the markers it carries, and the default is the safe
-   * one.
-   *
-   * A `ValidationError` describes *every* problem the request had, because `INVALID_ARGUMENT` is the
-   * caller's cue to change something and one round trip per mistake is a poor way to learn what to change.
-   * An unavailable store carries its reason, because a caller deciding whether to retry benefits from
-   * knowing what is unreachable. Anything else is ours: the caller is told nothing beyond `INTERNAL`,
-   * because the detail is for our logs and not for a stranger.
-   *
-   * @param error what went wrong
-   * @return the status to fail the call with
-   */
-  private def status(error: ApplicationError): StatusException = error match
-    case invalid: ValidationError           => reject(invalid.message)
-    case _: ApplicationError.TransientError => StatusException(Status.UNAVAILABLE.withDescription(error.message))
-    case _                                  => StatusException(Status.INTERNAL.withDescription(""))
