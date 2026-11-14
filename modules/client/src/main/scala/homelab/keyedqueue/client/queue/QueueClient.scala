@@ -2,7 +2,7 @@ package homelab.keyedqueue.client.queue
 
 
 import homelab.keyedqueue.client.queue.managed.GrpcClient
-import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, Receipt, Renewed, Settled, Verdict }
+import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, Receipt, Renewed, Scheduled, Settled, Verdict }
 import homelab.keyedqueue.client.{ Endpoint, ServiceError }
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueueClient
 import io.grpc.ManagedChannelBuilder
@@ -11,7 +11,7 @@ import zio.*
 
 
 /**
- * The queue's four calls, in Scala types.
+ * The queue's five calls, in Scala types.
  *
  * One method per RPC and nothing withheld: outcomes are reported per message rather than per claim, the
  * retry delay is the caller's, and the batch size is stated rather than inferred. Payloads are bytes here
@@ -29,6 +29,23 @@ trait QueueClient:
    * @return how deep the key is now; aborts with a [[ServiceError]] when the call does not land
    */
   def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued]
+
+  /**
+   * Hand a message to a key's queue, to be appended after a delay rather than now.
+   *
+   * Until it falls due no consumer sees it; from then on it is an ordinary message of its key. Its id is what
+   * makes a repeated call harmless: a message with this id already scheduled for the key wins, and this one is
+   * `Ignored`. An id still queued for the key when it falls due is the same message, so this one is then
+   * discarded, as a repeated enqueue would be.
+   *
+   * @param queue which queue to send to
+   * @param message what to send, already written by an encoder
+   * @param deliverAfter how long from now it becomes claimable, measured on the service's clock; must be greater
+   *                     than zero and within the service's horizon (7 days by default)
+   * @return which schedule it will arrive by, and how long until then; aborts with a [[ServiceError]] when the
+   *         call does not land, `Rejected` for a delay the service refuses
+   */
+  def schedule(queue: String, message: Message.Outgoing, deliverAfter: Duration): IO[ServiceError, Scheduled]
 
   /**
    * Wait for a key's messages, and claim them.

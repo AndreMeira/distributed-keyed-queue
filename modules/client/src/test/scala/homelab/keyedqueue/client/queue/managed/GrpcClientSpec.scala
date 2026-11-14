@@ -6,7 +6,7 @@ import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.client.queue.QueueClient
 import homelab.keyedqueue.client.ServiceError
-import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, MessageId, MessageKey, Receipt, Settled, Verdict }
+import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, MessageId, MessageKey, Receipt, Scheduled, Settled, Verdict }
 import homelab.keyedqueue.v1
 import homelab.keyedqueue.v1.ZioKeyedQueueService.KeyedQueue
 import io.grpc.inprocess.{ InProcessChannelBuilder, InProcessServerBuilder }
@@ -42,6 +42,22 @@ object GrpcClientSpec extends ZIOSpecDefault:
         request.flatMap(_.message).map(_.encoding).contains("application/json"),
         request.flatMap(_.message).map(_.payload.toByteArray.toList).contains(List(9.toByte)),
         request.flatMap(_.message).flatMap(_.sentAt).isDefined,
+      )
+    },
+    test("a schedule carries the envelope and the delay, and the answer reads back") {
+      for
+        seen   <- Ref.make(Chunk.empty[Any])
+        client <- served(Recording(seen))
+        message = Message.Outgoing(MessageKey("k1"), MessageId("m1"), "order.v2", "application/json", Chunk(9.toByte))
+        answer <- client.schedule("orders", message, 5.seconds)
+        sent   <- seen.get
+        request = sent.collectFirst { case request: v1.ScheduleRequest => request }
+      yield assertTrue(
+        answer == Scheduled.Recorded(5.seconds),
+        request.map(_.queue).contains("orders"),
+        request.flatMap(_.message).map(_.messageId).contains("m1"),
+        request.flatMap(_.message).flatMap(_.sentAt).isDefined,
+        request.flatMap(_.deliverAfter).contains(ProtoDuration(seconds = 5)),
       )
     },
     test("a dequeue carries the wait and the batch, and the claim reads back") {
@@ -104,10 +120,12 @@ object GrpcClientSpec extends ZIOSpecDefault:
       for
         refused  <- served(Refusing(Status.INVALID_ARGUMENT.withDescription("a queue is required")))
         rejected <- refused.dequeue("", 1.second, 1).either
+        refusing <- refused.schedule("", Message.Outgoing(MessageKey("k1"), MessageId("m1"), "t", "e", Chunk.empty), 1.second).either
         down     <- served(Refusing(Status.UNAVAILABLE))
         gone     <- down.dequeue("orders", 1.second, 1).either
       yield assertTrue(
         rejected == Left(ServiceError.Rejected("a queue is required")),
+        refusing == Left(ServiceError.Rejected("a queue is required")),
         gone.left.exists(_.isInstanceOf[ServiceError.Unreachable]),
       )
     },
@@ -138,7 +156,7 @@ object GrpcClientSpec extends ZIOSpecDefault:
       override def heartbeat(request: v1.HeartbeatRequest): IO[StatusException, v1.HeartbeatResponse] =
         seen.update(_ :+ request).as(renewal)
       override def schedule(request: v1.ScheduleRequest): IO[StatusException, v1.ScheduleResponse]    =
-        seen.update(_ :+ request).as(v1.ScheduleResponse(scheduled = true))
+        seen.update(_ :+ request).as(v1.ScheduleResponse(scheduled = true, Some(ProtoDuration(seconds = 5))))
 
     /** A service that never answers, for the deadline that stops a caller waiting on it. */
     final class Hanging extends KeyedQueue:
