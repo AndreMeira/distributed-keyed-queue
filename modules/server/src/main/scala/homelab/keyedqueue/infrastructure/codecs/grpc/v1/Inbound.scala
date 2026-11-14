@@ -40,7 +40,7 @@ object Inbound:
    *
    * @param reasons each problem, as `path: reason`
    */
-  final case class DecodingError(reasons: Chunk[String]) extends ApplicationError.DecodingError:
+  final case class DecodingError(reasons: Chunk[String]) extends ApplicationError.DecodingError {
 
     /**
      * Every problem, in one line.
@@ -48,6 +48,24 @@ object Inbound:
      * @return the reasons, separated by `; `
      */
     override def message: String = reasons.mkString("; ")
+  }
+
+  object DecodingError {
+
+    /**
+     * Every problem a partial decode found, each with the field it concerns.
+     *
+     * An `Iterable` rather than a `Chunk` because it is what Chimney's `asEitherErrorPathMessageStrings` hands
+     * over; kept off the public surface for that reason.
+     *
+     * @param errors each problem as Chimney reports it: the path to the field, and what was wrong with it
+     * @return the error carrying them all, each as `path: reason`
+     */
+    private[Inbound] def fromIterable(errors: Iterable[(String, String)]): DecodingError =
+      DecodingError {
+        Chunk.fromIterable(errors.map((path, error) => s"$path: $error"))
+      }
+  }
 
   /** The longest span, either way, a protobuf `Duration` may carry: about ten thousand years. */
   private val maxDurationSeconds: Long = 315576000000L
@@ -149,16 +167,7 @@ object Inbound:
   private def decoded[A](result: partial.Result[A]): Either[DecodingError, A] =
     result.asEitherErrorPathMessageStrings match
       case Right(value) => Right(value)
-      case Left(errors) => Left(DecodingError(Chunk.fromIterable(errors).map(describe)))
-
-  /**
-   * One reason a request could not be read, with the field it concerns.
-   *
-   * @param error the path to the field, and what was wrong with it
-   * @return `path: reason`
-   */
-  private def describe(error: (String, String)): String =
-    s"${error._1}: ${error._2}"
+      case Left(errors) => Left(DecodingError.fromIterable(errors))
 
   extension (request: v1.EnqueueRequest)
     /**
