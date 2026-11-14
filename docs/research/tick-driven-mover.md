@@ -112,8 +112,9 @@ queue's keys in that partition within one cluster slot:
 | `{p}:scheduled` | zset | `<queue>` + `<key>` + `<message id>` → when the message is due |
 | `{p}:scheduled:payloads` | hash | the same member → the message |
 
-The member's separator and encoding are to be decided. It must not collide with characters a queue name,
-key or id may contain.
+The member's encoding must not collide with characters a queue name, key or id may contain. For
+`{p}:scheduled` it is decided: length-prefixed, id last (`6:orders3:c42nudge`), see question 2 of
+[`message-scheduling.md`](message-scheduling.md). `{p}:delayed` would reuse the same form without the id.
 
 **Why per partition, not per queue.** Per queue would be correct too: a move only matters to someone who
 dequeues the queue, and a dequeue registers the queue on its instance. Per partition was preferred because a
@@ -309,7 +310,7 @@ The use cases that create due work (settle, schedule) send their requests the sa
 - **Herding:** accept it, only the requester arms early, or jitter.
 - **Batching:** whether to quantise, and the quantum per pair.
 - **One wake per queue:** for both pairs, and whether enqueue's wake should follow.
-- **The member encoding** for `{p}:delayed` and `{p}:scheduled`.
+- **The member encoding** for `{p}:delayed`. Decided for `{p}:scheduled` (length-prefixed, id last).
 - **The scheduling verb's own questions:** what a repeated message id means, cancelling, the RPC's shape,
   and the horizon ([`message-scheduling.md`](message-scheduling.md)).
 - **Metrics:** entries moved per tick, the lateness at move (move time − due time), early ticks lost to a
