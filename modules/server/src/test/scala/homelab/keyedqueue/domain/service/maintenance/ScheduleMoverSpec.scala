@@ -98,7 +98,7 @@ object ScheduleMoverSpec extends ZIOSpecDefault:
       yield ()
 
     /**
-     * Wait until the store has been asked to move at least `count` times.
+     * Wait until the store has been asked to move at least `count` times, or fail.
      *
      * @param store the store
      * @param count how many moves to wait for
@@ -106,30 +106,24 @@ object ScheduleMoverSpec extends ZIOSpecDefault:
      *         patience
      */
     def movedTimes(store: InMemoryQueueStore, count: Int): IO[String, Unit] =
-      movedWithin(store, count, MaintenanceSpecSupport.patience)
+      for
+        reached <- Live.live(movedAtLeast(store, count).timeout(MaintenanceSpecSupport.patience))
+        moved   <- store.moved
+        _       <- ZIO.fail(s"expected $count moves, saw $moved").unless(reached.isDefined)
+      yield ()
 
     /**
-     * Look at the count, and look again after a yield while it is short and patience is left.
+     * Look at the count, and look again after a yield while it is short.
+     *
+     * Unbounded on its own: [[movedTimes]] bounds it with the patience.
      *
      * @param store the store
      * @param count how many moves to wait for
-     * @param left how many more yields the wait may take
-     * @return noop once that many were asked for; fails when the patience runs out first
+     * @return noop once that many were asked for
      */
-    def movedWithin(store: InMemoryQueueStore, count: Int, left: Int): IO[String, Unit] =
-      store.moved.flatMap(counted(store, count, left))
-
-    /**
-     * What a look at the count found, and what follows.
-     *
-     * @param store the store
-     * @param count how many moves to wait for
-     * @param left how many more yields the wait may take
-     * @param moved how many moves were asked for so far
-     * @return noop when enough were; another look after a yield; or a failure naming the shortfall
-     */
-    def counted(store: InMemoryQueueStore, count: Int, left: Int)(moved: Int): IO[String, Unit] =
-      if moved >= count then ZIO.unit
-      else if left > 0 then ZIO.yieldNow *> movedWithin(store, count, left - 1)
-      else ZIO.fail(s"expected $count moves, saw $moved")
+    def movedAtLeast(store: InMemoryQueueStore, count: Int): UIO[Unit] =
+      for
+        moved <- store.moved
+        _     <- (ZIO.yieldNow *> movedAtLeast(store, count)).unless(moved >= count)
+      yield ()
   }

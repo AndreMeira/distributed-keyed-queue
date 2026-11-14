@@ -118,24 +118,25 @@ object SettleUseCaseSpec extends ZIOSpecDefault:
      * Wait until the store has recorded a settlement, or fail.
      *
      * @param store the store
-     * @param left how many more yields the wait may take
+     * @param patience how long, on the live clock, the wait lasts before it gives up
      * @return noop once a settlement is recorded; fails when none is within the patience
      */
-    def settledWithin(store: InMemoryQueueStore, left: Int): IO[String, Unit] =
-      store.settled.flatMap(settledOr(store, left))
+    def settledWithin(store: InMemoryQueueStore, patience: Duration): IO[String, Unit] =
+      Live.live(untilSettled(store).timeout(patience)).someOrFail("the settle was not recorded")
 
     /**
-     * What a look at the store found, and what follows.
+     * Look at the store, and look again after a yield while it holds no settlement.
+     *
+     * Unbounded on its own: [[settledWithin]] bounds it with the patience.
      *
      * @param store the store
-     * @param left how many more yields the wait may take
-     * @param settled the settlements recorded so far
-     * @return noop when one is; another look after a yield; or a failure when the patience is gone
+     * @return noop once a settlement is recorded
      */
-    def settledOr(store: InMemoryQueueStore, left: Int)(settled: Chunk[Settlement]): IO[String, Unit] =
-      if settled.nonEmpty then ZIO.unit
-      else if left > 0 then ZIO.yieldNow *> settledWithin(store, left - 1)
-      else ZIO.fail("the settle was not recorded")
+    def untilSettled(store: InMemoryQueueStore): UIO[Unit] =
+      for
+        recorded <- store.settled
+        _        <- (ZIO.yieldNow *> untilSettled(store)).unless(recorded.nonEmpty)
+      yield ()
 
     /**
      * A settle that reports one message failed, with a backoff.

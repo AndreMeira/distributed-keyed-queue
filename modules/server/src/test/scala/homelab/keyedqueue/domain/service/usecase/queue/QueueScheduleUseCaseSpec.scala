@@ -114,24 +114,25 @@ object QueueScheduleUseCaseSpec extends ZIOSpecDefault:
      * Wait until the store has recorded a schedule, or fail.
      *
      * @param store the store
-     * @param left how many more yields the wait may take
+     * @param patience how long, on the live clock, the wait lasts before it gives up
      * @return noop once a schedule is recorded; fails when none is within the patience
      */
-    def recordedWithin(store: InMemoryQueueStore, left: Int): IO[String, Unit] =
-      store.scheduled.flatMap(recordedOr(store, left))
+    def recordedWithin(store: InMemoryQueueStore, patience: Duration): IO[String, Unit] =
+      Live.live(untilRecorded(store).timeout(patience)).someOrFail("the schedule was not recorded")
 
     /**
-     * What a look at the store found, and what follows.
+     * Look at the store, and look again after a yield while it holds no schedule.
+     *
+     * Unbounded on its own: [[recordedWithin]] bounds it with the patience.
      *
      * @param store the store
-     * @param left how many more yields the wait may take
-     * @param recorded the schedules recorded so far
-     * @return noop when one is; another look after a yield; or a failure when the patience is gone
+     * @return noop once a schedule is recorded
      */
-    def recordedOr(store: InMemoryQueueStore, left: Int)(recorded: Chunk[ScheduledSubmission]): IO[String, Unit] =
-      if recorded.nonEmpty then ZIO.unit
-      else if left > 0 then ZIO.yieldNow *> recordedWithin(store, left - 1)
-      else ZIO.fail("the schedule was not recorded")
+    def untilRecorded(store: InMemoryQueueStore): UIO[Unit] =
+      for
+        recorded <- store.scheduled
+        _        <- (ZIO.yieldNow *> untilRecorded(store)).unless(recorded.nonEmpty)
+      yield ()
 
     /**
      * A fresh use case over a fresh store, with a timer that is built but not firing.

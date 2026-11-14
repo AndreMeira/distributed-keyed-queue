@@ -89,30 +89,24 @@ object BackoffMoverSpec extends ZIOSpecDefault:
      *         patience
      */
     def releasedTimes(store: InMemoryQueueStore, count: Int): IO[String, Unit] =
-      releasedWithin(store, count, MaintenanceSpecSupport.patience)
+      for
+        reached  <- Live.live(releasedAtLeast(store, count).timeout(MaintenanceSpecSupport.patience))
+        released <- store.released
+        _        <- ZIO.fail(s"expected $count releases, saw $released").unless(reached.isDefined)
+      yield ()
 
     /**
-     * Look at the count, and look again after a yield while it is short and patience is left.
+     * Look at the count, and look again after a yield while it is short.
+     *
+     * Unbounded on its own: [[releasedTimes]] bounds it with the patience.
      *
      * @param store the store
      * @param count how many releases to wait for
-     * @param left how many more yields the wait may take
-     * @return noop once that many were asked for; fails when the patience runs out first
+     * @return noop once that many were asked for
      */
-    def releasedWithin(store: InMemoryQueueStore, count: Int, left: Int): IO[String, Unit] =
-      store.released.flatMap(counted(store, count, left))
-
-    /**
-     * What a look at the count found, and what follows.
-     *
-     * @param store the store
-     * @param count how many releases to wait for
-     * @param left how many more yields the wait may take
-     * @param released how many releases were asked for so far
-     * @return noop when enough were; another look after a yield; or a failure naming the shortfall
-     */
-    def counted(store: InMemoryQueueStore, count: Int, left: Int)(released: Int): IO[String, Unit] =
-      if released >= count then ZIO.unit
-      else if left > 0 then ZIO.yieldNow *> releasedWithin(store, count, left - 1)
-      else ZIO.fail(s"expected $count releases, saw $released")
+    def releasedAtLeast(store: InMemoryQueueStore, count: Int): UIO[Unit] =
+      for
+        released <- store.released
+        _        <- (ZIO.yieldNow *> releasedAtLeast(store, count)).unless(released >= count)
+      yield ()
   }
