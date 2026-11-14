@@ -32,7 +32,7 @@ service KeyedQueue {
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 
   // Accept a message for a key, to be appended after `deliver_after`. Returns once the schedule is durably
-  // recorded. Joins its key's line within about 50 ms of its due time while the instance that took it runs, and
-  // within the backstop (60 s) if that instance dies.
+  // recorded. Joins its key's line within about 100 ms of its due time (usually 50 ms) while the instance that took
+  // it runs, and within the backstop (60 s) if that instance dies.
   rpc Schedule(ScheduleRequest) returns (ScheduleResponse);
 }

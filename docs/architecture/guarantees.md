@@ -164,8 +164,9 @@ moved, behind whatever was sent for the key in between, and O1–O4, E1–E5, D1
 then on. The first schedule of an id wins (a repeat is answered `scheduled = false`), and an id still queued for
 the key when it falls due is the same message (D5): the scheduled copy is discarded.
 
-**S3. Lateness is bounded.** A scheduled message joins its key's line within one quantum (about 50 ms) of its due
-time while the instance that accepted it runs, and within one backstop (60 s by default) if that instance dies.
+**S3. Lateness is bounded.** A scheduled message joins its key's line within one quantum plus the slack of its due
+time (about 100 ms at most, usually within 50 ms) while the instance that accepted it runs, and within one
+backstop (60 s by default) if that instance dies.
 Delivery to a consumer then follows the ordinary path.
 
 **S4. A scheduled message is as durable as the store's persistence, no more.** It waits in the store's memory

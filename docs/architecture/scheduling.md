@@ -77,9 +77,14 @@ maintenance module next to the watchdog.
 
 ## Lateness
 
-A scheduled message joins its key's line **within one quantum (about 50 ms) of its due time** while the instance
-that accepted it runs, and **within one backstop (60 s)** if that instance dies, since any other instance's
-backstop then moves it. Every instance that learns a due time sweeps then (herding); the move is idempotent, so
+A scheduled message joins its key's line **within one quantum plus the slack of its due time** (about 100 ms at
+most) while the instance that accepted it runs, and **within one backstop (60 s)** if that instance dies, since any
+other instance's backstop then moves it.
+
+**Usually within one quantum (50 ms).** A request is rounded up to the quantum grid, which costs up to one
+quantum, and requests on the grid are at least one quantum apart, so the slack drops none of them. The exception is
+the backstop latch, which is not on the grid: a request that falls less than the slack before the backstop is
+dropped, and the latch then fires at the backstop, up to one slack later. Every instance that learns a due time sweeps then (herding); the move is idempotent, so
 the extra passes find nothing.
 
 ## Configuration
@@ -110,6 +115,12 @@ durable as the store's persistence: with persistence off, a restart of the store
 ## Not built
 
 Cancelling a schedule, and the per-partition mover for nack backoffs (`{p}:delayed`, which would need a schema
-bump); nacks keep the watchdog. The scope these choices assume — one DKQ with its own Valkey per service — and
+bump); nacks keep the watchdog.
+
+**One partition stalled delays the next tick for all of them.** The partitions are moved concurrently, so a healthy
+partition's due messages are moved at once, but a call answers only when every partition has, and the mover asks
+for its next tick then. A partition waiting out the command timeout (`max-wait`, 30 s) therefore delays the next
+tick of every partition, though their next due times are aged correctly. It only arises on a cluster with a node
+down (a single server has one partition); a mover loop per partition would remove it. The scope these choices assume — one DKQ with its own Valkey per service — and
 what an infrastructure-level DKQ would rework are in
 [`../research/tick-driven-mover.md`](../research/tick-driven-mover.md).
