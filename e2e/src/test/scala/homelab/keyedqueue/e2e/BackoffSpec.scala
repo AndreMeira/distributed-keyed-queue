@@ -13,7 +13,8 @@ import zio.test.*
  * ends, through either instance, and not before.
  *
  * Before the backoff mover, the watchdog's sweep released it, up to a `sweep-interval` late (2 s on the e2e stacks);
- * now the instance that took the nack asks for a tick at the wait's end. See `docs/architecture/scheduling.md`.
+ * now the instance that took the nack asks for a tick at the wait's end, and every instance's backoff mover covers every
+ * partition, so a survivor releases a key whatever queues it has served. See `docs/architecture/scheduling.md`.
  */
 object BackoffSpec extends ZIOSpecDefault:
   import Support.*
@@ -27,10 +28,10 @@ object BackoffSpec extends ZIOSpecDefault:
           a        <- client(dkq.a)
           b        <- client(dkq.b)
           _        <- a.enqueue(name, message("k1", "m1"))
-          first    <- claim(b, name)
+          first    <- claim(b, name, 10.seconds)
           nacked   <- Clock.instant
           _        <- b.settle(first.receipt, first.messages.toChunk.map(failed), 500.millis)
-          again    <- claim(a, name)
+          again    <- claim(a, name, 10.seconds)
           returned <- Clock.instant
           _        <- a.settle(again.receipt, again.messages.toChunk.map(done), Duration.Zero)
           waited    = Duration.fromInterval(nacked, returned)
@@ -39,7 +40,26 @@ object BackoffSpec extends ZIOSpecDefault:
           waited >= 450.millis,
           waited <= 1500.millis,
         )
-      }
+      },
+      test("a backoff outlives the instance that took the nack: the other releases it on its backstop, unasked") {
+        // SIGKILL right after the nack: the tick the nacking instance asked for dies with it. The survivor has never
+        // served this queue, so it does not touch it until well past its own backstop (5 s) plus the wait, then
+        // takes the key with a short wait. Under the watchdog's sweep, which only covered queues an instance had
+        // served, the key would still be held back then, and the short wait would come back empty.
+        for
+          dkq   <- ZIO.service[Deployment]
+          name   = dkq.queue("backoff-survives")
+          a     <- client(dkq.a)
+          b     <- client(dkq.b)
+          _     <- a.enqueue(name, message("k1", "m1"))
+          first <- claim(a, name, 10.seconds)
+          _     <- a.settle(first.receipt, first.messages.toChunk.map(failed), 1.second)
+          _     <- Compose.kill(dkq.a.name)
+          _     <- ZIO.sleep(8.seconds)
+          again <- claim(b, name, 1.second)
+          _     <- b.settle(again.receipt, again.messages.toChunk.map(done), Duration.Zero)
+        yield assertTrue(again.messages.map(_.attempt).toChunk == Chunk(2))
+      } @@ TestAspect.after(Compose.revive("dkq-a").orDie) @@ TestAspect.ifEnvNotSet("DKQ_E2E_ENDPOINTS"),
     ).provideShared(Deployment.layer, Scope.default)
       @@ TestAspect.withLiveClock
       @@ TestAspect.sequential
@@ -71,10 +91,11 @@ object BackoffSpec extends ZIOSpecDefault:
      *
      * @param client the client to dequeue with
      * @param queue the queue
+     * @param wait how long to wait for it
      * @return the claim; fails when the queue stayed idle
      */
-    def claim(client: QueueClient, queue: String): IO[ServiceError | String, Claim] =
-      client.dequeue(queue, 10.seconds, 1).flatMap(claimed(queue))
+    def claim(client: QueueClient, queue: String, wait: Duration): IO[ServiceError | String, Claim] =
+      client.dequeue(queue, wait, 1).flatMap(claimed(queue))
 
     /**
      * The claim a dequeue answered, or a failure when it answered idle.
