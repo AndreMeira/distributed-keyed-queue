@@ -57,6 +57,26 @@ object QueueScheduleUseCaseSpec extends ZIOSpecDefault:
         _       <- MaintenanceSpecSupport.done(tick, "the tick at the due time")
       yield assertTrue(early.isEmpty)
     },
+    test("the tick is asked for the delay less the store's reply time, so a slow reply does not make it late") {
+      // The store records, then takes 500 ms to answer: the due time was set when it recorded, so the tick must
+      // come 10 s after the call, not 10 s after the reply.
+      for
+        fixture <- setUp
+        _       <- fixture.timer.run.fork
+        boot    <- fixture.timer.tick.fork
+        _       <- MaintenanceSpecSupport.done(boot, "the boot tick")
+        release <- Promise.make[Nothing, Unit]
+        _       <- fixture.store.holdSchedulesUntil(release)
+        call    <- fixture.schedule(ScheduleRequest("jobs", Helper.requestMessage("k1"), 10.seconds)).fork
+        _       <- recordedWithin(fixture.store, MaintenanceSpecSupport.patience)
+        _       <- TestClock.adjust(500.millis)
+        _       <- release.succeed(())
+        _       <- MaintenanceSpecSupport.done(call, "the schedule")
+        tick    <- fixture.timer.tick.fork
+        _       <- TestClock.adjust(9500.millis)
+        _       <- MaintenanceSpecSupport.done(tick, "the tick at 10 s from the call")
+      yield assertCompletes
+    },
     test("a schedule cancelled after the store recorded it still asks for its tick") {
       // The store holds the call open just after writing: a cancellation then lands between the write and the
       // tick request. Split there, the schedule would wait for the 1 h backstop while this instance is healthy.

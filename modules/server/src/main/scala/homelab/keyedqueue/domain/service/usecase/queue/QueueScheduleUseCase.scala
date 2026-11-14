@@ -9,7 +9,7 @@ import homelab.keyedqueue.domain.service.maintenance.{ DueTimer, Watchdog }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.model.queue.ScheduledSubmission
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
-import zio.{ IO, ZIO }
+import zio.{ Clock, Duration, IO, ZIO }
 
 
 /**
@@ -50,12 +50,18 @@ final class QueueScheduleUseCase(store: QueueStore, watchdog: Watchdog, validati
    * ignored (the first schedule of an id wins). Nothing in the step blocks beyond the store call, which waits for
    * its reply uninterruptibly anyway and is bounded by the command timeout.
    *
+   * The store's `dueIn` is measured when it records, and the reply takes time to arrive, so the tick is asked
+   * for the delay less the whole round trip. That can only make the hint early, by at most the round trip, which
+   * is safe: an early tick finds nothing due, and the mover asks again for the real due time.
+   *
    * @param scheduled what to record
    * @return what the store recorded; aborts with `ApplicationError` when the store fails
    */
   private def record(scheduled: ScheduledSubmission): IO[ApplicationError, QueueStore.Scheduled] =
     ZIO.uninterruptible:
       for
+        sent     <- Clock.instant
         recorded <- store.schedule(scheduled)
-        _        <- timer.triggerIn(recorded.dueIn)
+        answered <- Clock.instant
+        _        <- timer.triggerIn(recorded.dueIn minus Duration.fromInterval(sent, answered))
       yield recorded
