@@ -35,7 +35,9 @@ object Module:
    * @return the layer
    */
   val validation: ZLayer[QueueConfig, Nothing, QueueInputValidation.Config] =
-    ZLayer.fromFunction((config: QueueConfig) => QueueInputValidation.Config(config.maxWait, config.maxBatchLimit, config.maxScheduleAhead))
+    ZLayer.fromFunction((config: QueueConfig) =>
+      QueueInputValidation.Config(config.maxWait, config.maxBatchLimit, config.maxScheduleAhead, config.maxRetryAfter)
+    )
 
   /**
    * The lock validator's limit, read from the same config the queue's `max_wait` comes from — one ceiling

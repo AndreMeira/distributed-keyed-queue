@@ -126,7 +126,9 @@ enum Applied {
 
 message SettleRequest {
   string                   receipt     = 1;
-  google.protobuf.Duration retry_after = 2;  // a nack asking the KEY to wait; zero means immediately
+  // A nack asking the KEY to wait; zero means immediately. At most the service's ceiling (`max-retry-after`,
+  // 1 hour by default): a longer one is clamped to it, not refused.
+  google.protobuf.Duration retry_after = 2;
   // What became of each message named. A claim may be settled piece by piece: naming some leaves the rest
   // owed, and the claim ends — releasing the key — once nothing is.
   //

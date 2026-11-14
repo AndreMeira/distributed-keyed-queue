@@ -115,6 +115,7 @@ them on time:
 
 | key | default | meaning |
 |---|---|---|
+| `max-retry-after` | 1 hour | the longest backoff a nack may ask for; a longer one is clamped to it |
 | `backoff-quantum` | 5 ms | the window a backoff tick request is rounded up to |
 | `backoff-slack` | 5 ms | how much earlier a request must be to move the timer |
 | `backoff-backstop` | 5 s | the longest the timer waits with no request |

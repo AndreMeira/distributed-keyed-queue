@@ -61,6 +61,7 @@ object SpecHelper {
         maxWait = 5.seconds,
         maxBatchLimit = 32,
         maxScheduleAhead = 7.days,
+        maxRetryAfter = 1.hour,
         scheduleQuantum = 50.millis,
         scheduleSlack = 50.millis,
         scheduleBackstop = 60.seconds,
