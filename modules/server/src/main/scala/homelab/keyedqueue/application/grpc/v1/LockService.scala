@@ -8,7 +8,7 @@ import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Inbound.toDomain
 import homelab.keyedqueue.infrastructure.codecs.grpc.v1.Outbound.toProto
 import homelab.keyedqueue.v1
 import homelab.keyedqueue.v1.ZioKeyedLockService
-import zio.IO
+import zio.{ IO, ZIO }
 
 
 /**
@@ -18,7 +18,8 @@ import zio.IO
  * same way: a lock held until the wait elapsed is an ordinary answer (`acquired = false`), a lost hold is an
  * ordinary answer (`released`/`renewed = false`), and only a bad request or a broken store fails the call,
  * with the domain's own errors: [[Module]] turns them into a `Status` ([[errors.GrpcError]]). A malformed
- * request surfaces as a `ValidationError`, since the lock validates in the use case rather than the codec.
+ * request surfaces as a `ValidationError`, since the lock validates in the use case rather than the codec; only
+ * a duration out of protobuf's range is refused by the codec, as an `Inbound.DecodingError`.
  *
  * `Acquire` hands back the numeric fence as well as the opaque receipt: the receipt releases and refreshes,
  * and the fence stamps writes to the protected resource so a stale holder's writes are rejected downstream.
@@ -34,12 +35,15 @@ final class LockService(monitor: Monitor, useCases: LockUseCases) extends ZioKey
    *
    * @param request the `v1.AcquireRequest`
    * @param context the call's context, unused
-   * @return the `v1.AcquireResponse`; `acquired = false` when the wait elapsed; aborts with a
-   *         `ValidationError` when the name is empty or a duration is not positive
+   * @return the `v1.AcquireResponse`; `acquired = false` when the wait elapsed; aborts with an
+   *         `Inbound.DecodingError` when a duration is out of protobuf's range, and with a `ValidationError`
+   *         when the name is empty or a duration is not positive
    */
   override def acquire(request: v1.AcquireRequest, context: Any): IO[ApplicationError, v1.AcquireResponse] =
     monitor.measure("LockService.acquire"):
-      for response <- useCases.acquire(request.toDomain)
+      for
+        safe     <- ZIO.fromEither(request.toDomain)
+        response <- useCases.acquire(safe)
       yield response.toProto
 
   /**
@@ -48,11 +52,14 @@ final class LockService(monitor: Monitor, useCases: LockUseCases) extends ZioKey
    * @param request the `v1.TryAcquireRequest`
    * @param context the call's context, unused
    * @return the `v1.AcquireResponse`; `acquired = false` when the lock is held or already queued for; aborts with
-   *         a `ValidationError` when the name is empty or the ttl is not positive
+   *         an `Inbound.DecodingError` when the ttl is out of protobuf's range, and with a `ValidationError` when
+   *         the name is empty or the ttl is not positive
    */
   override def tryAcquire(request: v1.TryAcquireRequest, context: Any): IO[ApplicationError, v1.AcquireResponse] =
     monitor.measure("LockService.tryAcquire"):
-      for response <- useCases.tryAcquire(request.toDomain)
+      for
+        safe     <- ZIO.fromEither(request.toDomain)
+        response <- useCases.tryAcquire(safe)
       yield response.toProto
 
   /**
@@ -73,10 +80,13 @@ final class LockService(monitor: Monitor, useCases: LockUseCases) extends ZioKey
    *
    * @param request the `v1.RefreshRequest`
    * @param context the call's context, unused
-   * @return the `v1.RefreshResponse`; `renewed = false` when the hold has been lost; aborts with
-   *         a `ValidationError` when the receipt is not one this service issued or the ttl is not positive
+   * @return the `v1.RefreshResponse`; `renewed = false` when the hold has been lost; aborts with an
+   *         `Inbound.DecodingError` when the ttl is out of protobuf's range, and with a `ValidationError` when
+   *         the receipt is not one this service issued or the ttl is not positive
    */
   override def refresh(request: v1.RefreshRequest, context: Any): IO[ApplicationError, v1.RefreshResponse] =
     monitor.measure("LockService.refresh"):
-      for response <- useCases.refresh(request.toDomain)
+      for
+        safe     <- ZIO.fromEither(request.toDomain)
+        response <- useCases.refresh(safe)
       yield response.toProto

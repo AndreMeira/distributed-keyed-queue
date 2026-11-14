@@ -203,6 +203,21 @@ object GrpcSpec extends ZIOSpecDefault:
           invalid(tooLate).exists(_.contains("deliver_after cannot exceed")),
         )
       },
+      test("a duration out of protobuf's range is refused as INVALID_ARGUMENT, not read as another or thrown on") {
+        // Nanos past a second used to carry into the seconds: read as a 3 s wait here, and an overflow
+        // answered INTERNAL with seconds near Long.MaxValue (#78).
+        for
+          client    <- ZIO.service[KeyedQueueClient]
+          lock      <- ZIO.service[KeyedLockClient]
+          carried   <- client.dequeue(DequeueRequest("refused", Some(ProtoDuration(seconds = 1, nanos = 2_000_000_000)))).flip
+          overflows <- client.dequeue(DequeueRequest("refused", Some(ProtoDuration(seconds = Long.MaxValue, nanos = 999_999_999)))).flip
+          ttl       <- lock.acquire(AcquireRequest("refused", Some(ProtoDuration(seconds = 30, nanos = -1)), Some(ProtoDuration(seconds = 1)))).flip
+        yield assertTrue(
+          invalid(carried).exists(_.contains("maxWait: a duration needs seconds within")),
+          invalid(overflows).exists(_.contains("maxWait: a duration needs seconds within")),
+          invalid(ttl).exists(_.contains("ttl: a duration needs seconds within")),
+        )
+      },
       test("a schedule with no message cannot be decoded, and is refused as INVALID_ARGUMENT with its reason") {
         for
           client <- ZIO.service[KeyedQueueClient]
