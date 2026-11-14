@@ -2,6 +2,7 @@ package homelab.keyedqueue.domain.service.maintenance
 
 
 import homelab.common.error.ApplicationError
+import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import zio.*
 
@@ -14,13 +15,18 @@ import zio.*
  * move is idempotent, so one instance moves an entry and the others find it gone, and no instance's death stops
  * scheduled messages from arriving (the others' backstops move them, late).
  *
+ * Every call to the store is measured as `ScheduleMover.move`: how many passes run, how long each takes, and
+ * how many fail. What a pass moved is in its log line, not a metric: `Monitor` counts and times operations and
+ * nothing finer, on purpose (`docs/research/tick-driven-mover.md`, "Metrics").
+ *
  * See `docs/research/tick-driven-mover.md`.
  *
+ * @param monitor what each call to the store is counted and timed against
  * @param store where scheduled messages wait
  * @param timer what wakes it, and what it asks for the next wake-up
  * @param config how much one call may move
  */
-final class ScheduleMover(store: QueueStore, timer: DueTimer, config: ScheduleMover.Config):
+final class ScheduleMover(monitor: Monitor, store: QueueStore, timer: DueTimer, config: ScheduleMover.Config):
 
   /**
    * Move due messages on every tick, for ever.
@@ -43,7 +49,7 @@ final class ScheduleMover(store: QueueStore, timer: DueTimer, config: ScheduleMo
    *         not a reason to stop delivering for ever (the next backstop retries)
    */
   private def move: UIO[Unit] =
-    store.moveDue(config.limit).foldZIO(failed, moved)
+    monitor.measure("ScheduleMover.move")(store.moveDue(config.limit)).foldZIO(failed, moved)
 
   /**
    * Report a move that failed.

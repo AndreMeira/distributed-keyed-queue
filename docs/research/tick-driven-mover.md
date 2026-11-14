@@ -69,7 +69,7 @@ mover* is `ScheduleMover`, both in `domain/service/maintenance/` next to `Watchd
 | Store port, `QueueStore` | `schedule(scheduled): IO[AdapterError, QueueStore.Scheduled]`, `Scheduled(scheduled: Boolean, dueIn: Duration)`; `moveDue(partition, limit): IO[AdapterError, QueueStore.Moved]`, `Moved(moved: Int, discarded: Int, full: Boolean, nextDueIn: Option[Duration])` |
 | Scripts | `lua/queue/schedule.lua` (`ScheduleScript`), `lua/queue/move.lua` (`MoveScript`) |
 | Configuration (`queue.conf`, `DKQ_*` overrides) | `max-schedule-ahead` 7 days, `schedule-quantum` 50 ms, `schedule-slack` 50 ms, `schedule-backstop` 60 s, `schedule-limit` 100 |
-| Metrics | `ScheduleMover.moved`, `ScheduleMover.discarded`, `ScheduleMover.lateness` (move time − due time), `ScheduleMover.backstop` (moves made by a backstop tick) |
+| Metrics | `ScheduleMover.move`: each call to the store, counted and timed by `Monitor.measure` (see "Metrics" below) |
 
 The member of `{p}:scheduled` is built in Lua, by `schedule.lua` from the queue, key and id it receives,
 and split by `move.lua`, so Scala never handles it and Lua's `#` gives the byte lengths the encoding needs.
@@ -340,6 +340,17 @@ clock), including the interrupted trigger and the extremes of `Instant`.
 | promotion on the claim | a parked consumer does not claim at the due time, so it still needs a timer |
 | a reusable ticker (`time/v1`, `time/v2`, incubator drafts kept on the toolkit's `incubator-time-drafts` branch) | v1 is an edge-triggered broadcast, and a tick missed mid-sweep can be the only record of a nack; v2 works, but a throwaway latch plus a sliding pipe gets the same behaviour with less state |
 
+## Metrics
+
+**Decided (2026-11-14): `Monitor.measure` only.** Each call the mover makes to the store is measured as
+`ScheduleMover.move`: how many passes run, how long each takes, and how many fail. What a pass moved and
+discarded is in its log line, not a metric.
+
+The finer metrics first proposed (`moved`, `discarded`, `lateness` as move time − due time, `backstop` for moves
+made by a backstop tick) are not recorded: `Monitor` counts and times operations, and stays that simple on
+purpose. A deployment that wants per-message numbers or a lateness histogram is asking for a metrics system of
+its own (StatsD or similar), not for a richer `Monitor`.
+
 ## Scope, and what an infra-level DKQ would rework
 
 **The assumption:** one DKQ, with a Valkey of its own, per service (the recommended deployment, see
@@ -366,5 +377,4 @@ many tenants, like SQS, four places would need reworking:
   enqueue's wake should follow. (The schedules pair's are decided above: direct `triggerAt`, herding
   accepted, a 50 ms quantum, one wake per queue.)
 - **The member encoding** for `{p}:delayed`. Decided for `{p}:scheduled` (length-prefixed, id last).
-- **Metrics:** entries moved per tick, the lateness at move (move time − due time), early ticks lost to a
-  restart (visible as moves made by a backstop).
+- **Metrics: decided (2026-11-14), see "Metrics" above.**

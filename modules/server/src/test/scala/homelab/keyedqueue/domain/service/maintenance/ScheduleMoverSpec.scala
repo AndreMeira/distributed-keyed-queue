@@ -2,6 +2,7 @@ package homelab.keyedqueue.domain.service.maintenance
 
 
 import homelab.common.error.ApplicationError
+import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.usecase.queue.InMemoryQueueStore
 import zio.*
@@ -91,7 +92,7 @@ object ScheduleMoverSpec extends ZIOSpecDefault:
     def moving(store: InMemoryQueueStore): UIO[Unit] =
       for
         timer <- DueTimer.make(DueTimer.Config(Duration.Zero, Duration.Zero, backstop))
-        mover  = ScheduleMover(store, timer, ScheduleMover.Config(limit = 100))
+        mover  = ScheduleMover(Monitor.Noop, store, timer, ScheduleMover.Config(limit = 100))
         _     <- timer.run.fork
         _     <- mover.run.fork
       yield ()

@@ -1,6 +1,7 @@
 package homelab.keyedqueue.domain.service.maintenance
 
 
+import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import zio.*
@@ -13,7 +14,8 @@ object Module:
   type Provided = Watchdog & LockCleanup & DueTimer & ScheduleMover
 
   /** The stores they work on, and the intervals they run on. */
-  type Required = QueueStore & Watchdog.Config & LockStore & LockCleanup.Config & DueTimer.Config & ScheduleMover.Config
+  type Required =
+    Monitor & QueueStore & Watchdog.Config & LockStore & LockCleanup.Config & DueTimer.Config & ScheduleMover.Config
 
   /**
    * Start the repair loops, the timer and the schedule mover, for the life of the caller's scope.
@@ -55,7 +57,7 @@ object Module:
    *
    * @return the layer
    */
-  val scheduleMover: ZLayer[QueueStore & DueTimer & ScheduleMover.Config, Nothing, ScheduleMover] =
+  val scheduleMover: ZLayer[Monitor & QueueStore & DueTimer & ScheduleMover.Config, Nothing, ScheduleMover] =
     ZLayer.fromFunction(ScheduleMover.apply)
 
   /**
