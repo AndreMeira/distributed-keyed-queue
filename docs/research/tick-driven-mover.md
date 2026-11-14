@@ -38,6 +38,25 @@ thing is due. The mover sends that time back to the tick source as one more requ
 the code that creates due work: a settle that asks for a backoff, a schedule. The store is the source of
 truth. A request is only a hint about when to look.
 
+## Decided (2026-11-14), for the scheduling feature
+
+- **Scope: the schedules pair only.** The backoffs pair needs `{p}:delayed`, a change to an existing
+  structure, so a schema bump (question 7 of [`message-scheduling.md`](message-scheduling.md)). Nacks keep
+  the watchdog until a feature of their own converts them; the mover's code is written once, so that pair
+  reuses it.
+- **The latch:** `homelab.common.flow.TimeLatch`, from toolkit 0.0.7.
+- **The mover reaches the tick source with a direct `triggerAt`.** No request pipe, so no feedback cycle.
+- **Batching: requests are rounded up to a 50 ms quantum, and `slack` is 50 ms.** This caps the mover at 20
+  firings a second per instance, whatever the schedule rate, at the cost of up to 50 ms of lateness.
+- **Herding is accepted.** Every instance that learns a due time sweeps then; N − 1 find nothing.
+- **One wake per queue touched, for the schedules mover only.** Enqueue keeps its wake per key.
+- **Limit 100 entries per script** (today's `sweep-limit`), a full pass repeated at once; **backstop 60 s.**
+
+What that gives the lateness guarantee (S3): a scheduled message joins its line within one quantum (about
+50 ms) of its due time while the instance that accepted it runs, and within one backstop (60 s) if it dies.
+
+These choices rest on a scope assumption, stated in "Scope, and what an infra-level DKQ would rework" below.
+
 ## Components
 
 ### The time latch
@@ -304,15 +323,32 @@ clock), including the interrupted trigger and the extremes of `Instant`.
 | promotion on the claim | a parked consumer does not claim at the due time, so it still needs a timer |
 | a reusable ticker (`time/v1`, `time/v2`, incubator drafts kept on the toolkit's `incubator-time-drafts` branch) | v1 is an edge-triggered broadcast, and a tick missed mid-sweep can be the only record of a nack; v2 works, but a throwaway latch plus a sliding pipe gets the same behaviour with less state |
 
+## Scope, and what an infra-level DKQ would rework
+
+**The assumption:** one DKQ, with a Valkey of its own, per service (the recommended deployment, see
+`research/infrastructure/valkey-per-service.md` in the workspace). A service has a handful of queues and a
+few instances. Within that scope the choices above hold. If DKQ became an infrastructure service shared by
+many tenants, like SQS, four places would need reworking:
+
+1. **The wake stream** (shared with enqueue, which already appends one wake per key). One stream per
+   partition, trimmed at a fixed length, read by every instance: the reading cost grows as instances ×
+   wakes, and a listener lagging past the trim misses wakes undetected (R4). One wake per queue helps only
+   while a batch's messages fall into few queues; with thousands of queues they fall into as many queues as
+   messages, and it saves nothing. The rework is in the wake design (per-queue or bucketed streams, lag
+   detection), not in the mover. [`bucketed-wake-streams.md`](bucketed-wake-streams.md) explored part of it.
+2. **Herding.** 16 × N scripts per due instant grows with the number of instances: fine for a few per
+   service, not for a fleet.
+3. **The shared per-partition limit.** One queue's burst holds another's due work back by a pass. Within a
+   service that is one owner's queues delaying each other; across tenants it is a noisy neighbour.
+4. **Memory isolation.** Under `noeviction`, schedules that fill the memory make *every* write fail. Within
+   a service the horizon (`max-schedule-ahead`) is enough; across tenants it would take per-tenant quotas.
+
 ## Open questions
 
 - **The names:** the tick source and the mover. (`TimeLatch` is settled: it is in the toolkit.)
-- **How the mover reaches the tick source:** a direct `triggerAt`, or an unbounded pipe.
-- **Herding:** accept it, only the requester arms early, or jitter.
-- **Batching:** whether to quantise, and the quantum per pair.
-- **One wake per queue:** for both pairs, and whether enqueue's wake should follow.
+- **For the backoffs pair, when it comes:** its quantum, whether it also wakes once per queue, and whether
+  enqueue's wake should follow. (The schedules pair's are decided above: direct `triggerAt`, herding
+  accepted, a 50 ms quantum, one wake per queue.)
 - **The member encoding** for `{p}:delayed`. Decided for `{p}:scheduled` (length-prefixed, id last).
-- **The scheduling verb's own questions:** what a repeated message id means, cancelling, the RPC's shape,
-  and the horizon ([`message-scheduling.md`](message-scheduling.md)).
 - **Metrics:** entries moved per tick, the lateness at move (move time − due time), early ticks lost to a
   restart (visible as moves made by a backstop).

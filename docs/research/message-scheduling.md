@@ -132,7 +132,12 @@ too. That change would come first.
 - **The ticker is a shortcut, not the mechanism.** The instance that receives a schedule asks for an early
   tick at its due time. If that instance is gone, another instance's tick or backstop moves the message.
 
-**Where the set lives is open, between two strategies.** Neither has a correctness gap: a moved message
+**Decided (2026-11-14): the tick-driven mover, with one set per partition; for this feature, the schedules
+pair only, a 50 ms quantum, one wake per queue, a 100-entry limit and a 60 s backstop.** The decisions and
+the scope they assume are in [`tick-driven-mover.md`](tick-driven-mover.md) ("Decided" and "Scope, and what
+an infra-level DKQ would rework"). The reasoning that led there follows.
+
+**Where the set lives was open, between two strategies.** Neither has a correctness gap: a moved message
 only matters to someone who dequeues its queue, and a dequeue registers the queue on the instance that
 serves it.
 
@@ -329,7 +334,8 @@ is an encoding changing form, so a bump.
 
 - **S1.** A scheduled message is never claimable before its due time, on the store's clock.
 - **S2.** After its due time it is an ordinary message: O1–O4 and D1–D5 apply from then on.
-- **S3.** Lateness is bounded by whatever question 3 decides.
+- **S3.** A scheduled message joins its key's line within one quantum (about 50 ms) of its due time while
+  the instance that accepted it runs, and within one backstop (60 s) if that instance dies.
 - **S4.** A scheduled message is as durable as the store's persistence, no more. With persistence off (as in
   the compose stacks), a Valkey restart loses it; with AOF and `appendfsync everysec`, at most about a
   second of writes. Which one is the deployer's decision. Scheduled messages are the most exposed to it,
