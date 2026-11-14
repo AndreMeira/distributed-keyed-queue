@@ -57,6 +57,23 @@ What that gives the lateness guarantee (S3): a scheduled message joins its line 
 
 These choices rest on a scope assumption, stated in "Scope, and what an infra-level DKQ would rework" below.
 
+**The names (decided 2026-11-14).** In the rest of this note, *the tick source* is `DueTimer` and *the
+mover* is `ScheduleMover`, both in `domain/service/maintenance/` next to `Watchdog`.
+
+| Layer | Name |
+|---|---|
+| Proto | rpc `Schedule`: `ScheduleRequest { queue, message, deliver_after }`, `ScheduleResponse { scheduled, due_in }` |
+| Domain request, response | `ScheduleRequest` (`domain/request/queue/`), `ScheduleResponse` (`domain/response/queue/`) |
+| Validated input | `ScheduledSubmission(submission: Submission, delay: Duration)` (`domain/model/queue/`); not `Schedule`, which clashes with `zio.Schedule` |
+| Use case | `QueueScheduleUseCase` |
+| Store port, `QueueStore` | `schedule(scheduled): IO[AdapterError, QueueStore.Scheduled]`, `Scheduled(scheduled: Boolean, dueIn: Duration)`; `moveDue(partition, limit): IO[AdapterError, QueueStore.Moved]`, `Moved(moved: Int, discarded: Int, full: Boolean, nextDueIn: Option[Duration])` |
+| Scripts | `lua/queue/schedule.lua` (`ScheduleScript`), `lua/queue/move.lua` (`MoveScript`) |
+| Configuration (`queue.conf`, `DKQ_*` overrides) | `max-schedule-ahead` 7 days, `schedule-quantum` 50 ms, `schedule-slack` 50 ms, `schedule-backstop` 60 s, `schedule-limit` 100 |
+| Metrics | `ScheduleMover.moved`, `ScheduleMover.discarded`, `ScheduleMover.lateness` (move time − due time), `ScheduleMover.backstop` (moves made by a backstop tick) |
+
+The member of `{p}:scheduled` is built in Lua, by `schedule.lua` from the queue, key and id it receives,
+and split by `move.lua`, so Scala never handles it and Lua's `#` gives the byte lengths the encoding needs.
+
 ## Components
 
 ### The time latch
@@ -345,7 +362,6 @@ many tenants, like SQS, four places would need reworking:
 
 ## Open questions
 
-- **The names:** the tick source and the mover. (`TimeLatch` is settled: it is in the toolkit.)
 - **For the backoffs pair, when it comes:** its quantum, whether it also wakes once per queue, and whether
   enqueue's wake should follow. (The schedules pair's are decided above: direct `triggerAt`, herding
   accepted, a 50 ms quantum, one wake per queue.)
