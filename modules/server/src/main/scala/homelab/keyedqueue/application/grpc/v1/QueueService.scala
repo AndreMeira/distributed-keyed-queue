@@ -43,8 +43,8 @@ final class QueueService(
    *
    * @param request the `v1.EnqueueRequest`
    * @param context the call's context, unused
-   * @return the `v1.EnqueueResponse`; aborts with `DecodingError` when the message is absent, and with the
-   *         use case's errors
+   * @return the `v1.EnqueueResponse`; aborts with `DecodingError` when the message is absent or its `sent_at`
+   *         is out of protobuf's range, and with the use case's errors
    */
   override def enqueue(request: v1.EnqueueRequest, context: Any): IO[ApplicationError, v1.EnqueueResponse] =
     monitor.measure("QueueService.enqueue"):
@@ -59,8 +59,8 @@ final class QueueService(
    *
    * @param request the `v1.DequeueRequest`
    * @param context the call's context, unused
-   * @return the `v1.DequeueResponse`, whose delivery is absent when nothing became ready; aborts with the use
-   *         case's errors
+   * @return the `v1.DequeueResponse`, whose delivery is absent when nothing became ready; aborts with
+   *         `DecodingError` when `max_wait` is out of protobuf's range, and with the use case's errors
    */
   override def dequeue(request: v1.DequeueRequest, context: Any): IO[ApplicationError, v1.DequeueResponse] =
     monitor.measure("QueueService.dequeue"):
@@ -75,8 +75,8 @@ final class QueueService(
    *
    * @param request the `v1.SettleRequest`
    * @param context the call's context, unused
-   * @return the `v1.SettleResponse`; aborts with `DecodingError` when an outcome is unspecified, and with the
-   *         use case's errors
+   * @return the `v1.SettleResponse`; aborts with `DecodingError` when an outcome is unspecified or
+   *         `retry_after` is out of protobuf's range, and with the use case's errors
    */
   override def settle(request: v1.SettleRequest, context: Any): IO[ApplicationError, v1.SettleResponse] =
     monitor.measure("QueueService.settle"):
@@ -91,8 +91,8 @@ final class QueueService(
    *
    * @param request the `v1.ScheduleRequest`
    * @param context the call's context, unused
-   * @return the `v1.ScheduleResponse`; aborts with `DecodingError` when the message is absent, and with the
-   *         use case's errors (a `ValidationError` for a delay not greater than zero or beyond the horizon)
+   * @return the `v1.ScheduleResponse`; aborts with `DecodingError` when the message is absent or a duration or
+   *         timestamp is out of protobuf's range, and with the use case's errors (a `ValidationError` for a delay not greater than zero or beyond the horizon)
    */
   override def schedule(request: v1.ScheduleRequest, context: Any): IO[ApplicationError, v1.ScheduleResponse] =
     monitor.measure("QueueService.schedule"):
