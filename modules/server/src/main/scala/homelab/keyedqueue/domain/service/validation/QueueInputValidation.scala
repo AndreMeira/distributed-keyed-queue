@@ -28,12 +28,12 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * Everything `Enqueue` needs to be actionable.
    *
    * @param request what the caller sent, untrusted
-   * @return the submission to hand the store; accumulates `EmptyQueueName`, `EmptyMessageKey` and
-   *         `EmptyMessageId`
+   * @return the submission to hand the store; accumulates `EmptyQueueName` or `ColonInQueueName`,
+   *         `EmptyMessageKey` and `EmptyMessageId`
    */
   def parse(request: EnqueueRequest): Validated[Submission] =
     Validation
-      .validate(nonEmptyQueueName(request.queue), message(request.message))
+      .validate(queueName(request.queue), message(request.message))
       .map(Submission.apply)
 
   /**
@@ -45,7 +45,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    */
   def parse(request: ScheduleRequest): Validated[ScheduledSubmission] =
     Validation
-      .validate(nonEmptyQueueName(request.queue), message(request.message), delay(request.deliverAfter))
+      .validate(queueName(request.queue), message(request.message), delay(request.deliverAfter))
       .map(scheduled)
 
   /**
@@ -55,13 +55,13 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * batch, or for no patience at all, is refused.
    *
    * @param request what the caller sent, untrusted
-   * @return the demand to hand the store, bounded; accumulates `EmptyQueueName`, `NonPositiveMaxWait` and
-   *         `NegativeMaxBatch`
+   * @return the demand to hand the store, bounded; accumulates `EmptyQueueName` or `ColonInQueueName`,
+   *         `NonPositiveMaxWait` and `NegativeMaxBatch`
    */
   def parse(request: DequeueRequest): Validated[Demand] =
     Validation
       .validate(
-        nonEmptyQueueName(request.queue),
+        queueName(request.queue),
         positiveWaitingTime(request.maxWait),
         nonNegative(request.maxBatch, InvalidInput.NegativeMaxBatch),
       )
@@ -182,13 +182,29 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
     asked.max(1).min(config.maxBatchLimit)
 
   /**
-   * A queue must be named, and naming it is what makes it a [[QueueName]].
+   * A queue must be named, without a colon, and naming it is what makes it a [[QueueName]].
+   *
+   * The two checks do not accumulate: an empty name holds no colon, so only one of them can fail.
    *
    * @param value the name as it arrived
-   * @return the name; fails with `EmptyQueueName`
+   * @return the name; fails with `EmptyQueueName` or `ColonInQueueName`
    */
-  private def nonEmptyQueueName(value: String): Validated[QueueName] =
-    nonEmptyString(value, InvalidInput.EmptyQueueName).map(QueueName.apply)
+  private def queueName(value: String): Validated[QueueName] =
+    nonEmptyString(value, InvalidInput.EmptyQueueName).map(QueueName.apply).flatMap(colonFree)
+
+  /**
+   * A queue name must hold no colon.
+   *
+   * The store names a queue's keys `<prefix>:<queue>:<segment>`, and a key's after it (`msgs:<key>`): a colon in
+   * the name would let one queue and key spell another queue's key, of a different type, and a script would
+   * then fail half-way through its writes. Keys and message ids may hold any character, since with the queue's
+   * part ending where its name does, the segments after it are distinct.
+   *
+   * @param name the name, already known not to be empty
+   * @return the name; fails with `ColonInQueueName` when it holds a colon
+   */
+  private def colonFree(name: QueueName): Validated[QueueName] =
+    if name.contains(':') then Validation.fail(InvalidInput.ColonInQueueName) else Validation.succeed(name)
 
   /**
    * A message the store can file: keyed, and addressable by its own name.

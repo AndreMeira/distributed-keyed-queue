@@ -88,12 +88,12 @@ object RedisQueueStoreScheduleSpec extends ZIOSpecDefault:
           claimed.map(Helper.body).contains(Chunk("m1")),
         )
       },
-      test("a queue and a key holding colons and multi-byte characters survive the member's encoding") {
+      test("a queue holding multi-byte characters, and a key and an id holding colons, survive the member's encoding") {
         // The member is `<len(queue)>:<queue><len(key)>:<key><id>`: a separator alone would be fooled by these
         // names, and a length counted in characters rather than bytes by the accented ones.
         for
           store   <- ZIO.service[QueueStore]
-          queue    = QueueName("q:é:1")
+          queue    = QueueName("q-é-1")
           key      = MessageKey("k:ü:2")
           _       <- store.schedule(scheduled(queue, key, "m:ß", 100.millis))
           _       <- ZIO.sleep(200.millis)

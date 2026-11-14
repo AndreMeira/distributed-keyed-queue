@@ -2,6 +2,7 @@ package homelab.keyedqueue.e2e
 
 
 import homelab.keyedqueue.v1.{ Applied, MessageOutcome, Outcome }
+import io.grpc.{ Status, StatusException }
 import zio.*
 import zio.test.*
 
@@ -40,6 +41,19 @@ object EndToEndSpec extends ZIOSpecDefault:
         delivery.head.map(_.attempt).contains(1),
         applied == Applied.APPLIED_OK,
         drained.head.isEmpty, // and settling on b really removed it, as seen from a
+      )
+    },
+    test("a queue name holding a colon is refused, with the service's reason") {
+      // A colon in the name would let one queue and key spell another queue's key in the store (#77).
+      for
+        dkq     <- ZIO.service[Deployment]
+        refused <- dkq.a.enqueue(s"${dkq.queue("colon")}:msgs:a", "k1", "refused").either
+      yield assertTrue(
+        refused match
+          case Left(failure: StatusException) =>
+            failure.getStatus.getCode == Status.Code.INVALID_ARGUMENT &&
+            Option(failure.getStatus.getDescription).exists(_.contains("a queue name cannot contain ':'"))
+          case _                              => false
       )
     },
     test("a dequeue parked on one instance is woken by an enqueue on the other") {

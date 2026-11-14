@@ -31,6 +31,8 @@ message Message {
 }
 
 message EnqueueRequest {
+  // The queue's name. Required, and may not contain ':' (the store joins a queue's name and its keys with
+  // colons, so one in the name could spell another queue's key). A key and a message id may hold anything.
   string   queue    = 1;
   Message  message = 2;
 }
@@ -41,6 +43,7 @@ message EnqueueResponse {
 // A message to be appended to its key's line after a delay, not now. Until it falls due no consumer sees it;
 // from then on it is an ordinary message of its key. Design: docs/research/message-scheduling.md.
 message ScheduleRequest {
+  // Checked exactly as for an enqueue: required, and may not contain ':'.
   string                   queue         = 1;
   // Checked exactly as for an enqueue. Its id is what makes a repeated schedule harmless: a schedule for an
   // id already scheduled for this key is ignored, the first one wins. There is no rescheduling: to move a
@@ -62,6 +65,7 @@ message ScheduleResponse {
 }
 
 message DequeueRequest {
+  // Checked exactly as for an enqueue: required, and may not contain ':'.
   string                   queue     = 1;
   // Named `max_wait` rather than `wait`: on the JVM a field called `wait` collides with Object.wait().
   // How long to block. Required, and must be greater than zero: a dequeue that will not wait is a
