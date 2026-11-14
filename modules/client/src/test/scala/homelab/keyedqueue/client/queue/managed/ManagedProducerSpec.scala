@@ -4,7 +4,7 @@ package homelab.keyedqueue.client.queue.managed
 import homelab.keyedqueue.client.queue.{ Provider, QueueClient }
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.queue.{ MessageDecoder, MessageEncoder, Partition }
-import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, MessageId, MessageKey, Receipt, Renewed, Settled, Verdict }
+import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, MessageId, MessageKey, Receipt, Renewed, Scheduled, Settled, Verdict }
 import zio.*
 import zio.schema.{ DeriveSchema, Schema }
 import zio.test.*
@@ -87,6 +87,9 @@ object ManagedProducerSpec extends ZIOSpecDefault:
 
     /** A client that records what it was asked to send. */
     final class Fake(val sent: Ref[Chunk[(String, Message.Outgoing)]]) extends QueueClient:
+
+      override def schedule(queue: String, message: Message.Outgoing, deliverAfter: Duration): IO[ServiceError, Scheduled] =
+        ZIO.succeed(Scheduled.Recorded(deliverAfter))
 
       override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
         sent.update(_ :+ (queue, message)).as(Enqueued(3L))

@@ -6,7 +6,19 @@ import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.queue.*
-import homelab.keyedqueue.client.queue.model.{ Claim, Dequeued, Enqueued, Message, MessageId, MessageKey, Receipt, Renewed, Settled, Verdict }
+import homelab.keyedqueue.client.queue.model.{
+  Claim,
+  Dequeued,
+  Enqueued,
+  Message,
+  MessageId,
+  MessageKey,
+  Receipt,
+  Renewed,
+  Scheduled,
+  Settled,
+  Verdict,
+}
 import homelab.keyedqueue.v1
 import zio.*
 import zio.test.*
@@ -40,6 +52,34 @@ object QueueCodecsSpec extends ZIOSpecDefault:
       },
       test("the depth comes back as the service counted it") {
         assertTrue(QueueCodecs.decode(v1.EnqueueResponse(7L)) == Enqueued(7L))
+      },
+    ),
+    suite("schedule")(
+      test("a schedule goes out as the enqueue's envelope, with the delay beside it") {
+        val outgoing = Message.Outgoing(MessageKey("k1"), MessageId("m1"), "order.v2", "application/json", Chunk(1.toByte))
+        val request  = QueueCodecs.encode("orders", outgoing, 90.seconds, moment)
+        assertTrue(
+          request.queue == "orders",
+          request.message == QueueCodecs.encode("orders", outgoing, moment).message,
+          request.deliverAfter.contains(ProtoDuration(seconds = 90)),
+        )
+      },
+      test("a recorded schedule and an ignored one read as what they are, with their delay") {
+        assertTrue(
+          QueueCodecs.decode(v1.ScheduleResponse(scheduled = true, Some(ProtoDuration(seconds = 5)))) ==
+            Right(Scheduled.Recorded(5.seconds)),
+          QueueCodecs.decode(v1.ScheduleResponse(scheduled = false, Some(ProtoDuration(seconds = 2)))) ==
+            Right(Scheduled.Ignored(2.seconds)),
+        )
+      },
+      test("a delay of zero is one: an earlier schedule may already be due") {
+        assertTrue(QueueCodecs.decode(v1.ScheduleResponse(scheduled = false, Some(ProtoDuration()))) == Right(Scheduled.Ignored(Duration.Zero)))
+      },
+      test("an answer with no delay, or a negative one, is unreadable rather than guessed") {
+        assertTrue(
+          QueueCodecs.decode(v1.ScheduleResponse(scheduled = true, None)).isLeft,
+          QueueCodecs.decode(v1.ScheduleResponse(scheduled = true, Some(ProtoDuration(seconds = -1)))).isLeft,
+        )
       },
     ),
     suite("dequeue")(

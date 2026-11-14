@@ -88,6 +88,9 @@ object SignalConsumerSpec extends ZIOSpecDefault:
      */
     final class Fake(answers: Ref[Chunk[Dequeued]], val settled: Ref[Chunk[Verdict]], val waits: Ref[Chunk[Duration]]) extends QueueClient:
 
+      override def schedule(queue: String, message: Message.Outgoing, deliverAfter: Duration): IO[ServiceError, Scheduled] =
+        ZIO.succeed(Scheduled.Recorded(deliverAfter))
+
       override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
         ZIO.succeed(Enqueued(0L))
 

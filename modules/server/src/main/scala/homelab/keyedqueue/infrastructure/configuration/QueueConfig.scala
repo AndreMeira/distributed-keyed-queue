@@ -31,6 +31,13 @@ import zio.*
  *                  and how long a stopping instance waits out a read it cannot cancel
  * @param maxWait the longest a caller may ask to wait, and the connection's command timeout
  * @param maxBatchLimit the most messages this service will hand over in one claim
+ * @param maxScheduleAhead the longest delay a schedule may ask for: scheduled messages wait in the store's
+ *                         memory until due
+ * @param scheduleQuantum the window a request for a schedule tick is rounded up to, so entries due together
+ *                        share one pass
+ * @param scheduleSlack how much earlier a request must be to move the schedule timer
+ * @param scheduleBackstop the longest the schedule timer waits with no request
+ * @param scheduleLimit the most scheduled messages one call moves per partition
  */
 final case class QueueConfig(
   redisUrl: String,
@@ -45,6 +52,11 @@ final case class QueueConfig(
   wakeBlock: Duration,
   maxWait: Duration,
   maxBatchLimit: Int,
+  maxScheduleAhead: Duration,
+  scheduleQuantum: Duration,
+  scheduleSlack: Duration,
+  scheduleBackstop: Duration,
+  scheduleLimit: Int,
 ) derives ConfigReader
 
 
@@ -100,6 +112,11 @@ object QueueConfig:
       Option.when(config.wakeBlock.toMillis <= 0)("wake-block must be greater than zero"),
       Option.when(config.maxWait.toMillis <= 0)("max-wait must be greater than zero"),
       Option.when(config.maxBatchLimit <= 0)("max-batch-limit must be greater than zero"),
+      Option.when(config.maxScheduleAhead.toMillis <= 0)("max-schedule-ahead must be greater than zero"),
+      Option.when(config.scheduleQuantum.toMillis < 0)("schedule-quantum must not be negative"),
+      Option.when(config.scheduleSlack.toMillis < 0)("schedule-slack must not be negative"),
+      Option.when(config.scheduleBackstop.toMillis <= 0)("schedule-backstop must be greater than zero"),
+      Option.when(config.scheduleLimit <= 0)("schedule-limit must be greater than zero"),
     ).flatten
     if problems.isEmpty then ZIO.succeed(config)
     else ZIO.fail(Misconfigured(s"config/queue.conf is invalid: ${problems.mkString("; ")}"))

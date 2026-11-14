@@ -86,6 +86,22 @@ final class QueueService(
       yield response.toProto
 
   /**
+   * Records a message to be appended to its key's line after `deliver_after`. A schedule repeating an id still
+   * scheduled is not an error: it answers `scheduled = false`, with the earlier schedule's remaining time.
+   *
+   * @param request the `v1.ScheduleRequest`
+   * @param context the call's context, unused
+   * @return the `v1.ScheduleResponse`; aborts with `DecodingError` when the message is absent, and with the
+   *         use case's errors (a `ValidationError` for a delay not greater than zero or beyond the horizon)
+   */
+  override def schedule(request: v1.ScheduleRequest, context: Any): IO[ApplicationError, v1.ScheduleResponse] =
+    monitor.measure("QueueService.schedule"):
+      for
+        safe     <- ZIO.fromEither(request.toDomain)
+        response <- useCases.schedule(safe)
+      yield response.toProto
+
+  /**
    * Never fails on a receipt it cannot read — that one is reported stale alongside the genuinely revoked
    * ones, so a single bad handle does not cost a consumer the claims it still holds.
    *

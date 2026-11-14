@@ -43,6 +43,22 @@ final private[client] class GrpcClient(stub: KeyedQueueClient, patience: Duratio
     yield QueueCodecs.decode(answer)
 
   /**
+   * One `Schedule` call, stamped with the moment it was sent.
+   *
+   * @param queue which queue to send to
+   * @param message what to send
+   * @param deliverAfter how long from now it becomes claimable
+   * @return which schedule it will arrive by; aborts with the [[ServiceError]] a transport failure amounts to,
+   *         or `Unreadable` when the answer carries no usable delay
+   */
+  override def schedule(queue: String, message: Message.Outgoing, deliverAfter: Duration): IO[ServiceError, Scheduled] =
+    for
+      now    <- Clock.instant
+      answer <- call(within(patience).schedule(QueueCodecs.encode(queue, message, deliverAfter, now)))
+      read   <- ZIO.fromEither(QueueCodecs.decode(answer))
+    yield read
+
+  /**
    * One `Dequeue` call, which blocks on the service until work arrives or the wait elapses.
    *
    * @param queue which queue to take from

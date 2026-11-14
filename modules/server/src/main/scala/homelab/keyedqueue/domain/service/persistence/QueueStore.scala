@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.persistence
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Settlement, Submission }
+import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, ScheduledSubmission, Settlement, Submission }
 import homelab.keyedqueue.domain.types.*
 import zio.{ Chunk, Duration, IO }
 
@@ -31,6 +31,33 @@ trait QueueStore:
    * @return the key's queue depth after the append; aborts with an `AdapterError` if the store fails
    */
   def enqueue(submission: Submission): IO[ApplicationError.AdapterError, Long]
+
+  /**
+   * Accept a message to be appended to its key's line once its delay has elapsed.
+   *
+   * Until then it waits outside the line, and nothing claims it. A message with the same id already scheduled
+   * for the same key wins: this one is ignored, and the answer says so. An id is not compared with the key's
+   * queued messages here, only when the message is moved: then, as for any enqueue, an id still queued for the
+   * key means the scheduled copy is discarded.
+   *
+   * @param scheduled where the message goes, the message, and how long until it is due
+   * @return whether it was recorded and how long until the recorded schedule is due, on the store's clock;
+   *         aborts with an `AdapterError` if the store fails
+   */
+  def schedule(scheduled: ScheduledSubmission): IO[ApplicationError.AdapterError, QueueStore.Scheduled]
+
+  /**
+   * Append every scheduled message that has fallen due to its key's line, as an enqueue would.
+   *
+   * Idempotent, so every instance can run it without coordination: one moves an entry, the others find it
+   * gone. A message whose id is still queued for its key is discarded rather than appended (D5).
+   *
+   * @param limit the most entries to move per part of the store in one call; a full call says so, and is
+   *              repeated
+   * @return what it moved, when the next entry falls due, and how many parts could not be reached; aborts with an
+   *         `AdapterError` only when no part could be
+   */
+  def moveDue(limit: Int): IO[ApplicationError.AdapterError, QueueStore.Moved]
 
   /**
    * Claim whatever is claimable now, and answer at once.
@@ -92,6 +119,27 @@ trait QueueStore:
 
 
 object QueueStore:
+
+  /**
+   * What a schedule recorded.
+   *
+   * @param scheduled false when the id was already scheduled for the key, so the request was ignored
+   * @param dueIn how long until the recorded schedule is due, on the store's clock
+   */
+  final case class Scheduled(scheduled: Boolean, dueIn: Duration)
+
+  /**
+   * What one move of due messages did.
+   *
+   * @param moved how many due messages were appended to their key's line
+   * @param discarded how many were dropped because their id was still queued for the key
+   * @param full whether a part of the store hit the limit, so more may be due right now
+   * @param nextDueIn how long until the next scheduled message falls due, on the store's clock; absent when
+   *                  nothing is scheduled
+   * @param failed how many parts of the store could not be reached: the rest were still moved, and their next
+   *               due time is still reported, so one unreachable part does not hold the others back
+   */
+  final case class Moved(moved: Int, discarded: Int, full: Boolean, nextDueIn: Option[Duration], failed: Int)
 
   /**
    * What one sweep repaired.

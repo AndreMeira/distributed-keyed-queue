@@ -20,6 +20,8 @@ What is specific to this repo:
     schema version, and the migration model that stands on it.
   - [`architecture/lock-mechanics.md`](architecture/lock-mechanics.md) — how the lock works: the three
     states, the script that performs each move, how a waiter waits, and which class does what.
+  - [`architecture/scheduling.md`](architecture/scheduling.md) — a message that becomes claimable after a
+    delay: the rules, where it waits, the two scripts, and the timer and mover that move it on time.
   - [`architecture/redis-data-structures.md`](architecture/redis-data-structures.md) — what is kept in
     Redis, and what each structure is for.
   - [`architecture/redis-cluster.md`](architecture/redis-cluster.md) — the key layout was built for cluster

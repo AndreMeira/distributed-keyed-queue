@@ -2,13 +2,13 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.monitor.Monitor
-import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Settlement, Submission }
+import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, ScheduledSubmission, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.domain.types.*
-import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, QueueKeys }
+import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, QueueKeys, ScheduleKeys }
 import homelab.keyedqueue.infrastructure.redis.script.QueueScripts
-import homelab.keyedqueue.infrastructure.redis.script.queue.{ ClaimScript, RenewScript }
+import homelab.keyedqueue.infrastructure.redis.script.queue.{ ClaimScript, MoveScript, RenewScript }
 import zio.*
 
 import java.time.Instant
@@ -123,6 +123,108 @@ final class RedisQueueStore(
     monitor.trace("RedisQueueStore.sweep"):
       connection.provide:
         scripts.sweep.execute(layout.queue(queue), limit)
+
+  /**
+   * One `schedule` call, in the partition the queue falls in. Whether the id is already scheduled and the
+   * recording are one script, so two racing schedules for one id cannot both be recorded.
+   *
+   * @param scheduled where the message goes, the message, and how long until it is due
+   * @return whether it was recorded, and how long until the recorded schedule is due
+   */
+  override def schedule(scheduled: ScheduledSubmission): IO[RedisFailure, QueueStore.Scheduled] =
+    monitor.trace("RedisQueueStore.schedule"):
+      connection.provide:
+        scripts.schedule.execute(layout.schedule(scheduled.submission.queue), scheduled)
+
+  /**
+   * One `move` call per partition, all of them at once and every one tried even when another fails, so an
+   * unreachable node holds back only what it holds rather than every partition after it.
+   *
+   * Each partition's next due time is "in X ms" as of its own reply; by the time the last reply arrives the
+   * earlier ones have aged, so each is shortened by the time elapsed since it was read.
+   *
+   * @param limit the most entries one partition's call moves
+   * @return the partitions' results combined, with how many could not be reached; aborts with the first
+   *         partition's failure only when none could be
+   */
+  override def moveDue(limit: Int): IO[RedisFailure, QueueStore.Moved] =
+    monitor.trace("RedisQueueStore.moveDue"):
+      connection.provide:
+        for
+          results <- ZIO.partitionPar(layout.schedules)(moveIn(limit)).withParallelism(layout.partitions)
+          now     <- Clock.instant
+          moved   <- combined(results, now)
+        yield moved
+
+  /**
+   * One partition's move, with the local time its reply arrived.
+   *
+   * @param limit the most entries to move
+   * @param keys the partition's schedule keys
+   * @return what the partition's call did, and when its answer was read; aborts with `RedisFailure` when it fails
+   */
+  private def moveIn(limit: Int)(keys: ScheduleKeys): ZIO[Connection.Commands, RedisFailure, (MoveScript.Output, Instant)] =
+    scripts.move.execute(keys, limit).zip(Clock.instant)
+
+  /**
+   * The partitions' results as one, or the first failure when no partition answered.
+   *
+   * @param results the failures, then the partitions' answers with the time each was read
+   * @param now the time the last of them was in, which each answer's next due time is aged to
+   * @return the combined result; aborts with the first failure when there is no answer at all
+   */
+  private def combined(
+    results: (Iterable[RedisFailure], Iterable[(MoveScript.Output, Instant)]),
+    now: Instant,
+  ): IO[RedisFailure, QueueStore.Moved] =
+    val (failures, answers) = results
+    failures.headOption match
+      case Some(failure) if answers.isEmpty => ZIO.fail(failure)
+      case _                                =>
+        ZIO.succeed(answers.foldLeft(QueueStore.Moved(0, 0, false, None, failures.size))(add(now)))
+
+  /**
+   * One partition's answer added to the total, its next due time aged to `now`.
+   *
+   * @param now the time the total is as of
+   * @param total what the partitions so far did
+   * @param answer one more partition's answer, and when it was read
+   * @return the total with it: counts summed, full if any was, and the earliest next due time
+   */
+  private def add(now: Instant)(total: QueueStore.Moved, answer: (MoveScript.Output, Instant)): QueueStore.Moved =
+    val (output, read) = answer
+    QueueStore.Moved(
+      moved = total.moved + output.moved,
+      discarded = total.discarded + output.discarded,
+      full = total.full || output.full,
+      nextDueIn = earliest(total.nextDueIn, aged(output.nextDueIn, Duration.fromInterval(read, now))),
+      failed = total.failed,
+    )
+
+  /**
+   * A next due time shortened by the time that has passed since it was read.
+   *
+   * @param nextDueIn the delay as read, if any
+   * @param elapsed how long ago it was read
+   * @return the delay that remains, never negative; `None` when there was none
+   */
+  private def aged(nextDueIn: Option[Duration], elapsed: Duration): Option[Duration] =
+    nextDueIn match
+      case Some(delay) => Some((delay minus elapsed).max(Duration.Zero))
+      case None        => None
+
+  /**
+   * The earlier of two optional delays.
+   *
+   * @param left one
+   * @param right the other
+   * @return the earlier, or whichever is present, or `None`
+   */
+  private def earliest(left: Option[Duration], right: Option[Duration]): Option[Duration] =
+    (left, right) match
+      case (Some(a), Some(b)) => Some(a.min(b))
+      case (Some(a), None)    => Some(a)
+      case (None, other)      => other
 
   /**
    * The claim a granted reply amounts to.

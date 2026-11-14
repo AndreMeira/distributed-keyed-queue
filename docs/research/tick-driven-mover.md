@@ -1,16 +1,20 @@
 ---
 title: "A tick-driven mover — releasing backoffs and scheduled messages on time"
 type: research
-status: draft
-updated: 2026-11-06
+status: current
+updated: 2026-11-14
 tags: [design, schedule, backoff, retry-after, nack, watchdog, ticker, latch, processor, redis, exploration, not-a-decision]
 ---
 
 # A tick-driven mover
 
-> **Exploration, not a decision.** This note works out one idea in detail so it can be read and challenged
-> as a whole. Nothing here is built. Names in *italics* (*the tick source*, *the mover*) are roles, not
-> class names; class names are still to be proposed. The discussion that led here is in
+> **Implemented for schedules (2026-11-14)** as `DueTimer` and `ScheduleMover`; the current state is
+> [`../architecture/scheduling.md`](../architecture/scheduling.md). The backoffs pair is not built. This note stays as the record of why.
+
+> **Originally an exploration, not a decision** (its decisions are now marked "Decided" where they were
+> taken). This note works out one idea in detail so it can be read and challenged as a whole. Names in
+> *italics* (*the tick source*, *the mover*) are roles; the classes are `DueTimer` and `ScheduleMover` (see "The
+> names" under "Decided"). The discussion that led here is in
 > [`../sessions/2026-11-02-next-features.md`](../sessions/2026-11-02-next-features.md).
 
 ## The problem
@@ -38,26 +42,68 @@ thing is due. The mover sends that time back to the tick source as one more requ
 the code that creates due work: a settle that asks for a backoff, a schedule. The store is the source of
 truth. A request is only a hint about when to look.
 
+## Decided (2026-11-14), for the scheduling feature
+
+- **Scope: the schedules pair only.** The backoffs pair needs `{p}:delayed`, a change to an existing
+  structure, so a schema bump (question 7 of [`message-scheduling.md`](message-scheduling.md)). Nacks keep
+  the watchdog until a feature of their own converts them; the mover's code is written once, so that pair
+  reuses it.
+- **The latch:** `homelab.common.flow.TimeLatch`, from toolkit 0.0.7.
+- **The mover reaches the tick source with a direct `triggerAt`.** No request pipe, so no feedback cycle.
+- **Batching: requests are rounded up to a 50 ms quantum, and `slack` is 50 ms.** This caps the mover at 20
+  firings a second per instance, whatever the schedule rate, at the cost of up to 50 ms of lateness.
+- **Herding is accepted.** Every instance that learns a due time sweeps then; N − 1 find nothing.
+- **One wake per queue touched, for the schedules mover only.** Enqueue keeps its wake per key.
+- **Limit 100 entries per script** (today's `sweep-limit`), a full pass repeated at once; **backstop 60 s.**
+
+What that gives the lateness guarantee (S3): a scheduled message joins its line within one quantum (about
+50 ms) of its due time while the instance that accepted it runs, and within one backstop (60 s) if it dies.
+
+These choices rest on a scope assumption, stated in "Scope, and what an infra-level DKQ would rework" below.
+
+**The names (decided 2026-11-14).** In the rest of this note, *the tick source* is `DueTimer` and *the
+mover* is `ScheduleMover`, both in `domain/service/maintenance/` next to `Watchdog`.
+
+| Layer | Name |
+|---|---|
+| Proto | rpc `Schedule`: `ScheduleRequest { queue, message, deliver_after }`, `ScheduleResponse { scheduled, due_in }` |
+| Domain request, response | `ScheduleRequest` (`domain/request/queue/`), `ScheduleResponse` (`domain/response/queue/`) |
+| Validated input | `ScheduledSubmission(submission: Submission, delay: Duration)` (`domain/model/queue/`); not `Schedule`, which clashes with `zio.Schedule` |
+| Use case | `QueueScheduleUseCase` |
+| Store port, `QueueStore` | `schedule(scheduled): IO[AdapterError, QueueStore.Scheduled]`, `Scheduled(scheduled: Boolean, dueIn: Duration)`; `moveDue(partition, limit): IO[AdapterError, QueueStore.Moved]`, `Moved(moved: Int, discarded: Int, full: Boolean, nextDueIn: Option[Duration])` |
+| Scripts | `lua/queue/schedule.lua` (`ScheduleScript`), `lua/queue/move.lua` (`MoveScript`) |
+| Configuration (`queue.conf`, `DKQ_*` overrides) | `max-schedule-ahead` 7 days, `schedule-quantum` 50 ms, `schedule-slack` 50 ms, `schedule-backstop` 60 s, `schedule-limit` 100 |
+| Metrics | `ScheduleMover.move`: each call to the store, counted and timed by `Monitor.measure` (see "Metrics" below) |
+
+The member of `{p}:scheduled` is built in Lua, by `schedule.lua` from the queue, key and id it receives,
+and split by `move.lua`, so Scala never handles it and Lua's `#` gives the byte lengths the encoding needs.
+
 ## Components
 
 ### The time latch
 
-A one-shot timer. Its current form is `TimeLatch` in the toolkit's incubator (`time/v3/TimeLatch.scala`).
-That draft is not committed yet, so the link resolves only once it has a branch of its own.
+A one-shot timer: **`homelab.common.flow.TimeLatch`, in `homelab-common` since toolkit 0.0.7** (toolkit PR
+#74, promoted from the incubator draft `time/v3`). DKQ depends on 0.0.7 from this branch on. Its spec,
+`TimeLatchSpec`, lives in the toolkit.
 
 | | |
 |---|---|
-| created | `make(in, slack)`: armed to fire `in` from now at the latest. Never unarmed, never `Instant.MAX` |
+| created | `make(in, slack)`: armed to fire `in` from now at the latest. Never unarmed. `in` and `slack` are clamped to `[0, Duration.Infinity]` |
 | `triggerAt(t)` / `triggerIn(d)` | brings the firing time earlier. A request later than the current time, or earlier by less than `slack`, changes nothing |
 | `await` | returns once the latch has fired. It sleeps until the current firing time and sleeps again whenever a trigger brings it earlier. Every waiter is woken |
-| after firing | `await` returns at once, and triggers are refused. **It is thrown away, not reset** |
+| after firing | `await` returns at once, and no trigger can make it wait again. **It is thrown away, not reset**. "Fired" is a time (`when ≤ now`), not a flag |
 
-Two properties it has to keep, both fixed during its review:
+The properties it keeps, each fixed during a review and pinned by a test:
 
-- **A waiter subscribes to the nudge before it reads the firing time,** so a trigger landing between the two
-  is not missed.
-- **It never sleeps towards `Instant.MAX`.** In ZIO 2.1.23 a wait to `Instant.MAX` overflows `toNanos`, and
-  the fiber dies (checked with a probe). Creating it armed rules that out.
+- **A trigger landing while a waiter starts to wait is not missed.** The firing instant and the promise that
+  wakes its waiters are one value, read and replaced together.
+- **A trigger is uninterruptible.** Replacing the state and waking the replaced state's waiters are one step,
+  so a caller interrupted in between cannot leave them asleep through the earlier instant. That matters here:
+  the schedule use case triggers on a request fiber, which a cancelled call interrupts.
+- **No input makes it throw.** Delays and `slack` are clamped, and a trigger compares
+  `Duration.fromInterval(instant, when)` with `slack` instead of shifting an instant. On ZIO 2.1.23 a wait of
+  `Duration.Infinity` (about 292 years) sleeps, but one of a billion years makes the live timer return at
+  once, and past `Instant.MAX` `Instant.plus` throws (both checked with a probe).
 
 ### The tick source
 
@@ -112,8 +158,9 @@ queue's keys in that partition within one cluster slot:
 | `{p}:scheduled` | zset | `<queue>` + `<key>` + `<message id>` → when the message is due |
 | `{p}:scheduled:payloads` | hash | the same member → the message |
 
-The member's separator and encoding are to be decided. It must not collide with characters a queue name,
-key or id may contain.
+The member's encoding must not collide with characters a queue name, key or id may contain. For
+`{p}:scheduled` it is decided: length-prefixed, id last (`6:orders3:c42nudge`), see question 2 of
+[`message-scheduling.md`](message-scheduling.md). `{p}:delayed` would reuse the same form without the id.
 
 **Why per partition, not per queue.** Per queue would be correct too: a move only matters to someone who
 dequeues the queue, and a dequeue registers the queue on its instance. Per partition was preferred because a
@@ -267,12 +314,8 @@ The use cases that create due work (settle, schedule) send their requests the sa
 
 ## Tests it would need
 
-**The time latch**, with the `TestClock`:
-- fires at its armed time;
-- an earlier trigger wakes every waiter at the new time;
-- a later trigger, or one inside `slack`, changes nothing;
-- once fired, `await` returns at once and triggers are refused;
-- a trigger landing between subscribe and read is not missed (promises, `nonFlaky`).
+**The time latch:** done, in the toolkit's `TimeLatchSpec` (11 cases on the `TestClock`, one on the live
+clock), including the interrupted trigger and the extremes of `Instant`.
 
 **The tick source:**
 - fire, swap and emit happen in that order;
@@ -299,18 +342,43 @@ The use cases that create due work (settle, schedule) send their requests the sa
 | the watchdog's fixed sweep, with a shorter interval | precision costs every instance a sweep of every known queue at that rate, and only known queues are swept |
 | `ready` scored by readyAt ([`ready-scored-by-readyat.md`](ready-scored-by-readyat.md)) | measured cheap, but nothing publishes a key becoming claimable, so the readiness would need a timed look; and it cannot hold a single message back, only a whole key |
 | promotion on the claim | a parked consumer does not claim at the due time, so it still needs a timer |
-| a reusable ticker (`time/v1`, `time/v2` in the toolkit incubator, not committed yet) | v1 is an edge-triggered broadcast, and a tick missed mid-sweep can be the only record of a nack; v2 works, but a throwaway latch plus a sliding pipe gets the same behaviour with less state |
+| a reusable ticker (`time/v1`, `time/v2`, incubator drafts kept on the toolkit's `incubator-time-drafts` branch) | v1 is an edge-triggered broadcast, and a tick missed mid-sweep can be the only record of a nack; v2 works, but a throwaway latch plus a sliding pipe gets the same behaviour with less state |
+
+## Metrics
+
+**Decided (2026-11-14): `Monitor.measure` only.** Each call the mover makes to the store is measured as
+`ScheduleMover.move`: how many passes run, how long each takes, and how many fail. What a pass moved and
+discarded is in its log line, not a metric.
+
+The finer metrics first proposed (`moved`, `discarded`, `lateness` as move time − due time, `backstop` for moves
+made by a backstop tick) are not recorded: `Monitor` counts and times operations, and stays that simple on
+purpose. A deployment that wants per-message numbers or a lateness histogram is asking for a metrics system of
+its own (StatsD or similar), not for a richer `Monitor`.
+
+## Scope, and what an infra-level DKQ would rework
+
+**The assumption:** one DKQ, with a Valkey of its own, per service (the recommended deployment, see
+`research/infrastructure/valkey-per-service.md` in the workspace). A service has a handful of queues and a
+few instances. Within that scope the choices above hold. If DKQ became an infrastructure service shared by
+many tenants, like SQS, four places would need reworking:
+
+1. **The wake stream** (shared with enqueue, which already appends one wake per key). One stream per
+   partition, trimmed at a fixed length, read by every instance: the reading cost grows as instances ×
+   wakes, and a listener lagging past the trim misses wakes undetected (R4). One wake per queue helps only
+   while a batch's messages fall into few queues; with thousands of queues they fall into as many queues as
+   messages, and it saves nothing. The rework is in the wake design (per-queue or bucketed streams, lag
+   detection), not in the mover. [`bucketed-wake-streams.md`](bucketed-wake-streams.md) explored part of it.
+2. **Herding.** 16 × N scripts per due instant grows with the number of instances: fine for a few per
+   service, not for a fleet.
+3. **The shared per-partition limit.** One queue's burst holds another's due work back by a pass. Within a
+   service that is one owner's queues delaying each other; across tenants it is a noisy neighbour.
+4. **Memory isolation.** Under `noeviction`, schedules that fill the memory make *every* write fail. Within
+   a service the horizon (`max-schedule-ahead`) is enough; across tenants it would take per-tenant quotas.
 
 ## Open questions
 
-- **The names:** the tick source, the mover, and whether `TimeLatch` stays in the toolkit or moves into
-  DKQ.
-- **How the mover reaches the tick source:** a direct `triggerAt`, or an unbounded pipe.
-- **Herding:** accept it, only the requester arms early, or jitter.
-- **Batching:** whether to quantise, and the quantum per pair.
-- **One wake per queue:** for both pairs, and whether enqueue's wake should follow.
-- **The member encoding** for `{p}:delayed` and `{p}:scheduled`.
-- **The scheduling verb's own questions:** what a repeated message id means, cancelling, the RPC's shape,
-  and the horizon ([`message-scheduling.md`](message-scheduling.md)).
-- **Metrics:** entries moved per tick, the lateness at move (move time − due time), early ticks lost to a
-  restart (visible as moves made by a backstop).
+- **For the backoffs pair, when it comes:** its quantum, whether it also wakes once per queue, and whether
+  enqueue's wake should follow. (The schedules pair's are decided above: direct `triggerAt`, herding
+  accepted, a 50 ms quantum, one wake per queue.)
+- **The member encoding** for `{p}:delayed`. Decided for `{p}:scheduled` (length-prefixed, id last).
+- **Metrics: decided (2026-11-14), see "Metrics" above.**

@@ -72,6 +72,21 @@ private[client] object Protos:
       .map(length)
 
   /**
+   * How long until something falls due, from the duration an answer carried.
+   *
+   * Zero is a delay, unlike a lease span: an earlier schedule may already be due.
+   *
+   * @param duration the delay the answer carried, absent when the service set no field
+   * @param answer what the answer was, to say so in the error
+   * @return the delay it names, or `Unreadable` when it is absent or negative or out of a duration's range
+   */
+  def delay(duration: Option[ProtoDuration], answer: String): Either[ServiceError, Duration] =
+    duration
+      .toRight(ServiceError.Unreadable(s"$answer arrived with no delay"))
+      .filterOrElse(namesDelay, ServiceError.Unreadable(s"$answer arrived with a delay that is not a length of time"))
+      .map(length)
+
+  /**
    * What a transport failure means to a caller.
    *
    * @param failure what the call raised
@@ -93,6 +108,16 @@ private[client] object Protos:
   private def namesInstant(stamp: Timestamp): Boolean =
     stamp.seconds >= Instant.MIN.getEpochSecond && stamp.seconds <= Instant.MAX.getEpochSecond &&
     stamp.nanos >= 0 && stamp.nanos < nanosPerSecond
+
+  /**
+   * Whether a duration names a delay: in range, and not negative. Zero is one.
+   *
+   * @param duration the protobuf `Duration`
+   * @return whether it is a delay this client reads
+   */
+  private def namesDelay(duration: ProtoDuration): Boolean =
+    duration.seconds >= 0 && duration.seconds <= maxSpanSeconds &&
+    duration.nanos >= 0 && duration.nanos < nanosPerSecond
 
   /**
    * Whether a duration names a length a lease runs for: in range, and longer than nothing.

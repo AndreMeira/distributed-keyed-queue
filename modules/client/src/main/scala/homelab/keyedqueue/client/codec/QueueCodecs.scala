@@ -5,7 +5,19 @@ import com.google.protobuf.ByteString
 import com.google.protobuf.timestamp.Timestamp
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.queue.*
-import homelab.keyedqueue.client.queue.model.{ Claim, Dequeued, Enqueued, Message, MessageId, MessageKey, Receipt, Renewed, Settled, Verdict }
+import homelab.keyedqueue.client.queue.model.{
+  Claim,
+  Dequeued,
+  Enqueued,
+  Message,
+  MessageId,
+  MessageKey,
+  Receipt,
+  Renewed,
+  Scheduled,
+  Settled,
+  Verdict,
+}
 import homelab.keyedqueue.v1
 import zio.*
 
@@ -13,7 +25,7 @@ import java.time.Instant
 
 
 /**
- * Proto to Scala and back, for the queue's four calls.
+ * Proto to Scala and back, for the queue's five calls.
  *
  * Pure: these are decisions about what arrived, so a caller lifts them where it needs an effect. Reading
  * in is partial, because `v1.DequeueResponse` states a claim as a receipt and fields that mean something only when it
@@ -33,18 +45,55 @@ private[client] object QueueCodecs:
    * @return the `v1.EnqueueRequest`
    */
   def encode(queue: String, message: Message.Outgoing, sentAt: Instant): v1.EnqueueRequest =
-    v1.EnqueueRequest(
-      queue,
-      Some(
-        v1.Message(
-          key = message.key,
-          messageId = message.id,
-          payloadType = message.payloadType,
-          encoding = message.encoding,
-          sentAt = Some(Timestamp(sentAt.getEpochSecond, sentAt.getNano)),
-          payload = ByteString.copyFrom(message.payload.toArray),
-        )
-      ),
+    v1.EnqueueRequest(queue, Some(proto(message, sentAt)))
+
+  /**
+   * A message to be appended after a delay, in the envelope the service expects.
+   *
+   * @param queue which queue it is addressed to
+   * @param message what to send
+   * @param deliverAfter how long from now it becomes claimable
+   * @param sentAt when this client is sending it, which the service keeps and never reads
+   * @return the `v1.ScheduleRequest`
+   */
+  def encode(queue: String, message: Message.Outgoing, deliverAfter: Duration, sentAt: Instant): v1.ScheduleRequest =
+    v1.ScheduleRequest(queue, Some(proto(message, sentAt)), Some(Protos.encode(deliverAfter)))
+
+  /**
+   * Which schedule the message will arrive by.
+   *
+   * @param response what the service answered
+   * @return `Recorded` or `Ignored`, with how long until it is due; `Unreadable` when the answer carries no
+   *         usable delay
+   */
+  def decode(response: v1.ScheduleResponse): Either[ServiceError, Scheduled] =
+    Protos.delay(response.dueIn, "a schedule").map(scheduled(response.scheduled))
+
+  /**
+   * The answer's case, once its delay is read.
+   *
+   * @param recorded whether the service recorded this request
+   * @param dueIn how long until the schedule it will arrive by is due
+   * @return `Recorded` when it was, `Ignored` when an earlier schedule won
+   */
+  private def scheduled(recorded: Boolean)(dueIn: Duration): Scheduled =
+    if recorded then Scheduled.Recorded(dueIn) else Scheduled.Ignored(dueIn)
+
+  /**
+   * A message as `v1.Message` carries it.
+   *
+   * @param message what to send
+   * @param sentAt when this client is sending it
+   * @return the `v1.Message`
+   */
+  private def proto(message: Message.Outgoing, sentAt: Instant): v1.Message =
+    v1.Message(
+      key = message.key,
+      messageId = message.id,
+      payloadType = message.payloadType,
+      encoding = message.encoding,
+      sentAt = Some(Timestamp(sentAt.getEpochSecond, sentAt.getNano)),
+      payload = ByteString.copyFrom(message.payload.toArray),
     )
 
   /**

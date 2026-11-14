@@ -77,7 +77,7 @@ is [`docs/architecture/guarantees.md`](docs/architecture/guarantees.md). Read it
 
 ## The API
 
-Four unary RPCs, defined in
+Five unary RPCs, defined in
 [`keyed_queue_service.proto`](modules/protocol/src/main/protobuf/homelab/keyedqueue/v1/keyed_queue_service.proto):
 
 ```proto
@@ -86,6 +86,7 @@ service KeyedQueue {
   rpc Dequeue  (DequeueRequest)   returns (DequeueResponse);    // long-poll for a claim
   rpc Settle   (SettleRequest)    returns (SettleResponse);     // report what became of each message
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);  // renew the claims still held
+  rpc Schedule (ScheduleRequest)  returns (ScheduleResponse);   // accept a message, claimable after a delay
 }
 ```
 
@@ -93,6 +94,11 @@ A `Dequeue` answers with a **receipt** (the claim), a **head** delivery, any **t
 and the **lease expiry**. Every `Settle` names the receipt and what became of which message id. A consumer
 that works longer than the lease must `Heartbeat` on a tick, and must stop the moment a heartbeat reports a
 claim stale — that is the half of the contract DKQ cannot enforce for you.
+
+A `Schedule` is an enqueue that becomes claimable after `deliver_after`, measured on the store's clock and at
+most 7 days by default. The first schedule of an id wins, and there is no rescheduling or cancel; from its due
+time it is an ordinary message of its key. See
+[`docs/architecture/scheduling.md`](docs/architecture/scheduling.md).
 
 ### The lock
 
@@ -210,6 +216,8 @@ Known gaps:
 
 - [`docs/architecture/guarantees.md`](docs/architecture/guarantees.md) — the contract, for consumers and
   test authors
+- [`docs/architecture/scheduling.md`](docs/architecture/scheduling.md) — a message that becomes claimable
+  after a delay, and the timer and mover that move it on time
 - [`docs/architecture/redis-data-structures.md`](docs/architecture/redis-data-structures.md) — what is kept
   in Redis and why
 - [`docs/architecture/redis-cluster.md`](docs/architecture/redis-cluster.md) — the key layout and cluster

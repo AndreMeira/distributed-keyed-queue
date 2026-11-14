@@ -1,4 +1,5 @@
-// The service contract: four unary calls, a blocking Dequeue, leases renewed by Heartbeat.
+// The service contract: five unary calls, a blocking Dequeue, leases renewed by Heartbeat, and Schedule for a
+// message that becomes claimable later.
 //
 // Separate from keyed_queue.proto so the message types can be published without a transport: a consumer
 // that only handles the data pulls the `protocol` jar, and only one doing RPC pulls this and the ZIO stubs with
@@ -29,4 +30,9 @@ service KeyedQueue {
 
   // Renew every claim this consumer still holds. Sent on a fixed tick, not per message.
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Accept a message for a key, to be appended after `deliver_after`. Returns once the schedule is durably
+  // recorded. Joins its key's line within about 100 ms of its due time (usually 50 ms) while the instance that took
+  // it runs, and within the backstop (60 s) if that instance dies.
+  rpc Schedule(ScheduleRequest) returns (ScheduleResponse);
 }

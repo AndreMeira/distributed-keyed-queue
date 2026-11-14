@@ -165,6 +165,19 @@ object LuaScript:
       def millis(value: Duration): Array[Byte] = number(value.toMillis)
 
       /**
+       * Encode a delay as whole millis, rounded up rather than truncated.
+       *
+       * For a delay that must not end early: a schedule's, where truncating 1.5 ms to 1 ms would let the message
+       * fall due before it should.
+       *
+       * @param value the delay, not negative
+       * @return its millis rounded up, as bytes
+       */
+      def millisRoundedUp(value: Duration): Array[Byte] =
+        val whole = value.toMillis
+        number(if Duration.fromMillis(whole) < value then whole + 1 else whole)
+
+      /**
        * Encode a number the way the scripts read one: its text.
        *
        * @param value the number

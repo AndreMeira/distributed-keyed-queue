@@ -1,13 +1,14 @@
 package homelab.keyedqueue.domain.service.validation
 
 
+import homelab.common.Validated
 import homelab.common.orFail
 import homelab.keyedqueue.SpecHelper.Helper
 import homelab.common.error.ValidationError
 import homelab.keyedqueue.domain.error.InvalidInput
-import homelab.keyedqueue.domain.model.queue.{ Claim, Demand, Message, Renewal, Settlement, Submission }
+import homelab.keyedqueue.domain.model.queue.{ Claim, Demand, Message, Renewal, ScheduledSubmission, Settlement, Submission }
 import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
-import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, SettleRequest }
+import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, ScheduleRequest, SettleRequest }
 import homelab.keyedqueue.domain.request.lock.*
 import homelab.keyedqueue.domain.request.queue.SettleRequest.MessageOutcome
 import homelab.keyedqueue.domain.types.*
@@ -98,6 +99,29 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
     test("a backoff a caller did ask for survives the parse") {
       val request = SettleRequest(receipt, Chunk(MessageOutcome("m1", Verdict.Failed)), 5.seconds)
       assertTrue(validation.parse(request).toEither.map(_.retryAfter) == Right(Some(5.seconds)))
+    },
+    test("a schedule with a delay within the horizon is accepted as it was asked") {
+      val parsed = validation.parse(ScheduleRequest("jobs", Helper.requestMessage("k1"), 5.minutes))
+      assertTrue(parsed.toEither.map(_.delay) == Right(5.minutes))
+    },
+    test("a schedule with no delay, a zero one or a negative one is refused: deliver now is an enqueue") {
+      // An absent `deliver_after` reaches the domain as zero, so this is also the refusal for leaving it out.
+      val refused = Chunk(Duration.Zero, -1.second).map(schedule).map(_.toEither)
+      assertTrue(refused.forall(_ == Left(NonEmptyChunk(InvalidInput.NonPositiveDeliverAfter))))
+    },
+    test("a schedule beyond the horizon is refused, naming the horizon, rather than clamped") {
+      val parsed = schedule(7.days + 1.milli)
+      assertTrue(
+        parsed.toEither == Left(NonEmptyChunk(InvalidInput.DeliverAfterBeyondHorizon(7.days))),
+        schedule(7.days).toEither.isRight,
+      )
+    },
+    test("a schedule's bad delay is reported with its message's and queue's problems") {
+      val parsed = validation.parse(ScheduleRequest("", Helper.requestMessage(""), Duration.Zero))
+      assertTrue(
+        parsed.toEither ==
+          Left(NonEmptyChunk(InvalidInput.EmptyQueueName, InvalidInput.EmptyMessageKey, InvalidInput.NonPositiveDeliverAfter))
+      )
     },
     test("a message without an id is refused: it is what the store addresses it by") {
       val parsed = validation.parse(EnqueueRequest("jobs", Helper.requestMessage("k1", messageId = "")))
@@ -198,7 +222,16 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
 
   private object Support:
 
-    val validation = QueueInputValidation(QueueInputValidation.Config(maxWait = 30.seconds, maxBatchLimit = 32))
+    val validation = QueueInputValidation(QueueInputValidation.Config(maxWait = 30.seconds, maxBatchLimit = 32, maxScheduleAhead = 7.days))
+
+    /**
+     * A well-formed schedule with the delay given, parsed.
+     *
+     * @param delay the delay to ask for
+     * @return what the parse made of it
+     */
+    def schedule(delay: Duration): Validated[ScheduledSubmission] =
+      validation.parse(ScheduleRequest("jobs", Helper.requestMessage("k1"), delay))
 
     /** The claim a settle names, and the receipt a consumer would have been handed for it. */
     val claim   = Claim(QueueName("jobs"), MessageKey("k1"), Token(1))

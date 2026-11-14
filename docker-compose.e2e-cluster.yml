@@ -64,6 +64,9 @@ services:
       DKQ_LEASE_TTL: 5 seconds
       DKQ_SWEEP_INTERVAL: 2 seconds
       DKQ_WAKE_BLOCK: 200 millis
+      # The schedule timer's backstop, short so that a schedule whose accepting instance was killed is moved by
+      # the other one within a test's patience rather than a minute later.
+      DKQ_SCHEDULE_BACKSTOP: 5 seconds
     depends_on:
       cluster-init:
         condition: service_completed_successfully

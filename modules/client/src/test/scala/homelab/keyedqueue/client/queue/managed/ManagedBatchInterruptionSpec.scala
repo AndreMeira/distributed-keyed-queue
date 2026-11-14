@@ -88,6 +88,9 @@ object ManagedBatchInterruptionSpec extends ZIOSpecDefault:
        */
       def settled: UIO[Boolean] = settles.get.map(_ > 0)
 
+      override def schedule(queue: String, message: Message.Outgoing, deliverAfter: Duration): IO[ServiceError, Scheduled] =
+        ZIO.succeed(Scheduled.Recorded(deliverAfter))
+
       override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
         ZIO.succeed(Enqueued(0L))
 

@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.configuration
 
 
-import homelab.keyedqueue.domain.service.maintenance.{ LockCleanup, Watchdog }
+import homelab.keyedqueue.domain.service.maintenance.{ DueTimer, LockCleanup, ScheduleMover, Watchdog }
 import homelab.keyedqueue.domain.service.validation.{ LockInputValidation, QueueInputValidation }
 import zio.ZLayer
 
@@ -15,7 +15,8 @@ import zio.ZLayer
 object Module:
 
   /** Every slice of the configuration the modules downstream read. */
-  type Provided = QueueInputValidation.Config & LockInputValidation.Config & Watchdog.Config & LockCleanup.Config
+  type Provided = QueueInputValidation.Config & LockInputValidation.Config & Watchdog.Config & LockCleanup.Config & DueTimer.Config &
+    ScheduleMover.Config
 
   /** The configuration itself, which the composition root supplies. */
   type Required = QueueConfig
@@ -26,7 +27,7 @@ object Module:
    * @return the layer
    */
   lazy val layer: ZLayer[Required, Nothing, Provided] =
-    validation ++ lockValidation ++ watchdog ++ lockCleanup
+    validation ++ lockValidation ++ watchdog ++ lockCleanup ++ dueTimer ++ scheduleMover
 
   /**
    * The slice of it the parse is allowed to know.
@@ -34,7 +35,7 @@ object Module:
    * @return the layer
    */
   val validation: ZLayer[QueueConfig, Nothing, QueueInputValidation.Config] =
-    ZLayer.fromFunction((config: QueueConfig) => QueueInputValidation.Config(config.maxWait, config.maxBatchLimit))
+    ZLayer.fromFunction((config: QueueConfig) => QueueInputValidation.Config(config.maxWait, config.maxBatchLimit, config.maxScheduleAhead))
 
   /**
    * The lock validator's limit, read from the same config the queue's `max_wait` comes from — one ceiling
@@ -60,3 +61,19 @@ object Module:
    */
   val lockCleanup: ZLayer[QueueConfig, Nothing, LockCleanup.Config] =
     ZLayer.fromFunction((config: QueueConfig) => LockCleanup.Config(config.lockTrimInterval, config.lockTrimGrace, config.sweepLimit))
+
+  /**
+   * The schedule timer's slice: its quantum, slack and backstop.
+   *
+   * @return the layer
+   */
+  val dueTimer: ZLayer[QueueConfig, Nothing, DueTimer.Config] =
+    ZLayer.fromFunction((config: QueueConfig) => DueTimer.Config(config.scheduleQuantum, config.scheduleSlack, config.scheduleBackstop))
+
+  /**
+   * The schedule mover's slice: how much one call moves.
+   *
+   * @return the layer
+   */
+  val scheduleMover: ZLayer[QueueConfig, Nothing, ScheduleMover.Config] =
+    ZLayer.fromFunction((config: QueueConfig) => ScheduleMover.Config(config.scheduleLimit))

@@ -38,6 +38,29 @@ message EnqueueResponse {
   uint64 key_depth = 1;  // how many messages this key now has queued; a metric, not a decision
 }
 
+// A message to be appended to its key's line after a delay, not now. Until it falls due no consumer sees it;
+// from then on it is an ordinary message of its key. Design: docs/research/message-scheduling.md.
+message ScheduleRequest {
+  string                   queue         = 1;
+  // Checked exactly as for an enqueue. Its id is what makes a repeated schedule harmless: a schedule for an
+  // id already scheduled for this key is ignored, the first one wins. There is no rescheduling: to move a
+  // deadline, schedule a new message with its own id. An id still queued for the key when this one falls due
+  // is the same message, so this one is then discarded, as a repeated enqueue would be.
+  Message                  message       = 2;
+  // How long from now the message becomes claimable, measured on the store's clock, so no caller's clock is
+  // compared with anything. Required, and must be greater than zero: an unset Duration reads as zero, and
+  // "deliver now" is what Enqueue is for. At most the service's horizon (`max-schedule-ahead`, 7 days by
+  // default); a longer delay is refused, not clamped.
+  google.protobuf.Duration deliver_after = 3;
+}
+message ScheduleResponse {
+  // False when a message with this id was already scheduled for the key, so this request was ignored.
+  bool                     scheduled = 1;
+  // How long until the recorded schedule is due: this request's delay when it was scheduled, the earlier
+  // schedule's remaining time when it was ignored. A delay rather than a time, so no clock crosses the API.
+  google.protobuf.Duration due_in    = 2;
+}
+
 message DequeueRequest {
   string                   queue     = 1;
   // Named `max_wait` rather than `wait`: on the JVM a field called `wait` collides with Object.wait().

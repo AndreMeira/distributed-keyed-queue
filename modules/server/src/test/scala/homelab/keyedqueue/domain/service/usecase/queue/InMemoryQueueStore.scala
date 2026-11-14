@@ -2,7 +2,7 @@ package homelab.keyedqueue.domain.service.usecase.queue
 
 
 import homelab.common.error.ApplicationError
-import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Settlement, Submission }
+import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, ScheduledSubmission, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.QueueName
 import zio.*
@@ -11,8 +11,9 @@ import java.time.Instant
 
 
 /**
- * The queue store in memory, as far as the waiting needs one: it hands out the grants it was given, oldest
- * first, and answers the rest without recording anything.
+ * The queue store in memory, as far as the waiting and the scheduling need one: it hands out the grants it was
+ * given, oldest first, records the schedules it is asked for, answers moves with the replies it was given, and
+ * answers the rest without recording anything.
  *
  * A claim finds a grant when one is pending and finds nothing otherwise, which is the only distinction the
  * waiting turns on. Nothing here reaches a substrate, so a spec over it runs without a container. It keeps
@@ -20,9 +21,22 @@ import java.time.Instant
  *
  * @param pending the grants still to be handed out
  * @param looks how many claims have been attempted
+ * @param schedules the schedules recorded, oldest first
+ * @param moves the replies the next moves answer with, in order; a move with none left answers that nothing
+ *              moved and nothing is scheduled
+ * @param moveCalls how many moves have been asked for
+ * @param held when set, a schedule waits on this after recording, until a test releases it
  * @param leaseTtl the span it reports its leases run for
  */
-final class InMemoryQueueStore(pending: Ref[Chunk[Grant]], looks: Ref[Int], val leaseTtl: Duration = 30.seconds) extends QueueStore:
+final class InMemoryQueueStore(
+  pending: Ref[Chunk[Grant]],
+  looks: Ref[Int],
+  schedules: Ref[Chunk[ScheduledSubmission]],
+  moves: Ref[Chunk[Either[ApplicationError.AdapterError, QueueStore.Moved]]],
+  moveCalls: Ref[Int],
+  held: Ref[Option[Promise[Nothing, Unit]]],
+  val leaseTtl: Duration = 30.seconds,
+) extends QueueStore:
 
   /**
    * Make a grant available to the next claim.
@@ -38,6 +52,74 @@ final class InMemoryQueueStore(pending: Ref[Chunk[Grant]], looks: Ref[Int], val 
    * @return the count
    */
   def looked: UIO[Int] = looks.get
+
+  /**
+   * What the schedules asked for.
+   *
+   * @return the scheduled submissions, oldest first
+   */
+  def scheduled: UIO[Chunk[ScheduledSubmission]] = schedules.get
+
+  /**
+   * Queue up the reply the next move answers with.
+   *
+   * @param reply what the move answers: the store's failure, or what it moved
+   * @return noop
+   */
+  def movesWith(reply: Either[ApplicationError.AdapterError, QueueStore.Moved]): UIO[Unit] = moves.update(_ :+ reply)
+
+  /**
+   * How many moves have been asked for.
+   *
+   * @return the count
+   */
+  def moved: UIO[Int] = moveCalls.get
+
+  /**
+   * Make every later schedule wait, once recorded, until `release` completes: the moment a caller can be cancelled
+   * after the store has written and before it has answered.
+   *
+   * @param release what the held schedules wait for
+   * @return noop
+   */
+  def holdSchedulesUntil(release: Promise[Nothing, Unit]): UIO[Unit] = held.set(Some(release))
+
+  /**
+   * Record the schedule, wait if schedules are held, and answer that it was recorded with its own delay.
+   *
+   * @param scheduled what was asked for
+   * @return recorded, due in its delay
+   */
+  override def schedule(scheduled: ScheduledSubmission): IO[ApplicationError.AdapterError, QueueStore.Scheduled] =
+    for
+      _       <- schedules.update(_ :+ scheduled)
+      release <- held.get
+      _       <- waitFor(release)
+    yield QueueStore.Scheduled(scheduled = true, dueIn = scheduled.delay)
+
+  /**
+   * Wait for a release, when there is one.
+   *
+   * @param release what to wait for, if schedules are held
+   * @return noop once released, or at once when nothing is held
+   */
+  private def waitFor(release: Option[Promise[Nothing, Unit]]): UIO[Unit] =
+    release match
+      case Some(promise) => promise.await
+      case None          => ZIO.unit
+
+  /**
+   * Answer with the next queued reply, or with nothing moved and nothing scheduled when none is left.
+   *
+   * @param limit the bound asked for, which this store does not inspect
+   * @return the reply
+   */
+  override def moveDue(limit: Int): IO[ApplicationError.AdapterError, QueueStore.Moved] =
+    for
+      _     <- moveCalls.update(_ + 1)
+      reply <- moves.modify(queued => (queued.headOption, queued.drop(1)))
+      moved <- ZIO.fromEither(reply.getOrElse(Right(QueueStore.Moved(0, 0, full = false, nextDueIn = None, failed = 0))))
+    yield moved
 
   /**
    * Take the oldest pending grant, if there is one.
@@ -71,6 +153,10 @@ object InMemoryQueueStore:
    */
   def make: UIO[InMemoryQueueStore] =
     for
-      pending <- Ref.make(Chunk.empty[Grant])
-      looks   <- Ref.make(0)
-    yield InMemoryQueueStore(pending, looks)
+      pending   <- Ref.make(Chunk.empty[Grant])
+      looks     <- Ref.make(0)
+      schedules <- Ref.make(Chunk.empty[ScheduledSubmission])
+      moves     <- Ref.make(Chunk.empty[Either[ApplicationError.AdapterError, QueueStore.Moved]])
+      moveCalls <- Ref.make(0)
+      held      <- Ref.make(Option.empty[Promise[Nothing, Unit]])
+    yield InMemoryQueueStore(pending, looks, schedules, moves, moveCalls, held)

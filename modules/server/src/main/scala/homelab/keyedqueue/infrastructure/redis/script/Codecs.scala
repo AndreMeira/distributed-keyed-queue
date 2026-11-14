@@ -124,6 +124,31 @@ object Codecs {
     )
   }
 
+  /**
+   * Where a schedule waits, then the message's queue, key and id, the message as stored, and the delay.
+   *
+   * The member is not sent: the script builds it from the queue, key and id, so only Lua writes or reads one.
+   */
+  given scheduleInput: LuaScript.Input.Encoder[ScheduleScript.Input] = schedule =>
+    val submission = schedule.scheduled.submission
+    LuaScript.Input(
+      key = Array[String](schedule.keys.scheduled, schedule.keys.payloads),
+      args = Array(
+        Encoder.utf8(submission.queue),
+        Encoder.utf8(submission.message.key),
+        Encoder.utf8(submission.message.messageId),
+        StoredMessage.toBytes(submission.message).toArray,
+        Encoder.millisRoundedUp(schedule.scheduled.delay),
+      ),
+    )
+
+  /** The partition's schedule and its wake stream, then the bound and the prefix queue keys are built from. */
+  given moveInput: LuaScript.Input.Encoder[MoveScript.Input] = move =>
+    LuaScript.Input(
+      key = Array[String](move.keys.scheduled, move.keys.payloads, move.keys.wake),
+      args = Array(Encoder.number(move.limit), Encoder.utf8(move.keys.queues)),
+    )
+
   /** What the two sweeps read and repair, then the batch bound and the names the script rebuilds keys from. */
   given sweepInput: LuaScript.Input.Encoder[SweepScript.Input] = sweep =>
     LuaScript.Input(
@@ -267,6 +292,35 @@ object Codecs {
         lost         <- Decoder.text.many.at(1).map(_.map(MessageKey(_)))
       yield (renewedUntil, lost)
     }
+
+  /** `{1, delay}` when the schedule was recorded, `{0, remaining}` when an earlier one for the id won. */
+  given scheduleOutput: LuaScript.Output.Decoder[ScheduleScript.Output] =
+    Decoder.sized(2) {
+      for
+        recorded <- Decoder.long.at(0).map(_ == 1L)
+        dueIn    <- Decoder.duration.at(1)
+      yield QueueStore.Scheduled(recorded, dueIn)
+    }
+
+  /** `{moved, discarded, full, nextIn}`, where a negative `nextIn` means nothing is scheduled in the partition. */
+  given moveOutput: LuaScript.Output.Decoder[MoveScript.Output] =
+    Decoder.sized(4) {
+      for
+        moved     <- Decoder.int.at(0)
+        discarded <- Decoder.int.at(1)
+        full      <- Decoder.long.at(2).map(_ == 1L)
+        next      <- Decoder.long.at(3).map(nextDue)
+      yield MoveScript.Output(moved, discarded, full, next)
+    }
+
+  /**
+   * The next due time as the move script spells it: millis, or a negative number for none.
+   *
+   * @param millis what the script answered
+   * @return the delay, or `None` when nothing is scheduled
+   */
+  private def nextDue(millis: Long): Option[Duration] =
+    if millis < 0 then None else Some(Duration.fromMillis(millis))
 
   /** What one sweep repaired: the keys it reclaimed from lapsed claims, and the ones whose backoff elapsed. */
   given sweepOutput: LuaScript.Output.Decoder[SweepScript.Output] =

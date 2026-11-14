@@ -3,7 +3,19 @@ package homelab.keyedqueue.client.queue.managed
 
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.queue.QueueClient
-import homelab.keyedqueue.client.queue.model.{ Claim, Dequeued, Enqueued, Message, MessageId, MessageKey, Receipt, Renewed, Settled, Verdict }
+import homelab.keyedqueue.client.queue.model.{
+  Claim,
+  Dequeued,
+  Enqueued,
+  Message,
+  MessageId,
+  MessageKey,
+  Receipt,
+  Renewed,
+  Scheduled,
+  Settled,
+  Verdict,
+}
 import zio.*
 import zio.test.*
 
@@ -76,6 +88,9 @@ object HeartbeatSpec extends ZIOSpecDefault:
       val beats: Queue[Chunk[Receipt]],
       val settles: Queue[(Receipt, Chunk[Verdict], Duration)],
     ) extends QueueClient:
+
+      override def schedule(queue: String, message: Message.Outgoing, deliverAfter: Duration): IO[ServiceError, Scheduled] =
+        ZIO.succeed(Scheduled.Recorded(deliverAfter))
 
       override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
         ZIO.succeed(Enqueued(0L))

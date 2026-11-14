@@ -3,7 +3,7 @@ package homelab.keyedqueue.client.queue.managed
 
 import homelab.keyedqueue.client.ServiceError
 import homelab.keyedqueue.client.queue.{ MessageDecoder, MessageEncoder, Provider, QueueClient }
-import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, MessageKey, Ready, Receipt, Renewed, Settled, Verdict }
+import homelab.keyedqueue.client.queue.model.{ Dequeued, Enqueued, Message, MessageKey, Ready, Receipt, Renewed, Scheduled, Settled, Verdict }
 import zio.*
 import zio.schema.{ DeriveSchema, Schema }
 import zio.test.*
@@ -62,6 +62,9 @@ object ManagedSignalProducerSpec extends ZIOSpecDefault:
      * @param sent every queue name and message enqueued, in order
      */
     final class Fake(val sent: Ref[Chunk[(String, Message.Outgoing)]]) extends QueueClient:
+
+      override def schedule(queue: String, message: Message.Outgoing, deliverAfter: Duration): IO[ServiceError, Scheduled] =
+        ZIO.succeed(Scheduled.Recorded(deliverAfter))
 
       override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
         sent.update(_ :+ (queue, message)).as(Enqueued(1L))

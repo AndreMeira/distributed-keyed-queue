@@ -148,6 +148,9 @@ object ManagedBatchSpec extends ZIOSpecDefault:
       val waits: Ref[Chunk[Duration]],
     ) extends QueueClient:
 
+      override def schedule(queue: String, message: Message.Outgoing, deliverAfter: Duration): IO[ServiceError, Scheduled] =
+        ZIO.succeed(Scheduled.Recorded(deliverAfter))
+
       override def enqueue(queue: String, message: Message.Outgoing): IO[ServiceError, Enqueued] =
         ZIO.succeed(Enqueued(0L))
 
