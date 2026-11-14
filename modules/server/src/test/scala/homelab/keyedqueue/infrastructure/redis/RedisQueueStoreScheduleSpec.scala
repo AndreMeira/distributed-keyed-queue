@@ -44,6 +44,18 @@ object RedisQueueStoreScheduleSpec extends ZIOSpecDefault:
           after.map(Helper.body).contains(Chunk("m1")),
         )
       },
+      test("a delay with a fraction of a millisecond is rounded up, so a schedule never falls due early") {
+        // Truncated, 500 µs would be recorded as no delay at all, and 1.5 ms as 1 ms (S1).
+        for
+          store <- ZIO.service[QueueStore]
+          queue  = QueueName("schedule-rounded-up")
+          half  <- store.schedule(scheduled(queue, MessageKey("k1"), "m1", 500.micros))
+          more  <- store.schedule(scheduled(queue, MessageKey("k2"), "m2", 1500.micros))
+          // Both fall due at once: move them here, so the next test's move finds only its own.
+          _     <- ZIO.sleep(50.millis)
+          moved <- store.moveDue(limit)
+        yield assertTrue(half.dueIn == 1.milli, more.dueIn == 2.millis, moved.moved == 2)
+      },
       test("a schedule repeating an id still scheduled is ignored, and answers the first one's remaining time") {
         for
           store  <- ZIO.service[QueueStore]

@@ -138,7 +138,7 @@ object Codecs {
         Encoder.utf8(submission.message.key),
         Encoder.utf8(submission.message.messageId),
         StoredMessage.toBytes(submission.message).toArray,
-        Encoder.millis(schedule.scheduled.delay),
+        Encoder.millisRoundedUp(schedule.scheduled.delay),
       ),
     )
 

@@ -20,11 +20,13 @@
 -- as for any enqueue.
 --
 -- The due time is the store's clock plus the delay, so no caller's or instance's clock is ever compared with it.
+-- Both are rounded up to the millisecond — the delay by the caller, the clock here — so a message never falls due
+-- before its true due time (S1); a move compares with the clock floored, which can only make it later.
 local scheduled, payloads = KEYS[1], KEYS[2]
 local queue, key, id, payload, delay = ARGV[1], ARGV[2], ARGV[3], ARGV[4], tonumber(ARGV[5])
 
 local now = redis.call('TIME')
-now = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+now = tonumber(now[1]) * 1000 + math.ceil(tonumber(now[2]) / 1000)
 
 local member = #queue .. ':' .. queue .. #key .. ':' .. key .. id
 

@@ -137,8 +137,11 @@ final class RedisQueueStore(
         scripts.schedule.execute(layout.schedule(scheduled.submission.queue), scheduled)
 
   /**
-   * One `move` call per partition, every partition tried even when one fails, so an unreachable node holds back
-   * only what it holds.
+   * One `move` call per partition, all of them at once and every one tried even when another fails, so an
+   * unreachable node holds back only what it holds rather than every partition after it.
+   *
+   * Each partition's next due time is "in X ms" as of its own reply; by the time the last reply arrives the
+   * earlier ones have aged, so each is shortened by the time elapsed since it was read.
    *
    * @param limit the most entries one partition's call moves
    * @return the partitions' results combined, with how many could not be reached; aborts with the first
@@ -147,45 +150,68 @@ final class RedisQueueStore(
   override def moveDue(limit: Int): IO[RedisFailure, QueueStore.Moved] =
     monitor.trace("RedisQueueStore.moveDue"):
       connection.provide:
-        ZIO.partition(layout.schedules)(moveIn(limit)).flatMap(combined)
+        for
+          results <- ZIO.partitionPar(layout.schedules)(moveIn(limit)).withParallelism(layout.partitions)
+          now     <- Clock.instant
+          moved   <- combined(results, now)
+        yield moved
 
   /**
-   * One partition's move.
+   * One partition's move, with the local time its reply arrived.
    *
    * @param limit the most entries to move
    * @param keys the partition's schedule keys
-   * @return what the partition's call did; aborts with `RedisFailure` when it fails
+   * @return what the partition's call did, and when its answer was read; aborts with `RedisFailure` when it fails
    */
-  private def moveIn(limit: Int)(keys: ScheduleKeys): ZIO[Connection.Commands, RedisFailure, MoveScript.Output] =
-    scripts.move.execute(keys, limit)
+  private def moveIn(limit: Int)(keys: ScheduleKeys): ZIO[Connection.Commands, RedisFailure, (MoveScript.Output, Instant)] =
+    scripts.move.execute(keys, limit).zip(Clock.instant)
 
   /**
    * The partitions' results as one, or the first failure when no partition answered.
    *
-   * @param results the failures, then the partitions' answers
+   * @param results the failures, then the partitions' answers with the time each was read
+   * @param now the time the last of them was in, which each answer's next due time is aged to
    * @return the combined result; aborts with the first failure when there is no answer at all
    */
-  private def combined(results: (Iterable[RedisFailure], Iterable[MoveScript.Output])): IO[RedisFailure, QueueStore.Moved] =
+  private def combined(
+    results: (Iterable[RedisFailure], Iterable[(MoveScript.Output, Instant)]),
+    now: Instant,
+  ): IO[RedisFailure, QueueStore.Moved] =
     val (failures, answers) = results
     failures.headOption match
       case Some(failure) if answers.isEmpty => ZIO.fail(failure)
-      case _                                => ZIO.succeed(answers.foldLeft(QueueStore.Moved(0, 0, false, None, failures.size))(add))
+      case _                                =>
+        ZIO.succeed(answers.foldLeft(QueueStore.Moved(0, 0, false, None, failures.size))(add(now)))
 
   /**
-   * One partition's answer added to the total.
+   * One partition's answer added to the total, its next due time aged to `now`.
    *
+   * @param now the time the total is as of
    * @param total what the partitions so far did
-   * @param answer one more partition's answer
+   * @param answer one more partition's answer, and when it was read
    * @return the total with it: counts summed, full if any was, and the earliest next due time
    */
-  private def add(total: QueueStore.Moved, answer: MoveScript.Output): QueueStore.Moved =
+  private def add(now: Instant)(total: QueueStore.Moved, answer: (MoveScript.Output, Instant)): QueueStore.Moved =
+    val (output, read) = answer
     QueueStore.Moved(
-      moved = total.moved + answer.moved,
-      discarded = total.discarded + answer.discarded,
-      full = total.full || answer.full,
-      nextDueIn = earliest(total.nextDueIn, answer.nextDueIn),
+      moved = total.moved + output.moved,
+      discarded = total.discarded + output.discarded,
+      full = total.full || output.full,
+      nextDueIn = earliest(total.nextDueIn, aged(output.nextDueIn, Duration.fromInterval(read, now))),
       failed = total.failed,
     )
+
+  /**
+   * A next due time shortened by the time that has passed since it was read.
+   *
+   * @param nextDueIn the delay as read, if any
+   * @param elapsed how long ago it was read
+   * @return the delay that remains, never negative; `None` when there was none
+   */
+  private def aged(nextDueIn: Option[Duration], elapsed: Duration): Option[Duration] =
+    nextDueIn match
+      case Some(delay) => Some((delay minus elapsed).max(Duration.Zero))
+      case None        => None
 
   /**
    * The earlier of two optional delays.
