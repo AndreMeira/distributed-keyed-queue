@@ -49,12 +49,6 @@ object Inbound:
      */
     override def message: String = reasons.mkString("; ")
 
-  private given Transformer[String, MessageKey] = MessageKey(_)
-  private given Transformer[String, MessageId]  = MessageId(_)
-
-  private given Transformer[ByteString, Chunk[Byte]] =
-    bytes => Chunk.fromArray(bytes.toByteArray)
-
   /** The longest span, either way, a protobuf `Duration` may carry: about ten thousand years. */
   private val maxDurationSeconds: Long = 315576000000L
 
@@ -66,6 +60,12 @@ object Inbound:
 
   /** The latest second a protobuf `Timestamp` may name: 9999-12-31T23:59:59Z. */
   private val maxTimestampSeconds: Long = 253402300799L
+
+  private given Transformer[String, MessageKey] = MessageKey(_)
+  private given Transformer[String, MessageId]  = MessageId(_)
+
+  private given Transformer[ByteString, Chunk[Byte]] =
+    bytes => Chunk.fromArray(bytes.toByteArray)
 
   /**
    * A duration in protobuf's range, read; any other refused.
@@ -164,37 +164,44 @@ object Inbound:
     /**
      * @return the domain request, or a [[DecodingError]] when the `v1.EnqueueRequest` has no message
      */
-    def toDomain: Either[DecodingError, EnqueueRequest] = decoded(request.transformIntoPartial[EnqueueRequest])
+    def toDomain: Either[DecodingError, EnqueueRequest] =
+      decoded(request.transformIntoPartial[EnqueueRequest])
 
   extension (request: v1.ScheduleRequest)
     /**
      * @return the domain request, or a [[DecodingError]] when the `v1.ScheduleRequest` has no message; an absent
      *         `deliver_after` reads as zero, which validation refuses with the request's other problems
      */
-    def toDomain: Either[DecodingError, ScheduleRequest] = decoded(request.transformIntoPartial[ScheduleRequest])
+    def toDomain: Either[DecodingError, ScheduleRequest] =
+      decoded(request.transformIntoPartial[ScheduleRequest])
 
   extension (request: v1.DequeueRequest)
     /** @return the domain request, or a [[DecodingError]] saying why the `v1.DequeueRequest` cannot be read */
-    def toDomain: Either[DecodingError, DequeueRequest] = decoded(request.transformIntoPartial[DequeueRequest])
+    def toDomain: Either[DecodingError, DequeueRequest] =
+      decoded(request.transformIntoPartial[DequeueRequest])
 
   extension (request: v1.SettleRequest)
     /** @return the domain request, or a [[DecodingError]] when an outcome is unspecified */
-    def toDomain: Either[DecodingError, SettleRequest] = decoded(request.transformIntoPartial[SettleRequest])
+    def toDomain: Either[DecodingError, SettleRequest] =
+      decoded(request.transformIntoPartial[SettleRequest])
 
   extension (request: v1.HeartbeatRequest)
     /** @return the domain request, or a [[DecodingError]] saying why the `v1.HeartbeatRequest` cannot be read */
-    def toDomain: Either[DecodingError, HeartbeatRequest] = decoded(request.transformIntoPartial[HeartbeatRequest])
+    def toDomain: Either[DecodingError, HeartbeatRequest] =
+      decoded(request.transformIntoPartial[HeartbeatRequest])
 
   extension (request: v1.AcquireRequest)
     /**
      * @return the domain request, or a [[DecodingError]] when `ttl` or `max_wait` is out of protobuf's range;
      *         everything else is validated in the use case, not the codec
      */
-    def toDomain: Either[DecodingError, AcquireRequest] = decoded(request.transformIntoPartial[AcquireRequest])
+    def toDomain: Either[DecodingError, AcquireRequest] =
+      decoded(request.transformIntoPartial[AcquireRequest])
 
   extension (request: v1.TryAcquireRequest)
     /** @return the domain request, or a [[DecodingError]] when `ttl` is out of protobuf's range */
-    def toDomain: Either[DecodingError, TryAcquireRequest] = decoded(request.transformIntoPartial[TryAcquireRequest])
+    def toDomain: Either[DecodingError, TryAcquireRequest] =
+      decoded(request.transformIntoPartial[TryAcquireRequest])
 
   extension (request: v1.ReleaseRequest)
     /** @return the domain request */
@@ -202,4 +209,5 @@ object Inbound:
 
   extension (request: v1.RefreshRequest)
     /** @return the domain request, or a [[DecodingError]] when `ttl` is out of protobuf's range */
-    def toDomain: Either[DecodingError, RefreshRequest] = decoded(request.transformIntoPartial[RefreshRequest])
+    def toDomain: Either[DecodingError, RefreshRequest] =
+      decoded(request.transformIntoPartial[RefreshRequest])
