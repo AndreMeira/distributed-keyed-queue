@@ -71,7 +71,7 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
    * Everything `Settle` needs to be actionable.
    *
    * Only the ids named. Whether the claim owns them is not checked here — the store looks them up under the
-   * claim, and one it does not own is ignored.
+   * claim, and one it does not own is ignored. A backoff longer than the service's ceiling is clamped to it.
    *
    * @param request what the caller sent, untrusted
    * @return the settlement to hand the store; accumulates `UnreadableReceipt`, `EmptySettle`,
@@ -123,14 +123,16 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
       .map(id => Settlement.Outcome(MessageId(id), outcome.outcome))
 
   /**
-   * A zero backoff is no backoff.
+   * A zero backoff is no backoff, and a longer one than the ceiling is the ceiling.
    *
-
+   * Clamped rather than refused: a backoff is a hint about when to retry, so one cut short only brings the retry
+   * earlier, while refusing it would fail the whole settle, its acknowledgements included.
+   *
    * @param retryAfter what the caller asked for
-   * @return the wait, or `None` when none was asked for
+   * @return the wait, at most the ceiling, or `None` when none was asked for
    */
   private def backoff(retryAfter: Duration): Option[Duration] =
-    Option.when(retryAfter.toMillis > 0)(retryAfter)
+    Option.when(retryAfter.toMillis > 0)(if retryAfter > config.maxRetryAfter then config.maxRetryAfter else retryAfter)
 
   /**
    * How long this service will actually wait, once it is satisfied the caller means to wait at all.
@@ -258,5 +260,7 @@ object QueueInputValidation:
    *                      everyone else
    * @param maxScheduleAhead the longest delay a schedule may ask for, the horizon: a scheduled message waits
    *                         in the store's memory until it is due
+   * @param maxRetryAfter the longest backoff a nack may ask for, whatever a caller asks for: a backoff holds back
+   *                      its key's whole line, so the ceiling bounds how long a mistaken value can stall a key
    */
-  final case class Config(maxWait: Duration, maxBatchLimit: Int, maxScheduleAhead: Duration)
+  final case class Config(maxWait: Duration, maxBatchLimit: Int, maxScheduleAhead: Duration, maxRetryAfter: Duration)

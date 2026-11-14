@@ -123,7 +123,8 @@ of other keys, ids that never existed, and ids the same claim already settled.
 **C5. A settle may be retried safely.** Sending it twice has the same effect as sending it once.
 
 **C6. A nack may ask the key to wait before anyone works it again.** The wait applies to the *key*, not to
-one message. Where several nacks in a claim ask for different waits, the longest applies. The **backoff** ends
+one message. Where several nacks in a claim ask for different waits, the longest applies, and a wait longer than
+`max-retry-after` (1 hour by default) is clamped to it. The **backoff** ends
 within about 10 ms of the wait's end (one backoff quantum plus the slack) while the instance that took the nack
 runs, and within the backoff backstop (5 s by default) if that instance dies. On a cluster, a partition that stops
 answering delays the release of every partition's backoffs, by up to the command timeout (`max-wait`, 30 s), until

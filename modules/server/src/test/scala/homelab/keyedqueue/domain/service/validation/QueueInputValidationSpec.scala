@@ -100,6 +100,15 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
       val request = SettleRequest(receipt, Chunk(MessageOutcome("m1", Verdict.Failed)), 5.seconds)
       assertTrue(validation.parse(request).toEither.map(_.retryAfter) == Right(Some(5.seconds)))
     },
+    test("a backoff beyond the ceiling is clamped to it, not refused: the settle's acknowledgements still land") {
+      // A backoff holds back the key's whole line, so a mistaken one would otherwise stall it for as long as it
+      // asked, up to the ~292 years the codec reads as infinite (#83).
+      assertTrue(
+        validation.parse(nack(1.hour + 1.milli)).toEither.map(_.retryAfter) == Right(Some(1.hour)),
+        validation.parse(nack(Duration.Infinity)).toEither.map(_.retryAfter) == Right(Some(1.hour)),
+        validation.parse(nack(1.hour)).toEither.map(_.retryAfter) == Right(Some(1.hour)),
+      )
+    },
     test("a schedule with a delay within the horizon is accepted as it was asked") {
       val parsed = validation.parse(ScheduleRequest("jobs", Helper.requestMessage("k1"), 5.minutes))
       assertTrue(parsed.toEither.map(_.delay) == Right(5.minutes))
@@ -248,7 +257,9 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
 
   private object Support:
 
-    val validation = QueueInputValidation(QueueInputValidation.Config(maxWait = 30.seconds, maxBatchLimit = 32, maxScheduleAhead = 7.days))
+    val validation = QueueInputValidation(
+      QueueInputValidation.Config(maxWait = 30.seconds, maxBatchLimit = 32, maxScheduleAhead = 7.days, maxRetryAfter = 1.hour)
+    )
 
     /**
      * A well-formed schedule with the delay given, parsed.
@@ -258,6 +269,15 @@ object QueueInputValidationSpec extends ZIOSpecDefault:
      */
     def schedule(delay: Duration): Validated[ScheduledSubmission] =
       validation.parse(ScheduleRequest("jobs", Helper.requestMessage("k1"), delay))
+
+    /**
+     * A settle nacking one message of [[claim]], asking its key to wait.
+     *
+     * @param wait the backoff asked for
+     * @return the request
+     */
+    def nack(wait: Duration): SettleRequest =
+      SettleRequest(receipt, Chunk(MessageOutcome("m1", Verdict.Failed)), wait)
 
     /** The claim a settle names, and the receipt a consumer would have been handed for it. */
     val claim   = Claim(QueueName("jobs"), MessageKey("k1"), Token(1))

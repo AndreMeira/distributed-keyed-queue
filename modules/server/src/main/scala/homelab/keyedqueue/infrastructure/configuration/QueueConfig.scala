@@ -33,6 +33,7 @@ import zio.*
  * @param maxBatchLimit the most messages this service will hand over in one claim
  * @param maxScheduleAhead the longest delay a schedule may ask for: scheduled messages wait in the store's
  *                         memory until due
+ * @param maxRetryAfter the longest backoff a nack may ask for; longer requests are clamped
  * @param scheduleQuantum the window a request for a schedule tick is rounded up to, so entries due together
  *                        share one pass
  * @param scheduleSlack how much earlier a request must be to move the schedule timer
@@ -57,6 +58,7 @@ final case class QueueConfig(
   maxWait: Duration,
   maxBatchLimit: Int,
   maxScheduleAhead: Duration,
+  maxRetryAfter: Duration,
   scheduleQuantum: Duration,
   scheduleSlack: Duration,
   scheduleBackstop: Duration,
@@ -121,6 +123,7 @@ object QueueConfig:
       Option.when(config.maxWait.toMillis <= 0)("max-wait must be greater than zero"),
       Option.when(config.maxBatchLimit <= 0)("max-batch-limit must be greater than zero"),
       Option.when(config.maxScheduleAhead.toMillis <= 0)("max-schedule-ahead must be greater than zero"),
+      Option.when(config.maxRetryAfter.toMillis <= 0)("max-retry-after must be greater than zero"),
       Option.when(config.scheduleQuantum.toMillis < 0)("schedule-quantum must not be negative"),
       Option.when(config.scheduleSlack.toMillis < 0)("schedule-slack must not be negative"),
       Option.when(config.scheduleBackstop.toMillis <= 0)("schedule-backstop must be greater than zero"),

@@ -157,6 +157,7 @@ Settings are HOCON with an environment override for every key
 | `DKQ_LEASE_TTL` | `30 seconds` | how long a claim survives without a heartbeat |
 | `DKQ_MAX_WAIT` | `30 seconds` | the longest `Dequeue` wait honoured |
 | `DKQ_MAX_BATCH_LIMIT` | `32` | the most messages one claim may take |
+| `DKQ_MAX_RETRY_AFTER` | `1 hour` | the longest backoff a nack may ask for; longer requests are clamped |
 | `DKQ_WAKE_BLOCK` | `1 second` | how long one read of the wake streams waits before going round again |
 | `DKQ_SWEEP_INTERVAL` | `5 seconds` | how often each instance runs repair |
 | `DKQ_SWEEP_LIMIT` | `100` | entries one sweep handles, per kind |

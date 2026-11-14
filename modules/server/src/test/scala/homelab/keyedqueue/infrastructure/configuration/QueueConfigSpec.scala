@@ -31,6 +31,8 @@ object QueueConfigSpec extends ZIOSpecDefault:
         config.wakeBlock == 1.second,
         config.maxWait == 30.seconds,
         config.maxBatchLimit == 32,
+        config.maxScheduleAhead == 7.days,
+        config.maxRetryAfter == 1.hour,
       )
     },
     test("the lease outlasts a sweep, and a wait fits inside the lease") {
