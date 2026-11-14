@@ -17,11 +17,11 @@ runtime — see [Cluster](#one-partition-one-slot).
 
 ## The layout
 
-Everything a queue owns is prefixed `{p:<partition>}:v3:q:<queue>`, where the partition is
+Everything a queue owns is prefixed `{p:<partition>}:v4:q:<queue>`, where the partition is
 `hash(queue) % 16` (the partition count is a constant of the code) and decides which cluster slot the queue
-lives in, and `v3` is the schema version every key carries
-([`../research/schema-versioned-keys.md`](../research/schema-versioned-keys.md)). Six structures belong to
-the queue and three to a key inside it; the seventh, `wake`, belongs to the partition and is shared by every
+lives in, and `v4` is the schema version every key carries
+([`../research/schema-versioned-keys.md`](../research/schema-versioned-keys.md)). Five structures belong to
+the queue and three to a key inside it; `wake` and `delayed` belong to the partition and are shared by every
 queue in it. `{Q}` below is one queue's prefix, `{W}` its partition's (version included in both):
 
 | key | type | maps | written by |
@@ -31,7 +31,7 @@ queue in it. `{Q}` below is one queue's prefix, `{W}` its partition's (version i
 | `{Q}:claimed` | zset | key → lease deadline, unix millis | consume, complete, watchdog |
 | `{Q}:fence` | hash | key → claim counter | consume, complete, watchdog |
 | `{Q}:attempts` | hash | **message id** → delivery count | consume, complete |
-| `{Q}:delayed` | zset | key → when it may be worked again | complete, watchdog |
+| `{W}:delayed` | zset | `<len(queue)>:<queue><key>` → when that key may be worked again, unix millis: the partition's held-back keys | complete, produce, move, watchdog, backoff |
 | `{W}:wake` | **stream** | one entry per key made claimable: `kind` `q`, the queue's name, the key (a move appends one per queue, without the key) | produce, complete, watchdog, move |
 | `{Q}:msgs:<key>` | list | that key's message ids, producer order | produce, complete |
 | `{Q}:payloads:<key>` | hash | message id → the message | produce, consume, complete |
@@ -154,21 +154,22 @@ while the claim is still alive, so both `settle.lua`'s claim-end and the watchdo
 consumers claim it — the fence stops the loser corrupting anything, but it works for nothing.
 `QueueStoreSpec` has a regression test for exactly this.
 
-The same partial nack is why the due sweep must check `claimed` before it publishes a key whose backoff has
-ended. The backoff can end while the holder is still working the rest of its batch, and publishing the key
+The same partial nack is why the backoff release (`backoff.lua`) must check `claimed` before it publishes a key
+whose backoff has ended. The backoff can end while the holder is still working the rest of its batch, and publishing the key
 then lets a second claim take it from under the first: two workers on one key, and the first one's
-remaining settles refused. The sweep removes the elapsed backoff and leaves the key to whoever ends the
+remaining settles refused. The release removes the elapsed backoff and leaves the key to whoever ends the
 claim (`RedisQueueStoreSpec`, "a backoff that falls due while its claim lives does not hand the key to
 anyone else").
 
-## The watchdog's two sweeps
+## The watchdog's sweep, and the backoff release
 
-1. **Lapsed claims** — `ZRANGEBYSCORE claimed -inf now`: `DEL owned:<key>`, advance `fence`, clear the
-   lease, and score the key back into `ready` unless `delayed` says otherwise. Nothing moves, because
-   nothing had moved.
-2. **Elapsed backoffs** — `ZRANGEBYSCORE delayed -inf now`: the backoff is removed, and the key goes back
-   into `ready` with a fresh score, unless a claim still holds it. Then the claim's end or a reclaim puts
-   it back, since nothing in `delayed` holds it any longer.
+1. **Lapsed claims, the watchdog's** (`sweep.lua`, per known queue, every `sweep-interval`) —
+   `ZRANGEBYSCORE claimed -inf now`: `DEL owned:<key>`, advance `fence`, clear the lease, and score the key back
+   into `ready` unless `delayed` says otherwise. Nothing moves, because nothing had moved.
+2. **Elapsed backoffs, the backoff mover's** (`backoff.lua`, per partition, on the tick the settle asked for) —
+   `ZRANGEBYSCORE delayed -inf now`: the backoff is removed, and the key goes back into `ready` with a fresh score,
+   unless a claim still holds it. Then the claim's end or a reclaim puts it back, since nothing in `delayed` holds
+   it any longer. See [`scheduling.md`](scheduling.md), "Backoffs".
 
 There used to be a third, draining the holding list of a connection that died mid-claim. With the claim in
 one script there is no such list and no such moment: **the lease is the only thing that expires.**
@@ -177,7 +178,7 @@ one script there is no such list and no such moment: **the lease is the only thi
 
 Every name above carries its partition's `{p:<partition>}` hash tag, so a queue's keys — and the wake stream that
 announces them — hash to one cluster slot and a script may touch them all. Only the braces are hashed, so
-the `v3` that follows the tag names the schema without moving anything between slots. `claim.lua` and `sweep.lua`
+the `v4` that follows the tag names the schema without moving anything between slots. `claim.lua` and `sweep.lua`
 build `msgs:<key>`, `payloads:<key>` and `owned:<key>` at runtime from `prefix` rather than receiving them
 in `KEYS` — legal only because the tag guarantees the same slot, and unavoidable for `claim.lua`, which
 does not know which key it has until it pops one. That is why both take `prefix` as an argument.
@@ -195,7 +196,7 @@ them. See [`redis-cluster.md`](redis-cluster.md).
 What moves between them is [`lock-mechanics.md`](lock-mechanics.md).
 
 The lock API shares the store but none of the queue's structures. Everything it owns is prefixed
-`{p:<partition>}:v3:l`, where the partition is `hash(lock) % 16` — the queue's tag space, so a lock's keys
+`{p:<partition>}:v4:l`, where the partition is `hash(lock) % 16` — the queue's tag space, so a lock's keys
 and the stream announcing it hash to one slot and a script may touch them together
 ([`redis-cluster.md`](redis-cluster.md)). `{L}` below is one partition's prefix, and the structures it names
 are shared by every lock in that partition, with the lock's name as a member or field:
@@ -207,7 +208,7 @@ are shared by every lock in that partition, with the lock's name as a member or 
 | `{L}:fence` | string | one counter for the partition | acquire, grant, try |
 | `{L}:waiting` | zset | lock name → the latest ticket deadline in its waiters list | acquire, grant, abandon, try, trim |
 | `{L}:waiters:<name>` | list | tickets `id:deadline`, arrival order; exists only while someone queues | acquire, grant, abandon, try |
-| `{p:<partition>}:v3:wake` | stream | one entry per lock freed, `kind` `l` and the name | release, trim |
+| `{p:<partition>}:v4:wake` | stream | one entry per lock freed, `kind` `l` and the name | release, trim |
 
 **The fence is one counter per partition, and `tokens` is why it can be.** Fences need only increase per
 lock, which a globally increasing number satisfies a fortiori — while a per-lock counter could never be

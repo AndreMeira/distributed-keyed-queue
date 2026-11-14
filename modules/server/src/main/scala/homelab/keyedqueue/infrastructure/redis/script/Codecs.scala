@@ -142,14 +142,24 @@ object Codecs {
       ),
     )
 
-  /** The partition's schedule and its wake stream, then the bound and the prefix queue keys are built from. */
+  /**
+   * The partition's schedule, its wake stream and its held-back keys, then the bound and the prefix queue keys are
+   * built from.
+   */
   given moveInput: LuaScript.Input.Encoder[MoveScript.Input] = move =>
     LuaScript.Input(
-      key = Array[String](move.keys.scheduled, move.keys.payloads, move.keys.wake),
+      key = Array[String](move.keys.scheduled, move.keys.payloads, move.keys.wake, move.keys.delayed),
       args = Array(Encoder.number(move.limit), Encoder.utf8(move.keys.queues)),
     )
 
-  /** What the two sweeps read and repair, then the batch bound and the names the script rebuilds keys from. */
+  /** The partition's held-back keys and its wake stream, then the bound and the prefix queue keys are built from. */
+  given backoffInput: LuaScript.Input.Encoder[BackoffScript.Input] = backoff =>
+    LuaScript.Input(
+      key = Array[String](backoff.keys.delayed, backoff.keys.wake),
+      args = Array(Encoder.number(backoff.limit), Encoder.utf8(backoff.keys.queues)),
+    )
+
+  /** What the reclaim reads and repairs, then the batch bound and the names the script rebuilds keys from. */
   given sweepInput: LuaScript.Input.Encoder[SweepScript.Input] = sweep =>
     LuaScript.Input(
       key = Array[String](
@@ -322,13 +332,18 @@ object Codecs {
   private def nextDue(millis: Long): Option[Duration] =
     if millis < 0 then None else Some(Duration.fromMillis(millis))
 
-  /** What one sweep repaired: the keys it reclaimed from lapsed claims, and the ones whose backoff elapsed. */
+  /** What one sweep repaired: the keys it reclaimed from lapsed claims. */
   given sweepOutput: LuaScript.Output.Decoder[SweepScript.Output] =
-    Decoder.sized(2) {
+    Decoder.text.many.map(_.map(MessageKey(_))).map(QueueStore.Swept(_))
+
+  /** `{released, full, nextIn}`, where a negative `nextIn` means no backoff is pending in the partition. */
+  given backoffOutput: LuaScript.Output.Decoder[BackoffScript.Output] =
+    Decoder.sized(3) {
       for
-        reclaimed <- Decoder.text.many.at(0).map(_.map(MessageKey(_)))
-        released  <- Decoder.text.many.at(1).map(_.map(MessageKey(_)))
-      yield QueueStore.Swept(reclaimed, released)
+        released <- Decoder.int.at(0)
+        full     <- Decoder.long.at(1).map(_ == 1L)
+        next     <- Decoder.long.at(2).map(nextDue)
+      yield BackoffScript.Output(released, full, next)
     }
 
   /** `{1, token, leaseUntil}` when the lock was taken, `{0, ticketId, recheckMillis}` when it was queued for. */

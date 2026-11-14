@@ -25,7 +25,11 @@ import java.time.Instant
  * @param moves the replies the next moves answer with, in order; a move with none left answers that nothing
  *              moved and nothing is scheduled
  * @param moveCalls how many moves have been asked for
- * @param held when set, a schedule waits on this after recording, until a test releases it
+ * @param held when set, a schedule or a settle waits on this after recording, until a test releases it
+ * @param releases the replies the next releases of ended backoffs answer with, in order; one with none left answers
+ *                 that nothing ended and nothing is pending
+ * @param releaseCalls how many releases have been asked for
+ * @param settles the settlements applied, oldest first
  * @param leaseTtl the span it reports its leases run for
  */
 final class InMemoryQueueStore(
@@ -35,6 +39,9 @@ final class InMemoryQueueStore(
   moves: Ref[Chunk[Either[ApplicationError.AdapterError, QueueStore.Moved]]],
   moveCalls: Ref[Int],
   held: Ref[Option[Promise[Nothing, Unit]]],
+  releases: Ref[Chunk[Either[ApplicationError.AdapterError, QueueStore.Released]]],
+  releaseCalls: Ref[Int],
+  settles: Ref[Chunk[Settlement]],
   val leaseTtl: Duration = 30.seconds,
 ) extends QueueStore:
 
@@ -76,16 +83,16 @@ final class InMemoryQueueStore(
   def moved: UIO[Int] = moveCalls.get
 
   /**
-   * Make every later schedule wait, once recorded, until `release` completes: the moment a caller can be cancelled
-   * after the store has written and before it has answered.
+   * Make every later schedule and settle wait, once recorded, until `release` completes: the moment a caller can be
+   * cancelled after the store has written and before it has answered, or a slow reply.
    *
-   * @param release what the held schedules wait for
+   * @param release what the held writes wait for
    * @return noop
    */
-  def holdSchedulesUntil(release: Promise[Nothing, Unit]): UIO[Unit] = held.set(Some(release))
+  def holdWritesUntil(release: Promise[Nothing, Unit]): UIO[Unit] = held.set(Some(release))
 
   /**
-   * Record the schedule, wait if schedules are held, and answer that it was recorded with its own delay.
+   * Record the schedule, wait if writes are held, and answer that it was recorded with its own delay.
    *
    * @param scheduled what was asked for
    * @return recorded, due in its delay
@@ -135,13 +142,60 @@ final class InMemoryQueueStore(
 
   override def enqueue(submission: Submission): IO[ApplicationError.AdapterError, Long] = ZIO.succeed(1L)
 
-  override def settle(settlement: Settlement): IO[ApplicationError.AdapterError, Boolean] = ZIO.succeed(true)
+  /**
+   * Record the settlement, wait if writes are held, and answer that it applied.
+   *
+   * @param settlement what was asked for
+   * @return applied
+   */
+  override def settle(settlement: Settlement): IO[ApplicationError.AdapterError, Boolean] =
+    for
+      _       <- settles.update(_ :+ settlement)
+      release <- held.get
+      _       <- waitFor(release)
+    yield true
 
   override def renew(claims: Chunk[Claim]): IO[ApplicationError.AdapterError, (Instant, Chunk[Claim])] =
     ZIO.succeed(Instant.EPOCH -> Chunk.empty)
 
   override def sweep(queue: QueueName, limit: Int): IO[ApplicationError.AdapterError, QueueStore.Swept] =
-    ZIO.succeed(QueueStore.Swept(Chunk.empty, Chunk.empty))
+    ZIO.succeed(QueueStore.Swept(Chunk.empty))
+
+  /**
+   * Answer with the next queued reply, or with nothing ended and nothing pending when none is left.
+   *
+   * @param limit the bound asked for, which this store does not inspect
+   * @return the reply
+   */
+  override def releaseDue(limit: Int): IO[ApplicationError.AdapterError, QueueStore.Released] =
+    for
+      _        <- releaseCalls.update(_ + 1)
+      reply    <- releases.modify(queued => (queued.headOption, queued.drop(1)))
+      released <- ZIO.fromEither(reply.getOrElse(Right(QueueStore.Released(0, full = false, nextDueIn = None, failed = 0))))
+    yield released
+
+  /**
+   * Queue up the reply the next release of ended backoffs answers with.
+   *
+   * @param reply what the release answers: the store's failure, or what it released
+   * @return noop
+   */
+  def releasesWith(reply: Either[ApplicationError.AdapterError, QueueStore.Released]): UIO[Unit] =
+    releases.update(_ :+ reply)
+
+  /**
+   * How many releases of ended backoffs have been asked for.
+   *
+   * @return the count
+   */
+  def released: UIO[Int] = releaseCalls.get
+
+  /**
+   * The settlements applied.
+   *
+   * @return them, oldest first
+   */
+  def settled: UIO[Chunk[Settlement]] = settles.get
 
 
 object InMemoryQueueStore:
@@ -159,4 +213,7 @@ object InMemoryQueueStore:
       moves     <- Ref.make(Chunk.empty[Either[ApplicationError.AdapterError, QueueStore.Moved]])
       moveCalls <- Ref.make(0)
       held      <- Ref.make(Option.empty[Promise[Nothing, Unit]])
-    yield InMemoryQueueStore(pending, looks, schedules, moves, moveCalls, held)
+      releases  <- Ref.make(Chunk.empty[Either[ApplicationError.AdapterError, QueueStore.Released]])
+      calls     <- Ref.make(0)
+      settles   <- Ref.make(Chunk.empty[Settlement])
+    yield InMemoryQueueStore(pending, looks, schedules, moves, moveCalls, held, releases, calls, settles)

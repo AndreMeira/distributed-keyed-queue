@@ -28,3 +28,6 @@ final case class ScheduleKeys(tag: KeyLayout.Tag):
 
   /** The partition's wake stream, which a move announces on once per queue it made a key claimable in. */
   val wake: RedisKey = KeyLayout.wakeStreamKey(tag)
+
+  /** The partition's held-back keys, which a move reads to tell whether a key is waiting out a backoff. */
+  val delayed: RedisKey = KeyLayout.delayedKey(tag)

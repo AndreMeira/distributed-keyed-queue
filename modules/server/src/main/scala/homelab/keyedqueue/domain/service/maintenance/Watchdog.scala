@@ -8,7 +8,7 @@ import zio.*
 
 
 /**
- * The repair loop: revoke lapsed claims, and release keys whose retry backoff has elapsed.
+ * The repair loop: revoke lapsed claims. Releasing keys whose backoff has ended is the [[BackoffMover]]'s.
  *
  * Runs on every instance without coordination: the sweep is idempotent, so there is no leader election and
  * no single instance whose death stops repair.
@@ -65,7 +65,7 @@ final class Watchdog(store: QueueStore, config: Watchdog.Config, queues: Ref[Set
       .foldZIO(
         error => sweptWarn(queue, error),
         swept =>
-          val touched = swept.reclaimed.size + swept.released.size
+          val touched = swept.reclaimed.size
           // A full pass means there is more waiting; do not make it wait for the next tick. `touched > 0`
           // keeps a non-positive limit from turning an empty pass into an immediate one, forever.
           sweptInfo(queue, swept) *> sweep(queue).when(touched > 0 && touched >= config.sweepLimit).unit,
@@ -94,12 +94,7 @@ final class Watchdog(store: QueueStore, config: Watchdog.Config, queues: Ref[Set
    */
   private def sweptInfo(queue: QueueName, swept: QueueStore.Swept): UIO[Unit] =
     if swept.isEmpty then ZIO.unit
-    else
-      ZIO.logInfo(
-        s"swept $queue: " +
-          s"reclaimed=${swept.reclaimed.size} " +
-          s"released=${swept.released.size}"
-      )
+    else ZIO.logInfo(s"swept $queue: reclaimed=${swept.reclaimed.size}")
 
 
 object Watchdog:

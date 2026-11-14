@@ -55,6 +55,13 @@ final case class KeyLayout(partitions: Int):
   val schedules: Chunk[ScheduleKeys] = tags.map(ScheduleKeys(_))
 
   /**
+   * Every partition's backoff keys — for the backoff mover, which releases what is due in all of them.
+   *
+   * @return the keys, in partition order
+   */
+  val backoffs: Chunk[BackoffKeys] = tags.map(BackoffKeys(_))
+
+  /**
    * Every wake stream in the deployment — the fixed set a listener reads, and so what decides how many
    * connections it holds on a cluster.
    *
@@ -195,7 +202,7 @@ object KeyLayout:
    * Gate-only: a mismatch is refused, never migrated, and it does not cover client-held state
    * (`docs/architecture/redis-cluster.md`, `docs/research/schema-versioned-keys.md`).
    */
-  val schemaVersion: Int = 3
+  val schemaVersion: Int = 4
 
   /** The schema version as every key carries it, between the hash tag and the rest of the name. */
   val segment: String = s"v$schemaVersion"
@@ -252,6 +259,14 @@ object KeyLayout:
    * @return the stream name
    */
   def wakeStreamKey(tag: Tag): RedisKey = RedisKey(s"$tag:$segment:wake")
+
+  /**
+   * A partition's held-back keys: one sorted set for all its queues, members naming the queue and the key.
+   *
+   * @param tag the partition's tag
+   * @return the key
+   */
+  def delayedKey(tag: Tag): RedisKey = RedisKey(s"$tag:$segment:delayed")
 
   /**
    * The layout of a deployment, which decides how many partitions it wants.

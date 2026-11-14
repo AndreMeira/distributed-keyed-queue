@@ -3,6 +3,7 @@
 -- KEYS[1] scheduled  zset  member -> when the message falls due (unix millis, the store's clock)
 -- KEYS[2] payloads   hash  member -> the message, until it is moved
 -- KEYS[3] wake       stream  the partition's; one entry per queue in which a key was made claimable
+-- KEYS[4] delayed    zset  the partition's held-back keys, <len(queue)>:<queue><key> -> when it may be worked
 -- ARGV[1] limit      the most due entries to move in this call
 -- ARGV[2] queues     what every queue key of the partition starts with, e.g. {p:3}:v3:q:
 -- returns            {moved, discarded, full (1 or 0), millis until the next entry falls due, or -1 when none}
@@ -24,7 +25,7 @@
 -- Every queue key is built here from `queues`, the queue's name and the key, rather than declared in KEYS: which
 -- queues are due is not known until the range query runs. Legal because the partition's tag puts them all in
 -- one slot.
-local scheduled, payloads, wake = KEYS[1], KEYS[2], KEYS[3]
+local scheduled, payloads, wake, delayed = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
 local limit, queues = tonumber(ARGV[1]), ARGV[2]
 
 local now = redis.call('TIME')
@@ -61,7 +62,7 @@ for _, member in ipairs(due) do
 
       if redis.call('ZSCORE', prefix .. ':ready', key) == false
         and redis.call('ZSCORE', prefix .. ':claimed', key) == false
-        and redis.call('ZSCORE', prefix .. ':delayed', key) == false then
+        and redis.call('ZSCORE', delayed, #queue .. ':' .. queue .. key) == false then
         redis.call('ZADD', prefix .. ':ready', redis.call('INCR', prefix .. ':seq'), key)
         woken[queue] = true
       end

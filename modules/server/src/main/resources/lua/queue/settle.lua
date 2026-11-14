@@ -7,7 +7,7 @@
 -- KEYS[5] payloads   hash  message id -> the message itself
 -- KEYS[6] owned      set   the ids this claim owns and has not settled
 -- KEYS[7] attempts   hash  message id -> delivery count
--- KEYS[8] delayed    zset  key -> when it may be worked again (unix millis)
+-- KEYS[8] delayed    zset  the partition's: <len(queue)>:<queue><key> -> when that key may be worked again (unix millis)
 -- KEYS[9] wake       stream  one entry per key made claimable
 -- KEYS[10] sequence  string  the counter that scores `ready`
 -- ARGV[1] key
@@ -28,6 +28,9 @@
 local ready, claimed, fence, msgs, payloads, owned, attempts, delayed, wake, sequence =
   KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7], KEYS[8], KEYS[9], KEYS[10]
 local key, token, retryAfter, queue = ARGV[1], tonumber(ARGV[2]), tonumber(ARGV[3]), ARGV[4]
+
+-- How this key is named in the partition's `delayed`, which every queue of the partition shares (see backoff.lua).
+local held = #queue .. ':' .. queue .. key
 
 if tonumber(redis.call('HGET', fence, key) or 0) ~= token then
   return 0
@@ -51,7 +54,7 @@ for i = 5, #ARGV, 2 do
       -- anyone works it again. GT so that several nacks in one claim leave the longest wait standing.
       local now = redis.call('TIME')
       now = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
-      redis.call('ZADD', delayed, 'GT', now + retryAfter, key)
+      redis.call('ZADD', delayed, 'GT', now + retryAfter, held)
     end
   end
 end
@@ -71,9 +74,9 @@ end
 
 -- Scored with a fresh number, not the one it had before: the key has just been served, so it goes behind
 -- everything that has been waiting. Held back instead when a nack asked for it — then it is accounted for by `delayed`,
--- a producer will not add it either, and the watchdog's due-sweep is what puts it back. That is how a
+-- a producer will not add it either, and backoff.lua is what puts it back once the wait is over. That is how a
 -- failing message backs off without spinning.
-if redis.call('ZSCORE', delayed, key) == false then
+if redis.call('ZSCORE', delayed, held) == false then
   redis.call('ZADD', ready, redis.call('INCR', sequence), key)
   redis.call('XADD', wake, 'MAXLEN', '~', 1000, '*', 'kind', 'q', 'name', queue, 'key', key)
 end

@@ -9,7 +9,7 @@ import zio.*
 
 
 /**
- * The seven Lua scripts, loaded once and held as the calls they can make.
+ * The eight Lua scripts, loaded once and held as the calls they can make.
  *
  * Loading up front rather than on first use keeps the failure at startup, where a missing or unparseable
  * script is obvious, instead of on the first message. There is no `NOSCRIPT` fallback for the same reason a
@@ -24,9 +24,10 @@ import zio.*
  * @param claim takes the next claimable key and hands over a batch of its messages
  * @param settle records what became of each message, and decides the key's next state
  * @param renew extends the claims a consumer still holds
- * @param sweep the two repair passes
+ * @param sweep reclaims claims whose consumer went silent
  * @param schedule records a message to be appended once its delay has elapsed
  * @param move appends a partition's due scheduled messages to their key's line
+ * @param backoff releases a partition's held-back keys whose backoff has ended
  */
 final case class QueueScripts(
   enqueue: LuaScript[EnqueueScript.Input, EnqueueScript.Output],
@@ -36,6 +37,7 @@ final case class QueueScripts(
   sweep: LuaScript[SweepScript.Input, SweepScript.Output],
   schedule: LuaScript[ScheduleScript.Input, ScheduleScript.Output],
   move: LuaScript[MoveScript.Input, MoveScript.Output],
+  backoff: LuaScript[BackoffScript.Input, BackoffScript.Output],
 )
 
 
@@ -58,4 +60,5 @@ object QueueScripts:
       sweep    <- SweepScript.load
       schedule <- ScheduleScript.load
       move     <- MoveScript.load
-    yield QueueScripts(enqueue, claim, settle, renew, sweep, schedule, move)
+      backoff  <- BackoffScript.load
+    yield QueueScripts(enqueue, claim, settle, renew, sweep, schedule, move, backoff)

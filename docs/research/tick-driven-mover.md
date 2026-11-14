@@ -8,8 +8,9 @@ tags: [design, schedule, backoff, retry-after, nack, watchdog, ticker, latch, pr
 
 # A tick-driven mover
 
-> **Implemented for schedules (2026-11-14)** as `DueTimer` and `ScheduleMover`; the current state is
-> [`../architecture/scheduling.md`](../architecture/scheduling.md). The backoffs pair is not built. This note stays as the record of why.
+> **Implemented (2026-11-14)**: the schedules pair as `DueTimer` and `ScheduleMover`, then the backoffs pair as a
+> second `DueTimer` and `BackoffMover`, per partition, with the schema bumped to `v4`. The current state is
+> [`../architecture/scheduling.md`](../architecture/scheduling.md). This note stays as the record of why.
 
 > **Originally an exploration, not a decision** (its decisions are now marked "Decided" where they were
 > taken). This note works out one idea in detail so it can be read and challenged as a whole. Names in
@@ -48,6 +49,12 @@ truth. A request is only a hint about when to look.
   structure, so a schema bump (question 7 of [`message-scheduling.md`](message-scheduling.md)). Nacks keep
   the watchdog until a feature of their own converts them; the mover's code is written once, so that pair
   reuses it.
+- **Later the same day: the backoffs pair, per partition (variant B).** `{p}:v4:delayed` with members
+  `<len(queue)>:<queue><key>`, so the schema goes to `v4`: DKQ was not deployed anywhere, so the bump's drain cost
+  nothing. `BackoffMover` and a second `DueTimer` (bundled as `DueTimers`), `backoff.lua`, `QueueStore.releaseDue`;
+  `SettleUseCase` asks for the tick; the watchdog only reclaims. Backoff quantum and slack 5 ms, backstop 5 s,
+  limit 100. The variant without a bump (per queue, over the known queues) was set aside: it kept the watchdog's
+  blind spot for queues nobody had touched since a restart.
 - **The latch:** `homelab.common.flow.TimeLatch`, from toolkit 0.0.7.
 - **The mover reaches the tick source with a direct `triggerAt`.** No request pipe, so no feedback cycle.
 - **Batching: requests are rounded up to a 50 ms quantum, and `slack` is 50 ms.** This caps the mover at 20

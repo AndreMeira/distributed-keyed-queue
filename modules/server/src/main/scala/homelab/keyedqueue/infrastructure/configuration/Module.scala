@@ -1,7 +1,7 @@
 package homelab.keyedqueue.infrastructure.configuration
 
 
-import homelab.keyedqueue.domain.service.maintenance.{ DueTimer, LockCleanup, ScheduleMover, Watchdog }
+import homelab.keyedqueue.domain.service.maintenance.{ BackoffMover, DueTimer, DueTimers, LockCleanup, ScheduleMover, Watchdog }
 import homelab.keyedqueue.domain.service.validation.{ LockInputValidation, QueueInputValidation }
 import zio.ZLayer
 
@@ -15,8 +15,8 @@ import zio.ZLayer
 object Module:
 
   /** Every slice of the configuration the modules downstream read. */
-  type Provided = QueueInputValidation.Config & LockInputValidation.Config & Watchdog.Config & LockCleanup.Config & DueTimer.Config &
-    ScheduleMover.Config
+  type Provided = QueueInputValidation.Config & LockInputValidation.Config & Watchdog.Config & LockCleanup.Config & DueTimers.Config &
+    ScheduleMover.Config & BackoffMover.Config
 
   /** The configuration itself, which the composition root supplies. */
   type Required = QueueConfig
@@ -27,7 +27,7 @@ object Module:
    * @return the layer
    */
   lazy val layer: ZLayer[Required, Nothing, Provided] =
-    validation ++ lockValidation ++ watchdog ++ lockCleanup ++ dueTimer ++ scheduleMover
+    validation ++ lockValidation ++ watchdog ++ lockCleanup ++ dueTimers ++ scheduleMover ++ backoffMover
 
   /**
    * The slice of it the parse is allowed to know.
@@ -63,12 +63,25 @@ object Module:
     ZLayer.fromFunction((config: QueueConfig) => LockCleanup.Config(config.lockTrimInterval, config.lockTrimGrace, config.sweepLimit))
 
   /**
-   * The schedule timer's slice: its quantum, slack and backstop.
+   * The two timers' slices: each one's quantum, slack and backstop.
    *
    * @return the layer
    */
-  val dueTimer: ZLayer[QueueConfig, Nothing, DueTimer.Config] =
-    ZLayer.fromFunction((config: QueueConfig) => DueTimer.Config(config.scheduleQuantum, config.scheduleSlack, config.scheduleBackstop))
+  val dueTimers: ZLayer[QueueConfig, Nothing, DueTimers.Config] =
+    ZLayer.fromFunction((config: QueueConfig) =>
+      DueTimers.Config(
+        schedules = DueTimer.Config(config.scheduleQuantum, config.scheduleSlack, config.scheduleBackstop),
+        backoffs = DueTimer.Config(config.backoffQuantum, config.backoffSlack, config.backoffBackstop),
+      )
+    )
+
+  /**
+   * The backoff mover's slice: how much one call releases.
+   *
+   * @return the layer
+   */
+  val backoffMover: ZLayer[QueueConfig, Nothing, BackoffMover.Config] =
+    ZLayer.fromFunction((config: QueueConfig) => BackoffMover.Config(config.backoffLimit))
 
   /**
    * The schedule mover's slice: how much one call moves.

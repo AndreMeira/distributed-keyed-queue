@@ -6,9 +6,9 @@ import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, ScheduledSubmission
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.domain.types.*
-import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, QueueKeys, ScheduleKeys }
+import homelab.keyedqueue.infrastructure.redis.keys.{ BackoffKeys, KeyLayout, QueueKeys, ScheduleKeys }
 import homelab.keyedqueue.infrastructure.redis.script.QueueScripts
-import homelab.keyedqueue.infrastructure.redis.script.queue.{ ClaimScript, MoveScript, RenewScript }
+import homelab.keyedqueue.infrastructure.redis.script.queue.{ BackoffScript, ClaimScript, MoveScript, RenewScript }
 import zio.*
 
 import java.time.Instant
@@ -112,8 +112,7 @@ final class RedisQueueStore(
             when.maxOption.getOrElse(Instant.EPOCH) -> Chunk.fromIterable(chunk).flatten
 
   /**
-   * One `sweep` call, which carries both passes — lapsed claims and elapsed backoffs — so
-   * a repair pass is a single round trip and a single idle window on the server.
+   * One `sweep` call, the reclaim of lapsed claims.
    *
    * @param queue the queue to repair
    * @param limit the most entries to handle in one pass
@@ -196,6 +195,67 @@ final class RedisQueueStore(
     QueueStore.Moved(
       moved = total.moved + output.moved,
       discarded = total.discarded + output.discarded,
+      full = total.full || output.full,
+      nextDueIn = earliest(total.nextDueIn, aged(output.nextDueIn, Duration.fromInterval(read, now))),
+      failed = total.failed,
+    )
+
+  /**
+   * One `backoff` call per partition, all of them at once and every one tried even when another fails, as for
+   * [[moveDue]]; each partition's next end is aged to when the last reply arrived.
+   *
+   * @param limit the most backoffs one partition's call releases
+   * @return the partitions' results combined, with how many could not be reached; aborts with the first
+   *         partition's failure only when none could be
+   */
+  override def releaseDue(limit: Int): IO[RedisFailure, QueueStore.Released] =
+    monitor.trace("RedisQueueStore.releaseDue"):
+      connection.provide:
+        for
+          results  <- ZIO.partitionPar(layout.backoffs)(releaseIn(limit)).withParallelism(layout.partitions)
+          now      <- Clock.instant
+          released <- releasedAll(results, now)
+        yield released
+
+  /**
+   * One partition's release, with the local time its reply arrived.
+   *
+   * @param limit the most backoffs to release
+   * @param keys the partition's backoff keys
+   * @return what the partition's call did, and when its answer was read; aborts with `RedisFailure` when it fails
+   */
+  private def releaseIn(limit: Int)(keys: BackoffKeys): ZIO[Connection.Commands, RedisFailure, (BackoffScript.Output, Instant)] =
+    scripts.backoff.execute(keys, limit).zip(Clock.instant)
+
+  /**
+   * The partitions' releases as one, or the first failure when no partition answered.
+   *
+   * @param results the failures, then the partitions' answers with the time each was read
+   * @param now the time the last of them was in, which each answer's next end is aged to
+   * @return the combined result; aborts with the first failure when there is no answer at all
+   */
+  private def releasedAll(
+    results: (Iterable[RedisFailure], Iterable[(BackoffScript.Output, Instant)]),
+    now: Instant,
+  ): IO[RedisFailure, QueueStore.Released] =
+    val (failures, answers) = results
+    failures.headOption match
+      case Some(failure) if answers.isEmpty => ZIO.fail(failure)
+      case _                                =>
+        ZIO.succeed(answers.foldLeft(QueueStore.Released(0, false, None, failures.size))(addReleased(now)))
+
+  /**
+   * One partition's release added to the total, its next end aged to `now`.
+   *
+   * @param now the time the total is as of
+   * @param total what the partitions so far did
+   * @param answer one more partition's answer, and when it was read
+   * @return the total with it: counts summed, full if any was, and the earliest next end
+   */
+  private def addReleased(now: Instant)(total: QueueStore.Released, answer: (BackoffScript.Output, Instant)): QueueStore.Released =
+    val (output, read) = answer
+    QueueStore.Released(
+      released = total.released + output.released,
       full = total.full || output.full,
       nextDueIn = earliest(total.nextDueIn, aged(output.nextDueIn, Duration.fromInterval(read, now))),
       failed = total.failed,

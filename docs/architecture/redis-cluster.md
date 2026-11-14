@@ -2,7 +2,7 @@
 title: "Redis Cluster — the layout, the per-slot listener, and the fixture that proves them"
 type: architecture
 status: current
-updated: 2026-09-11
+updated: 2026-11-14
 tags: [redis, cluster, sharding, hash-tag, lettuce, lua]
 ---
 
@@ -35,25 +35,31 @@ Everything downstream is unchanged.
 ## Why the key layout was ready first
 
 Every key a queue owns carries the hash tag of the **partition** that queue falls in. `QueueKeys` builds all
-ten from `prefix = "{p:<partition>}:v3:q:<queue>"`, with the wake stream tagged but not scoped to the queue:
+eight from `prefix = "{p:<partition>}:v4:q:<queue>"`, with the partition's own keys tagged but not scoped to the
+queue:
 
 ```
-{p:0}:v3:q:orders:ready      {p:0}:v3:q:orders:fence       {p:0}:v3:q:orders:msgs:<key>
-{p:0}:v3:q:orders:seq        {p:0}:v3:q:orders:attempts    {p:0}:v3:q:orders:payloads:<key>
-{p:0}:v3:q:orders:claimed    {p:0}:v3:q:orders:delayed     {p:0}:v3:q:orders:owned:<key>
-                             {p:0}:v3:wake                 ← shared by every queue in partition 0
+{p:0}:v4:q:orders:ready      {p:0}:v4:q:orders:fence       {p:0}:v4:q:orders:msgs:<key>
+{p:0}:v4:q:orders:seq        {p:0}:v4:q:orders:attempts    {p:0}:v4:q:orders:payloads:<key>
+{p:0}:v4:q:orders:claimed                                  {p:0}:v4:q:orders:owned:<key>
+{p:0}:v4:wake                {p:0}:v4:delayed              ← shared by every queue in partition 0
+{p:0}:v4:scheduled           {p:0}:v4:scheduled:payloads   ← likewise
 ```
 
 `partition = hash(queue) % 16` — the count is a constant of the code, not a deployment parameter. What each
 structure is for is [`redis-data-structures.md`](redis-data-structures.md); what matters here is only that
 everything a script touches carries the same tag.
 
-**The `v3` is the schema version, and it sits outside the tag on purpose.** Only what is inside the braces
+**The `v4` is the schema version, and it sits outside the tag on purpose.** Only what is inside the braces
 is hashed, so the segment moves nothing between slots — and a key's incarnations under two schemas land in
 the *same* slot, which is what would let a migration step read v1 and write v2 in one script
 ([`../research/schema-versioned-keys.md`](../research/schema-versioned-keys.md)).
 
-**The locks are partitioned the same way, and share the partition** — `{p:<partition>}:v3:l:…`. A lock's
+**`v4` since 2026-11-14:** the held-back keys moved from one `delayed` per queue to one per partition, members
+naming queue and key, so the backoff mover can release them per partition (`scheduling.md`). A structure changing
+place and member form is what a bump is for; a store written under `v3` is refused, and the ceremony below applies.
+
+**The locks are partitioned the same way, and share the partition** — `{p:<partition>}:v4:l:…`. A lock's
 partition follows its name, so every operation on one lock reaches the same slot, and each script touches
 that partition's leases, tokens, fence counter and waiters list together.
 
@@ -95,7 +101,7 @@ which is why it is recorded in the marker below rather than left to configuratio
 and what partitioning cost.
 
 **The store records the schema it was written under, and instances refuse to disagree.** At first boot each
-instance records its layout — the schema version and the partition count, as `v3.p16` (`dkq:layout:schema`,
+instance records its layout — the schema version and the partition count, as `v4.p16` (`dkq:layout:schema`,
 claimed with `SET NX` so racing first boots cannot both write); every later boot compares and **refuses to
 start on a mismatch**, before anything is served — a rolling deploy of incompatible code crash-loops loudly instead of misreading live structures.
 The version is bumped in code whenever an older instance would misread the store: a structure changing

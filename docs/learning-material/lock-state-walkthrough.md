@@ -2,7 +2,7 @@
 title: "Every lock call, and what it does to Redis"
 type: learning-material
 status: current
-updated: 2026-09-13
+updated: 2026-11-14
 tags: [lock, redis, walkthrough, keys, lua, tickets, fencing, debugging]
 ---
 
@@ -16,7 +16,7 @@ page is the middle: the mechanics in motion. The queue's equivalent is
 [`redis-state-walkthrough.md`](redis-state-walkthrough.md).
 
 Throughout: lock `route-7`, callers `A`, `B`, `C`. Names are shortened — every one really carries the
-`{p:3}:v3:l` prefix — partition 3 of the sixteen a cluster uses, `v3` the schema version. On a single
+`{p:3}:v4:l` prefix — partition 3 of the sixteen a cluster uses, `v4` the schema version. On a single
 server there is one partition and everything is in `{p:0}`. The fence counter and the
 `held`/`tokens`/`waiting` structures are **shared by every lock in the partition**; only `waiters:route-7`
 belongs to this lock alone. Empty structures are omitted, and `now` is whatever `TIME` said inside the
@@ -99,7 +99,7 @@ takes the head to be woken and ask.
 ```
 tokens           {}                     HDEL — the token can never act again
 held             {}                     ZREM
-{p:3}:v3:wake    +1 entry               kind=l, name=route-7
+{p:3}:v4:wake    +1 entry               kind=l, name=route-7
 ```
 
 Returns true. Three facts about that last line:
@@ -211,7 +211,7 @@ the death of a holder is silent, and the recheck is what makes it visible.
 ```
 tokens           entry deleted
 held             entry deleted
-{p:3}:v3:wake    +1 entry per freed lock     kind=l
+{p:3}:v4:wake    +1 entry per freed lock     kind=l
 ```
 
 The grace is a contract, not a tuning knob: since `refresh` is token-only, a holder whose lease lapsed may
@@ -233,7 +233,7 @@ have to scan.
 
 ## Reading a live instance
 
-For lock `route-7`, first find its partition — `Math.floorMod(name.hashCode, 16)` — then, with `{p:3}:v3:l`
+For lock `route-7`, first find its partition — `Math.floorMod(name.hashCode, 16)` — then, with `{p:3}:v4:l`
 as `L`:
 
 ```
@@ -242,7 +242,7 @@ HGET    L:tokens route-7           # the live holder's fence token
 LRANGE  L:waiters:route-7 0 -1     # the queue, head first, as id:deadline
 ZSCORE  L:waiting route-7          # the latest ticket deadline on that list
 GET     L:fence                    # the partition's counter
-XREVRANGE {p:3}:v3:wake + - COUNT 5   # recent wakes, both kinds
+XREVRANGE {p:3}:v4:wake + - COUNT 5   # recent wakes, both kinds
 ```
 
 Reading these is safe but racy by nature — every one of them can change between two commands, and only the
