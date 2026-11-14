@@ -1,15 +1,20 @@
 ---
 title: "Message scheduling — a message that becomes claimable at a time (pre-research)"
 type: research
-status: draft
+status: current
 updated: 2026-11-14
 tags: [api, schedule, delayed-delivery, redis, watchdog, pre-research, not-a-decision]
 ---
 
 # Message scheduling
 
-> **Pre-research.** This note states the goal, what dkq already has that bears on it, the design questions,
-> and the research rounds that would answer them. It decides nothing. Where it leans, it says so and why.
+> **Implemented (2026-11-14).** The current state is [`../architecture/scheduling.md`](../architecture/scheduling.md),
+> and the guarantees are S1–S5 in [`../architecture/guarantees.md`](../architecture/guarantees.md). This note stays as the record of
+> why; where it and the architecture page disagree, the architecture page wins.
+
+> **Originally pre-research.** This note states the goal, what dkq already has that bears on it, the design
+> questions, and the research rounds that would answer them. Its decisions are marked "Decided" where they were
+> taken; where it only leant, it says so and why.
 
 ## The goal
 

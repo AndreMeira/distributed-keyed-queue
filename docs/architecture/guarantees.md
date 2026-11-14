@@ -2,8 +2,8 @@
 title: "What dkq guarantees — the invariants a consumer may rely on"
 type: architecture
 status: current
-updated: 2026-09-04
-tags: [guarantees, invariants, ordering, delivery, contract, testing]
+updated: 2026-11-14
+tags: [guarantees, invariants, ordering, delivery, scheduling, contract, testing]
 ---
 
 # What dkq guarantees
@@ -152,6 +152,29 @@ than a thousand wakes on one partition during an outage. A consumer that misses 
 its next `Dequeue`, so the exposure is bounded by how long a caller waits before asking again, at most
 `max_wait`. Nothing is lost, and no key is left claimed.
 
+## Scheduling
+
+A message sent with `Schedule` instead of `Enqueue` (see [`scheduling.md`](scheduling.md) for how it works).
+
+**S1. A scheduled message is never claimable before its due time,** on the store's clock: `deliver_after` is
+added to the store's own clock, so no caller's clock is compared with it.
+
+**S2. After its due time it is an ordinary message of its key.** It takes its place in the key's line when it is
+moved, behind whatever was sent for the key in between, and O1–O4, E1–E5, D1–D5, C1–C7 and R1–R4 apply from
+then on. The first schedule of an id wins (a repeat is answered `scheduled = false`), and an id still queued for
+the key when it falls due is the same message (D5): the scheduled copy is discarded.
+
+**S3. Lateness is bounded.** A scheduled message joins its key's line within one quantum (about 50 ms) of its due
+time while the instance that accepted it runs, and within one backstop (60 s by default) if that instance dies.
+Delivery to a consumer then follows the ordinary path.
+
+**S4. A scheduled message is as durable as the store's persistence, no more.** It waits in the store's memory
+until it is due; with persistence off, a store restart loses it. Scheduled messages are the most exposed to
+this, because they wait hours where a queued message waits seconds.
+
+**S5. Messages of one key due in the same millisecond join its line in message-id order**, not in the order they
+were scheduled.
+
 ---
 
 ## What is *not* guaranteed
@@ -164,8 +187,10 @@ Stated plainly, because each of these is something a reader might otherwise assu
 - **Not serialised within a batch.** See E4.
 - **Not protected against a consumer that ignores its lease.** See E2 — the service can refuse its settles,
   not stop its code.
-- **No priority, and no deadline scheduling.** Messages are handed out in the order they were sent, and a
-  nack's wait is the only way to delay one.
+- **No priority.** Messages are handed out in the order they joined their key's line. A nack's wait delays a
+  key; `Schedule` delays one message until its due time, after which it is ordered like any other (S2).
+- **No rescheduling and no cancel.** A scheduled message arrives by the first schedule of its id; to move a
+  deadline, schedule a new message with its own id.
 - **No fairness promise between consumers.** Every instance reads every wake entry, so instances race to
   claim; within an instance a readiness token wakes one consumer rather than all of them, and consumers are
   served in the order the token reaches them. The instance that just finished a key is often the one that

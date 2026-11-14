@@ -2,7 +2,7 @@
 title: "What dkq keeps in Redis, and what each structure is for"
 type: architecture
 status: current
-updated: 2026-11-06
+updated: 2026-11-14
 tags: [redis, keys, data-structures, lua, claims, ordering, streams]
 ---
 
@@ -32,10 +32,16 @@ queue in it. `{Q}` below is one queue's prefix, `{W}` its partition's (version i
 | `{Q}:fence` | hash | key → claim counter | consume, complete, watchdog |
 | `{Q}:attempts` | hash | **message id** → delivery count | consume, complete |
 | `{Q}:delayed` | zset | key → when it may be worked again | complete, watchdog |
-| `{W}:wake` | **stream** | one entry per key made claimable: `kind` `q`, the queue's name, the key | produce, complete, watchdog |
+| `{W}:wake` | **stream** | one entry per key made claimable: `kind` `q`, the queue's name, the key (a move appends one per queue, without the key) | produce, complete, watchdog, move |
 | `{Q}:msgs:<key>` | list | that key's message ids, producer order | produce, complete |
 | `{Q}:payloads:<key>` | hash | message id → the message | produce, consume, complete |
 | `{Q}:owned:<key>` | set | ids the live claim holds and has not settled | consume, complete, watchdog |
+| `{W}:scheduled` | zset | member → when the scheduled message falls due, unix millis | schedule, move |
+| `{W}:scheduled:payloads` | hash | member → the scheduled message, until it is moved | schedule, move |
+
+The last two belong to the partition, like `wake`: one scheduled set for all of its queues. A member names the
+queue, the key and the message id, length-prefixed: `<byte length of queue>:<queue><byte length of key>:<key><id>`.
+`move.lua` builds the queue keys it appends to from the partition's prefix. See [`scheduling.md`](scheduling.md).
 
 ## Why the types are what they are
 

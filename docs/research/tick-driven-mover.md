@@ -1,16 +1,20 @@
 ---
 title: "A tick-driven mover — releasing backoffs and scheduled messages on time"
 type: research
-status: draft
+status: current
 updated: 2026-11-14
 tags: [design, schedule, backoff, retry-after, nack, watchdog, ticker, latch, processor, redis, exploration, not-a-decision]
 ---
 
 # A tick-driven mover
 
-> **Exploration, not a decision.** This note works out one idea in detail so it can be read and challenged
-> as a whole. Nothing here is built. Names in *italics* (*the tick source*, *the mover*) are roles, not
-> class names; class names are still to be proposed. The discussion that led here is in
+> **Implemented for schedules (2026-11-14)** as `DueTimer` and `ScheduleMover`; the current state is
+> [`../architecture/scheduling.md`](../architecture/scheduling.md). The backoffs pair is not built. This note stays as the record of why.
+
+> **Originally an exploration, not a decision** (its decisions are now marked "Decided" where they were
+> taken). This note works out one idea in detail so it can be read and challenged as a whole. Names in
+> *italics* (*the tick source*, *the mover*) are roles; the classes are `DueTimer` and `ScheduleMover` (see "The
+> names" under "Decided"). The discussion that led here is in
 > [`../sessions/2026-11-02-next-features.md`](../sessions/2026-11-02-next-features.md).
 
 ## The problem
