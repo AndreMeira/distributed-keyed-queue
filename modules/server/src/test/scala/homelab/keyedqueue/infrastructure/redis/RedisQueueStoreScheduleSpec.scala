@@ -38,7 +38,9 @@ object RedisQueueStoreScheduleSpec extends ZIOSpecDefault:
         yield assertTrue(
           taken == QueueStore.Scheduled(scheduled = true, dueIn = 300.millis),
           early.moved == 0,
-          early.nextDueIn.exists(_ <= 300.millis),
+          // At most the delay plus the rounding: a due time is recorded with the store clock rounded up, and a move
+          // measures what is left with it rounded down, so the two may differ by up to a millisecond, late not early.
+          early.nextDueIn.exists(_ <= 300.millis + rounding),
           before.isEmpty,
           late.moved == 1,
           after.map(Helper.body).contains(Chunk("m1")),
@@ -151,12 +153,18 @@ object RedisQueueStoreScheduleSpec extends ZIOSpecDefault:
           store <- ZIO.service[QueueStore]
           _     <- store.schedule(scheduled(QueueName("schedule-next"), MessageKey("k1"), "m1", 5.seconds))
           moved <- store.moveDue(limit)
-        yield assertTrue(moved.nextDueIn.exists(_ <= 5.seconds), moved.failed == 0)
+        yield assertTrue(moved.nextDueIn.exists(_ <= 5.seconds + rounding), moved.failed == 0)
       },
     ) @@ RedisSpecSupport.Aspect.init @@ SpecHelper.Aspect.common
   }.provideSomeShared[Scope](RedisSpecSupport.config(2.seconds) >+> RedisSpecSupport.layer)
 
   private object Support {
+
+    /**
+     * How much later than its delay a due time may read: the store clock is rounded up when a due time is
+     * recorded and down when a move measures what is left, never the other way round.
+     */
+    val rounding: Duration = 1.milli
 
     /** The most entries one move takes per partition in these tests, unless a test is about the limit. */
     val limit: Int = 100
