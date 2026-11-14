@@ -1,7 +1,7 @@
 package homelab.keyedqueue.domain.service.usecase.queue
 
 
-import homelab.keyedqueue.domain.model.queue.Claim
+import homelab.keyedqueue.domain.model.queue.{ Claim, Settlement }
 import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
 import homelab.keyedqueue.domain.request.queue.SettleRequest
 import homelab.keyedqueue.domain.request.queue.SettleRequest.MessageOutcome
@@ -33,6 +33,46 @@ object SettleUseCaseSpec extends ZIOSpecDefault:
         _       <- TestClock.adjust(1.second)
         _       <- MaintenanceSpecSupport.done(tick, "the tick when the backoff ends")
       yield assertTrue(early.isEmpty)
+    },
+    test("the tick is asked for the backoff less the store's reply time, so a slow reply does not make it late") {
+      // The store records, then takes 500 ms to answer: the backoff started when it recorded, so the tick must come
+      // 5 s after the call, not 5 s after the reply.
+      for
+        fixture <- setUp
+        _       <- fixture.timer.run.fork
+        boot    <- fixture.timer.tick.fork
+        _       <- MaintenanceSpecSupport.done(boot, "the boot tick")
+        release <- Promise.make[Nothing, Unit]
+        _       <- fixture.store.holdWritesUntil(release)
+        call    <- fixture.settle(nack(5.seconds)).fork
+        _       <- settledWithin(fixture.store, MaintenanceSpecSupport.patience)
+        _       <- TestClock.adjust(500.millis)
+        _       <- release.succeed(())
+        _       <- MaintenanceSpecSupport.done(call, "the settle")
+        tick    <- fixture.timer.tick.fork
+        _       <- TestClock.adjust(4500.millis)
+        _       <- MaintenanceSpecSupport.done(tick, "the tick at 5 s from the call")
+      yield assertCompletes
+    },
+    test("a settle cancelled after the store recorded its backoff still asks for the tick") {
+      // The store holds the call open just after writing: a cancellation then lands between the write and the tick
+      // request. Split there, the key would wait for the 1 h backstop while this instance is healthy.
+      for
+        fixture <- setUp
+        _       <- fixture.timer.run.fork
+        boot    <- fixture.timer.tick.fork
+        _       <- MaintenanceSpecSupport.done(boot, "the boot tick")
+        release <- Promise.make[Nothing, Unit]
+        _       <- fixture.store.holdWritesUntil(release)
+        call    <- fixture.settle(nack(5.seconds)).fork
+        _       <- settledWithin(fixture.store, MaintenanceSpecSupport.patience)
+        cancel  <- call.interrupt.fork
+        _       <- release.succeed(())
+        _       <- MaintenanceSpecSupport.done(cancel, "the cancellation")
+        tick    <- fixture.timer.tick.fork
+        _       <- TestClock.adjust(5.seconds)
+        _       <- MaintenanceSpecSupport.done(tick, "the tick for the recorded backoff")
+      yield assertCompletes
     },
     test("a settle with no backoff asks for no tick") {
       for
@@ -73,6 +113,29 @@ object SettleUseCaseSpec extends ZIOSpecDefault:
         timer <- DueTimer.make(DueTimer.Config(Duration.Zero, Duration.Zero, 1.hour))
         settle = SettleUseCase(store, QueueInputValidation(UseCaseSpecSupport.limits), timer)
       yield Fixture(settle, store, timer)
+
+    /**
+     * Wait until the store has recorded a settlement, or fail.
+     *
+     * @param store the store
+     * @param left how many more yields the wait may take
+     * @return noop once a settlement is recorded; fails when none is within the patience
+     */
+    def settledWithin(store: InMemoryQueueStore, left: Int): IO[String, Unit] =
+      store.settled.flatMap(settledOr(store, left))
+
+    /**
+     * What a look at the store found, and what follows.
+     *
+     * @param store the store
+     * @param left how many more yields the wait may take
+     * @param settled the settlements recorded so far
+     * @return noop when one is; another look after a yield; or a failure when the patience is gone
+     */
+    def settledOr(store: InMemoryQueueStore, left: Int)(settled: Chunk[Settlement]): IO[String, Unit] =
+      if settled.nonEmpty then ZIO.unit
+      else if left > 0 then ZIO.yieldNow *> settledWithin(store, left - 1)
+      else ZIO.fail("the settle was not recorded")
 
     /**
      * A settle that reports one message failed, with a backoff.

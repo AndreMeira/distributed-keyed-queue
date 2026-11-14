@@ -122,9 +122,11 @@ of other keys, ids that never existed, and ids the same claim already settled.
 **C5. A settle may be retried safely.** Sending it twice has the same effect as sending it once.
 
 **C6. A nack may ask the key to wait before anyone works it again.** The wait applies to the *key*, not to
-one message. Where several nacks in a claim ask for different waits, the longest applies. The key is claimable
-again within about 10 ms of the wait's end (one backoff quantum plus the slack) while the instance that took the
-nack runs, and within the backoff backstop (5 s by default) if that instance dies.
+one message. Where several nacks in a claim ask for different waits, the longest applies. The **backoff** ends
+within about 10 ms of the wait's end (one backoff quantum plus the slack) while the instance that took the nack
+runs, and within the backoff backstop (5 s by default) if that instance dies. The key is then claimable at once,
+**unless a claim still holds it**: after a partial nack, the claim lives on while it owes other messages, and the
+key becomes claimable when that claim is settled or its lease lapses (E1 comes first).
 
 **C7. One outstanding `Dequeue` per consumer is the intended shape**, though it costs less to ignore than
 it used to. A consumer parallelises by processing claims concurrently, not by polling concurrently: claim a

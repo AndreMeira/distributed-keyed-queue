@@ -25,7 +25,7 @@ import java.time.Instant
  * @param moves the replies the next moves answer with, in order; a move with none left answers that nothing
  *              moved and nothing is scheduled
  * @param moveCalls how many moves have been asked for
- * @param held when set, a schedule waits on this after recording, until a test releases it
+ * @param held when set, a schedule or a settle waits on this after recording, until a test releases it
  * @param releases the replies the next releases of ended backoffs answer with, in order; one with none left answers
  *                 that nothing ended and nothing is pending
  * @param releaseCalls how many releases have been asked for
@@ -83,16 +83,16 @@ final class InMemoryQueueStore(
   def moved: UIO[Int] = moveCalls.get
 
   /**
-   * Make every later schedule wait, once recorded, until `release` completes: the moment a caller can be cancelled
-   * after the store has written and before it has answered.
+   * Make every later schedule and settle wait, once recorded, until `release` completes: the moment a caller can be
+   * cancelled after the store has written and before it has answered, or a slow reply.
    *
-   * @param release what the held schedules wait for
+   * @param release what the held writes wait for
    * @return noop
    */
-  def holdSchedulesUntil(release: Promise[Nothing, Unit]): UIO[Unit] = held.set(Some(release))
+  def holdWritesUntil(release: Promise[Nothing, Unit]): UIO[Unit] = held.set(Some(release))
 
   /**
-   * Record the schedule, wait if schedules are held, and answer that it was recorded with its own delay.
+   * Record the schedule, wait if writes are held, and answer that it was recorded with its own delay.
    *
    * @param scheduled what was asked for
    * @return recorded, due in its delay
@@ -142,8 +142,18 @@ final class InMemoryQueueStore(
 
   override def enqueue(submission: Submission): IO[ApplicationError.AdapterError, Long] = ZIO.succeed(1L)
 
+  /**
+   * Record the settlement, wait if writes are held, and answer that it applied.
+   *
+   * @param settlement what was asked for
+   * @return applied
+   */
   override def settle(settlement: Settlement): IO[ApplicationError.AdapterError, Boolean] =
-    settles.update(_ :+ settlement).as(true)
+    for
+      _       <- settles.update(_ :+ settlement)
+      release <- held.get
+      _       <- waitFor(release)
+    yield true
 
   override def renew(claims: Chunk[Claim]): IO[ApplicationError.AdapterError, (Instant, Chunk[Claim])] =
     ZIO.succeed(Instant.EPOCH -> Chunk.empty)

@@ -120,7 +120,9 @@ them on time:
 | `backoff-backstop` | 5 s | the longest the timer waits with no request |
 | `backoff-limit` | 100 | the most backoffs one call releases per partition |
 
-A backoff ends within about 10 ms while the instance that took the nack runs, within the backstop if it dies.
+A backoff ends within about 10 ms while the instance that took the nack runs, within the backstop if it dies. Its
+key is then claimable at once, unless a claim still holds it (a partial nack leaves the claim alive while it owes
+other messages): the key then becomes claimable when that claim is settled or reclaimed, never while it lives (C6).
 
 ## Observability
 

@@ -66,7 +66,7 @@ object QueueScheduleUseCaseSpec extends ZIOSpecDefault:
         boot    <- fixture.timer.tick.fork
         _       <- MaintenanceSpecSupport.done(boot, "the boot tick")
         release <- Promise.make[Nothing, Unit]
-        _       <- fixture.store.holdSchedulesUntil(release)
+        _       <- fixture.store.holdWritesUntil(release)
         call    <- fixture.schedule(ScheduleRequest("jobs", Helper.requestMessage("k1"), 10.seconds)).fork
         _       <- recordedWithin(fixture.store, MaintenanceSpecSupport.patience)
         _       <- TestClock.adjust(500.millis)
@@ -86,7 +86,7 @@ object QueueScheduleUseCaseSpec extends ZIOSpecDefault:
         boot    <- fixture.timer.tick.fork
         _       <- MaintenanceSpecSupport.done(boot, "the boot tick")
         release <- Promise.make[Nothing, Unit]
-        _       <- fixture.store.holdSchedulesUntil(release)
+        _       <- fixture.store.holdWritesUntil(release)
         call    <- fixture.schedule(ScheduleRequest("jobs", Helper.requestMessage("k1"), 10.seconds)).fork
         _       <- recordedWithin(fixture.store, MaintenanceSpecSupport.patience)
         cancel  <- call.interrupt.fork
