@@ -99,10 +99,33 @@ the extra passes find nothing.
 
 Each with a `DKQ_*` override (`DKQ_MAX_SCHEDULE_AHEAD`, …). The e2e stacks set the backstop to 5 s.
 
+## Backoffs: the same machinery for a nack's wait
+
+A nack with a backoff holds back its **key** (C6). The held-back keys wait in the partition's `{W}:delayed`
+(schema `v4`), members `<byte length of queue>:<queue><key>`, and the same machinery as for schedules releases
+them on time:
+
+- **`SettleUseCase`** asks the backoffs timer for a tick at the wait's end, less the store call's round trip, in
+  one uninterruptible step with the settle.
+- **`BackoffMover`**, on every tick, calls `QueueStore.releaseDue`, which runs **`backoff.lua`** on every partition
+  concurrently: each elapsed backoff is removed, and its key goes back into `ready` unless a claim still holds it
+  (the claim's end puts it back then). One wake per queue; the answer carries the next end.
+- **`DueTimers(schedules, backoffs)`**: two timers, one per mover, bundled so the two can sit in the environment.
+- **The watchdog** only reclaims lapsed claims now.
+
+| key | default | meaning |
+|---|---|---|
+| `backoff-quantum` | 5 ms | the window a backoff tick request is rounded up to |
+| `backoff-slack` | 5 ms | how much earlier a request must be to move the timer |
+| `backoff-backstop` | 5 s | the longest the timer waits with no request |
+| `backoff-limit` | 100 | the most backoffs one call releases per partition |
+
+A backoff ends within about 10 ms while the instance that took the nack runs, within the backstop if it dies.
+
 ## Observability
 
-Each call the mover makes to the store is measured as `ScheduleMover.move` (count, latency, failures), and
-`RedisQueueStore.schedule` / `moveDue` are traced. What a pass moved and discarded is in its log line. Nothing
+Each call the movers make to the store is measured, as `ScheduleMover.move` and `BackoffMover.release` (count,
+latency, failures), and `RedisQueueStore.schedule`, `moveDue` and `releaseDue` are traced. What a pass moved and discarded is in its log line. Nothing
 finer is recorded: per-message counts or a lateness histogram would take a metrics system of their own
 ([`observability.md`](observability.md)).
 
@@ -114,8 +137,7 @@ durable as the store's persistence: with persistence off, a restart of the store
 
 ## Not built
 
-Cancelling a schedule, and the per-partition mover for nack backoffs (`{p}:delayed`, which would need a schema
-bump); nacks keep the watchdog.
+Cancelling a schedule.
 
 **One partition stalled delays the next tick for all of them.** The partitions are moved concurrently, so a healthy
 partition's due messages are moved at once, but a call answers only when every partition has, and the mover asks

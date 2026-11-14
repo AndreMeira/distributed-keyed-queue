@@ -106,16 +106,29 @@ trait QueueStore:
   def leaseTtl: Duration
 
   /**
-   * Repair what a death or a backoff left behind: revoke lapsed claims, and release keys whose retry delay
-   * has elapsed.
+   * Repair what a death left behind: revoke lapsed claims, so their keys are claimable again.
    *
    * Idempotent, so every instance can run it without coordination.
    *
    * @param queue the queue to sweep
-   * @param limit the most entries to handle per sweep, per kind
+   * @param limit the most entries to handle per sweep
    * @return what it repaired, for logging and metrics; aborts with an `AdapterError` if the store fails
    */
   def sweep(queue: QueueName, limit: Int): IO[ApplicationError.AdapterError, QueueStore.Swept]
+
+  /**
+   * Make claimable again every key whose backoff has ended: a nack's wait holds back its key (C6), and this
+   * puts it back.
+   *
+   * Idempotent, so every instance can run it without coordination. A key still held by its claim is not made
+   * claimable here: the claim's end does it, since its backoff is over.
+   *
+   * @param limit the most backoffs to release per part of the store in one call; a full call says so, and is
+   *              repeated
+   * @return how many were released, when the next backoff ends, and how many parts could not be reached; aborts
+   *         with an `AdapterError` only when no part could be
+   */
+  def releaseDue(limit: Int): IO[ApplicationError.AdapterError, QueueStore.Released]
 
 
 object QueueStore:
@@ -145,9 +158,19 @@ object QueueStore:
    * What one sweep repaired.
    *
    * @param reclaimed keys whose holder went silent mid-handler
-   * @param released keys whose retry backoff elapsed
    */
-  final case class Swept(reclaimed: Chunk[MessageKey], released: Chunk[MessageKey]):
+  final case class Swept(reclaimed: Chunk[MessageKey]):
 
     /** True when nothing needed repairing, which is the normal case and not worth logging. */
-    def isEmpty: Boolean = reclaimed.isEmpty && released.isEmpty
+    def isEmpty: Boolean = reclaimed.isEmpty
+
+  /**
+   * What one release of ended backoffs did.
+   *
+   * @param released how many held-back keys had their backoff end
+   * @param full whether a part of the store hit the limit, so more may have ended right now
+   * @param nextDueIn how long until the next backoff ends, on the store's clock; absent when none is pending
+   * @param failed how many parts of the store could not be reached: the rest were still released, and their next
+   *               end is still reported
+   */
+  final case class Released(released: Int, full: Boolean, nextDueIn: Option[Duration], failed: Int)

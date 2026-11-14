@@ -10,31 +10,34 @@ import zio.*
 /** Wiring for maintenance. */
 object Module:
 
-  /** The repair loops and the schedule mover with its timer, built and ready for [[init]] to start. */
-  type Provided = Watchdog & LockCleanup & DueTimer & ScheduleMover
+  /** The repair loops, and the two movers with their timers, built and ready for [[init]] to start. */
+  type Provided = Watchdog & LockCleanup & DueTimers & ScheduleMover & BackoffMover
 
   /** The stores they work on, and the intervals they run on. */
   type Required =
-    Monitor & QueueStore & Watchdog.Config & LockStore & LockCleanup.Config & DueTimer.Config & ScheduleMover.Config
+    Monitor & QueueStore & Watchdog.Config & LockStore & LockCleanup.Config & DueTimers.Config & ScheduleMover.Config & BackoffMover.Config
 
   /**
-   * Start the repair loops, the timer and the schedule mover, for the life of the caller's scope.
+   * Start the repair loops, the two timers and the two movers, for the life of the caller's scope.
    *
-   * Until this has run, nothing reclaims an abandoned claim, removes a lock hold left by a dead holder, or
-   * moves a scheduled message that has fallen due.
+   * Until this has run, nothing reclaims an abandoned claim, removes a lock hold left by a dead holder, moves a
+   * scheduled message that has fallen due, or releases a key whose backoff has ended.
    *
    * @return noop once every loop is running
    */
-  def init: ZIO[Watchdog & LockCleanup & DueTimer & ScheduleMover & Scope, Nothing, Unit] =
+  def init: ZIO[Watchdog & LockCleanup & DueTimers & ScheduleMover & BackoffMover & Scope, Nothing, Unit] =
     for
-      watchdog <- ZIO.service[Watchdog]
-      cleanup  <- ZIO.service[LockCleanup]
-      timer    <- ZIO.service[DueTimer]
-      mover    <- ZIO.service[ScheduleMover]
-      _        <- watchdog.run.forkScoped.interruptible
-      _        <- cleanup.run.forkScoped.interruptible
-      _        <- timer.run.forkScoped.interruptible
-      _        <- mover.run.forkScoped.interruptible
+      watchdog  <- ZIO.service[Watchdog]
+      cleanup   <- ZIO.service[LockCleanup]
+      timers    <- ZIO.service[DueTimers]
+      schedules <- ZIO.service[ScheduleMover]
+      backoffs  <- ZIO.service[BackoffMover]
+      _         <- watchdog.run.forkScoped.interruptible
+      _         <- cleanup.run.forkScoped.interruptible
+      _         <- timers.schedules.run.forkScoped.interruptible
+      _         <- timers.backoffs.run.forkScoped.interruptible
+      _         <- schedules.run.forkScoped.interruptible
+      _         <- backoffs.run.forkScoped.interruptible
     yield ()
 
   /**
@@ -42,23 +45,38 @@ object Module:
    *
    * @return the layer
    */
-  lazy val layer: ZLayer[Required, Nothing, Provided] = watchdog ++ lockCleanup ++ (dueTimer >+> scheduleMover)
+  lazy val layer: ZLayer[Required, Nothing, Provided] =
+    watchdog ++ lockCleanup ++ (dueTimers >+> (scheduleMover ++ backoffMover))
 
   /**
-   * The timer that wakes the schedule mover, built but not firing.
+   * The two timers, one per mover, built but not firing.
    *
    * @return the layer
    */
-  val dueTimer: ZLayer[DueTimer.Config, Nothing, DueTimer] =
-    ZLayer(ZIO.serviceWithZIO[DueTimer.Config](DueTimer.make))
+  val dueTimers: ZLayer[DueTimers.Config, Nothing, DueTimers] = ZLayer:
+    for
+      config    <- ZIO.service[DueTimers.Config]
+      schedules <- DueTimer.make(config.schedules)
+      backoffs  <- DueTimer.make(config.backoffs)
+    yield DueTimers(schedules, backoffs)
 
   /**
-   * The schedule mover, built but not running.
+   * The schedule mover, on the schedule timer, built but not running.
    *
    * @return the layer
    */
-  val scheduleMover: ZLayer[Monitor & QueueStore & DueTimer & ScheduleMover.Config, Nothing, ScheduleMover] =
-    ZLayer.fromFunction(ScheduleMover.apply)
+  val scheduleMover: ZLayer[Monitor & QueueStore & DueTimers & ScheduleMover.Config, Nothing, ScheduleMover] =
+    ZLayer.fromFunction: (monitor: Monitor, store: QueueStore, timers: DueTimers, config: ScheduleMover.Config) =>
+      ScheduleMover(monitor, store, timers.schedules, config)
+
+  /**
+   * The backoff mover, on the backoff timer, built but not running.
+   *
+   * @return the layer
+   */
+  val backoffMover: ZLayer[Monitor & QueueStore & DueTimers & BackoffMover.Config, Nothing, BackoffMover] =
+    ZLayer.fromFunction: (monitor: Monitor, store: QueueStore, timers: DueTimers, config: BackoffMover.Config) =>
+      BackoffMover(monitor, store, timers.backoffs, config)
 
   /**
    * The watchdog, built but not running.

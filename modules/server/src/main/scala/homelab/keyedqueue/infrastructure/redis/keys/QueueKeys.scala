@@ -6,7 +6,7 @@ import homelab.keyedqueue.domain.types.*
 /**
  * Every Redis key one queue owns, derived from its name and the partition it falls in.
  *
- * The hash tag is the partition's, and the schema version follows it — `{p:3}:v3:q:jobs:ready`. So every
+ * The hash tag is the partition's, and the schema version follows it — `{p:3}:v4:q:jobs:ready`. So every
  * key a script touches hashes into one slot, including the wake stream the partition shares between its
  * queues, and a schema's leftovers stay findable by pattern.
  *
@@ -48,8 +48,11 @@ final case class QueueKeys(tag: KeyLayout.Tag, queue: QueueName):
    */
   val wake: RedisKey = KeyLayout.wakeStreamKey(tag)
 
-  /** key -> when a failed message may be retried. */
-  val delayed: RedisKey = RedisKey(s"$prefix:delayed")
+  /**
+   * The partition's held-back keys, shared by every queue in it like [[wake]]: `<len(queue)>:<queue><key>` -> when
+   * that key may be worked again. A nack's wait holds back its key; backoff.lua puts it back.
+   */
+  val delayed: RedisKey = KeyLayout.delayedKey(tag)
 
   /**
    * That key's message ids, in producer order, until they are acknowledged.

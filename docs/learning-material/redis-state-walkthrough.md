@@ -2,7 +2,7 @@
 title: "Every request, and what it does to Redis"
 type: learning-material
 status: current
-updated: 2026-09-26
+updated: 2026-11-14
 tags: [redis, walkthrough, keys, lua, claims, debugging]
 ---
 
@@ -14,8 +14,8 @@ what the service promises is [`../architecture/guarantees.md`](../architecture/g
 the middle: the mechanics in motion.
 
 Throughout: queue `orders`, key `k1`, worker `w1`. Names are shortened — every one really carries the
-`{p:0}:v3:q:orders` prefix — partition 0, which on a single server is the only one (a cluster spreads names
-across sixteen), and `v3` the schema version. Empty structures are omitted.
+`{p:0}:v4:q:orders` prefix — partition 0, which on a single server is the only one (a cluster spreads names
+across sixteen), and `v4` the schema version. Empty structures are omitted.
 
 ## Where we start
 
@@ -130,8 +130,9 @@ delayed      {k1: <now+wait>}
 ready        {}                       NOT added: the key waits
 ```
 
-The key is accounted for by `delayed` alone until a sweep finds the wait elapsed — which is also what stops
-a producer adding it back to `ready` in the meantime.
+The key is accounted for by the partition's `delayed` alone, its member naming queue and key, until the backoff
+mover releases it when the wait ends — which is also what stops a producer adding it back to `ready` in the
+meantime.
 
 **Naming something the claim does not own** — another key's message, or one already settled — changes
 nothing and is not an error. **Repeating a settle** is the same: the second finds nothing owed.
@@ -177,7 +178,7 @@ payloads:k1  unchanged
 attempts     unchanged                a reclaim IS a delivery that did not finish, and it shows
 ```
 
-**Elapsed backoff** — `delayed` says the wait is over:
+**Elapsed backoff** — `delayed` says the wait is over (the backoff mover's `backoff.lua`, not the watchdog's):
 
 ```
 delayed      {}

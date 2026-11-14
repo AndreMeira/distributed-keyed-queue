@@ -185,7 +185,10 @@ object DequeueHandBackSpec extends ZIOSpecDefault:
         ZIO.succeed(Instant.EPOCH -> Chunk.empty)
 
       override def sweep(queue: QueueName, limit: Int): IO[ApplicationError.AdapterError, QueueStore.Swept] =
-        ZIO.succeed(QueueStore.Swept(Chunk.empty, Chunk.empty))
+        ZIO.succeed(QueueStore.Swept(Chunk.empty))
+
+      override def releaseDue(limit: Int): IO[ApplicationError.AdapterError, QueueStore.Released] =
+        ZIO.succeed(QueueStore.Released(0, full = false, nextDueIn = None, failed = 0))
 
       override def schedule(scheduled: ScheduledSubmission): IO[ApplicationError.AdapterError, QueueStore.Scheduled] =
         ZIO.succeed(QueueStore.Scheduled(scheduled = true, dueIn = scheduled.delay))

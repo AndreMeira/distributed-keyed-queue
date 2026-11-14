@@ -38,6 +38,10 @@ import zio.*
  * @param scheduleSlack how much earlier a request must be to move the schedule timer
  * @param scheduleBackstop the longest the schedule timer waits with no request
  * @param scheduleLimit the most scheduled messages one call moves per partition
+ * @param backoffQuantum the window a request for a backoff tick is rounded up to
+ * @param backoffSlack how much earlier a request must be to move the backoff timer
+ * @param backoffBackstop the longest the backoff timer waits with no request
+ * @param backoffLimit the most ended backoffs one call releases per partition
  */
 final case class QueueConfig(
   redisUrl: String,
@@ -57,6 +61,10 @@ final case class QueueConfig(
   scheduleSlack: Duration,
   scheduleBackstop: Duration,
   scheduleLimit: Int,
+  backoffQuantum: Duration,
+  backoffSlack: Duration,
+  backoffBackstop: Duration,
+  backoffLimit: Int,
 ) derives ConfigReader
 
 
@@ -117,6 +125,10 @@ object QueueConfig:
       Option.when(config.scheduleSlack.toMillis < 0)("schedule-slack must not be negative"),
       Option.when(config.scheduleBackstop.toMillis <= 0)("schedule-backstop must be greater than zero"),
       Option.when(config.scheduleLimit <= 0)("schedule-limit must be greater than zero"),
+      Option.when(config.backoffQuantum.toMillis < 0)("backoff-quantum must not be negative"),
+      Option.when(config.backoffSlack.toMillis < 0)("backoff-slack must not be negative"),
+      Option.when(config.backoffBackstop.toMillis <= 0)("backoff-backstop must be greater than zero"),
+      Option.when(config.backoffLimit <= 0)("backoff-limit must be greater than zero"),
     ).flatten
     if problems.isEmpty then ZIO.succeed(config)
     else ZIO.fail(Misconfigured(s"config/queue.conf is invalid: ${problems.mkString("; ")}"))

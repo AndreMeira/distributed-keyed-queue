@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.service.usecase
 
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.persistence.LockStore
-import homelab.keyedqueue.domain.service.maintenance.{ DueTimer, Watchdog }
+import homelab.keyedqueue.domain.service.maintenance.{ DueTimers, Watchdog }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.readiness.{ LockReadiness, QueueReadiness }
 import homelab.keyedqueue.domain.service.usecase.lock.*
@@ -23,7 +23,7 @@ import zio.ZLayer
 object Module:
   type Provided = QueueUseCases & LockUseCases
   type Required =
-    QueueStore & Watchdog & DueTimer & QueueInputValidation & QueueReadiness & LockStore & LockInputValidation & LockReadiness
+    QueueStore & Watchdog & DueTimers & QueueInputValidation & QueueReadiness & LockStore & LockInputValidation & LockReadiness
 
   lazy val layer: ZLayer[Required, ApplicationError, Provided] =
     queueUseCases ++ lockUseCases
@@ -33,14 +33,14 @@ object Module:
    *
    * @return the layer
    */
-  val queueUseCases: ZLayer[QueueStore & Watchdog & DueTimer & QueueInputValidation & QueueReadiness, Nothing, QueueUseCases] =
-    ZLayer.fromFunction: (store: QueueStore, watchdog: Watchdog, timer: DueTimer, validation: QueueInputValidation, readiness: QueueReadiness) =>
+  val queueUseCases: ZLayer[QueueStore & Watchdog & DueTimers & QueueInputValidation & QueueReadiness, Nothing, QueueUseCases] =
+    ZLayer.fromFunction: (store: QueueStore, watchdog: Watchdog, timers: DueTimers, validation: QueueInputValidation, readiness: QueueReadiness) =>
       QueueUseCases(
         enqueue = EnqueueUseCase(store, watchdog, validation),
         dequeue = DequeueUseCase(store, watchdog, validation, readiness),
-        settle = SettleUseCase(store, validation),
+        settle = SettleUseCase(store, validation, timers.backoffs),
         heartbeat = HeartbeatUseCase(store),
-        schedule = QueueScheduleUseCase(store, watchdog, validation, timer),
+        schedule = QueueScheduleUseCase(store, watchdog, validation, timers.schedules),
       )
 
   /**

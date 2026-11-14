@@ -2,7 +2,8 @@
 --
 -- KEYS[1] ready      zset  key -> when it became claimable (unix millis)
 -- KEYS[2] claimed    zset  key -> lease deadline; a key in here is being worked
--- KEYS[3] delayed    zset  key -> when it may be worked again; a key in here is waiting out a backoff
+-- KEYS[3] delayed    zset  the partition's: <len(queue)>:<queue><key> -> when that key may be worked again; a key
+--                    in here is waiting out a backoff
 -- KEYS[4] msgs       list  this key's message IDS, oldest first
 -- KEYS[5] payloads   hash  message id -> the message itself
 -- KEYS[6] wake       stream  one entry per key made claimable
@@ -28,6 +29,10 @@ local ready, claimed, delayed, msgs, payloads, wake, sequence =
   KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7]
 local key, id, payload, queue = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
 
+-- `delayed` is shared by every queue of the partition, so a key is named in it with its queue, length-prefixed
+-- so no character of a queue name can pass for a separator (see backoff.lua).
+local held = #queue .. ':' .. queue .. key
+
 -- HSETNX rather than HSET, and the whole append hangs off it: an id already queued for this key is the same
 -- message arriving twice — a producer retrying an at-least-once send — and enqueuing it again would deliver
 -- it twice. Accepted silently rather than refused, because from the producer's side the message *is* queued,
@@ -41,7 +46,7 @@ if redis.call('HSETNX', payloads, id, payload) == 1 then
 
   if redis.call('ZSCORE', ready, key) == false
     and redis.call('ZSCORE', claimed, key) == false
-    and redis.call('ZSCORE', delayed, key) == false then
+    and redis.call('ZSCORE', delayed, held) == false then
     redis.call('ZADD', ready, redis.call('INCR', sequence), key)
 
     -- Only on the transition, and in the same call that made it claimable: a consumer woken by this entry

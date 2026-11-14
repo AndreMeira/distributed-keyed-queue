@@ -2,7 +2,7 @@
 title: "Redis streams, and driving them from Lettuce"
 type: learning-material
 status: current
-updated: 2026-09-05
+updated: 2026-11-14
 tags: [redis, valkey, streams, lettuce, xread, xadd]
 ---
 
@@ -140,7 +140,7 @@ the timeout of every listening connection, and why each stream reader is given o
 
 `RedisAdvancedClusterCommands` accepts the same calls, but a multi-stream `XREAD` across different slots
 fails with `CROSSSLOT`. Group streams by slot — and remember that keys sharing a hash tag share a slot, so
-`{p:0}:v3:wake` is in the same slot as `{p:0}:v3:q:orders:ready` and can be written by the same Lua script.
+`{p:0}:v4:wake` is in the same slot as `{p:0}:v4:q:orders:ready` and can be written by the same Lua script.
 
 That grouping is what `Connection` does — it is the piece that knows whether the store is a cluster — and
 `WakeConsumer` runs one reader per partition connection, collapsing to a single one on a standalone

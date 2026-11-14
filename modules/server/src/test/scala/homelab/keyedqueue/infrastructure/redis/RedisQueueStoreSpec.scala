@@ -225,8 +225,8 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
       },
       test("a claim reclaimed while a nack's backoff is pending queues its key once, not twice") {
         // A partial nack can set a backoff and leave the claim alive. If that claim then lapses, the reclaim
-        // and the due-sweep would each push the key onto `ready` — two entries, two claimers, and one of them
-        // working for nothing. The fence would stop it corrupting anything; it would still be waste.
+        // and the release of the backoff would each push the key onto `ready` — two entries, two claimers, and
+        // one of them working for nothing. The fence would stop it corrupting anything; it would still be waste.
         for
           worker <- ZIO.service[QueueStore]
           redis  <- ZIO.serviceWithZIO[Connection](_.provide(ZIO.service[Connection.Commands]))
@@ -237,16 +237,17 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           batch   = held.get
           // Nack the first with a backoff; the second stays owed, so the claim lives on.
           _      <- worker.settle(Helper.settlement(batch.claim, NonEmptyChunk(batch.messages(0).id -> Verdict.Failed), 1.second))
-          // Let the lease lapse and the backoff fall due, then sweep both in one pass.
+          // Let the lease lapse and the backoff fall due, then reclaim and release.
           _      <- ZIO.sleep(leaseTtl + 1.second)
           _      <- worker.sweep(queue, 100)
+          _      <- worker.releaseDue(100)
           ready  <- ZIO.fromCompletionStage(redis.zcard(layout.queue(queue).ready)).orDie
         yield assertTrue(ready == 1L)
       },
       test("a backoff that falls due while its claim lives does not hand the key to anyone else") {
         // A partial nack sets a backoff and leaves the claim alive, and the backoff ends while the holder is
         // still working the rest of the batch. Publishing the key then would let a second claim take it from
-        // under the first: two workers on one key. The sweep must leave it to the claim's end.
+        // under the first: two workers on one key. The release must leave it to the claim's end.
         for
           worker  <- ZIO.service[QueueStore]
           queue    = QueueName("backoff-while-held")
@@ -257,21 +258,21 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
           // Nack the first with a short backoff; the second stays owed, so the claim lives on.
           _       <- worker.settle(Helper.settlement(batch.claim, NonEmptyChunk(batch.messages(0).id -> Verdict.Failed), 200.millis))
           _       <- ZIO.sleep(500.millis) // the backoff is over, the lease is not
-          swept   <- worker.sweep(queue, 100)
+          freed   <- worker.releaseDue(100)
           blocked <- worker.attemptClaim(queue, 1)
           // The holder settles what it still owed; the claim ends, and the key comes back at once.
           _       <- worker.settle(Helper.settlement(batch.claim, NonEmptyChunk(batch.messages(1).id -> Verdict.Done)))
           after   <- worker.attemptClaim(queue, 1)
         yield assertTrue(
           blocked.isEmpty,
-          swept.released.map(_.toString) == Chunk("k1"), // its backoff is over, though the key stays with its claim
+          freed.released == 1, // its backoff is over, though the key stays with its claim
           after.map(_.messages.map(_.id).toChunk) == Some(Chunk(batch.messages(0).id)),
         )
       },
-      test("a sweep names what it reclaimed and what it released") {
-        // The one port method whose answer nothing else asserts. Two keys, repaired for different reasons:
-        // k1's holder went silent and its lease lapsed, k2 was nacked with a backoff that has since fallen
-        // due. Both come back claimable, and the sweep says which was which.
+      test("a sweep names what it reclaimed, and a release counts what it released") {
+        // Two keys, repaired for different reasons: k1's holder went silent and its lease lapsed, k2 was nacked
+        // with a backoff that has since fallen due. The sweep reclaims the first and the release frees the second;
+        // both come back claimable.
         for
           worker  <- ZIO.service[QueueStore]
           queue    = QueueName("swept")
@@ -285,10 +286,11 @@ object RedisQueueStoreSpec extends ZIOSpecDefault:
                      )
           _       <- ZIO.sleep(leaseTtl + 500.millis)
           swept   <- worker.sweep(queue, 100)
+          freed   <- worker.releaseDue(100)
           claimed <- worker.attemptClaim(queue, 1)
         yield assertTrue(
           swept.reclaimed.map(_.toString) == Chunk("k1"),
-          swept.released.map(_.toString) == Chunk("k2"),
+          freed.released == 1,
           claimed.isDefined, // both are claimable again, whichever comes first
         )
       },

@@ -2,7 +2,7 @@
 title: "How the lock works — structures, state transitions, and the code that drives them"
 type: architecture
 status: current
-updated: 2026-09-16
+updated: 2026-11-14
 tags: [lock, redis, lua, tickets, fairness, fencing, readiness, wake, architecture]
 ---
 
@@ -18,7 +18,7 @@ in any instance.
 
 ## The five structures, and what each decides
 
-Everything for one partition, under `{p:<partition>}:v3:l` — one set of structures shared by every lock in
+Everything for one partition, under `{p:<partition>}:v4:l` — one set of structures shared by every lock in
 it, with the lock's name as a member or field. `{L}` below is that prefix.
 
 | structure | type | decides |
@@ -29,7 +29,7 @@ it, with the lock's name as a member or field. `{L}` below is that prefix.
 | `{L}:waiters:<name>` | list of `id:deadline` | **the order.** Arrival order; head is next |
 | `{L}:waiting` | zset, `name -> latest ticket deadline` | **which waiter lists exist**, so the trim can find abandoned ones without scanning |
 
-The wake stream is not the lock's own: it is the partition's `{p:<partition>}:v3:wake`, shared with the
+The wake stream is not the lock's own: it is the partition's `{p:<partition>}:v4:wake`, shared with the
 queue, with each entry saying which kind it is ([`redis-cluster.md`](redis-cluster.md)).
 
 ## The three states

@@ -65,6 +65,10 @@ object SpecHelper {
         scheduleSlack = 50.millis,
         scheduleBackstop = 60.seconds,
         scheduleLimit = 100,
+        backoffQuantum = 5.millis,
+        backoffSlack = 5.millis,
+        backoffBackstop = 5.seconds,
+        backoffLimit = 100,
       )
 
     /**
