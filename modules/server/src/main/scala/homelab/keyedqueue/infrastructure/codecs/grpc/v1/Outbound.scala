@@ -45,8 +45,10 @@ object Outbound:
   private given Transformer[Option[Claim.Ref], String] = _.getOrElse(Claim.Ref(""))
 
   // Likewise for the lease: no claim, no deadline.
-  private given Transformer[Option[Instant], Option[Timestamp]] =
-    _.map(instant => Timestamp(instant.getEpochSecond, instant.getNano))
+  private given Transformer[Option[Instant], Option[Timestamp]] = {
+    case None          => None
+    case Some(instant) => Some(instant.transformInto[Timestamp])
+  }
 
   private given Transformer[Claim.Ref, String] = identity(_)
 
@@ -60,7 +62,7 @@ object Outbound:
     duration => ProtoDuration(seconds = duration.getSeconds, nanos = duration.getNano)
 
   private given Transformer[Instant, Option[Timestamp]] =
-    instant => Some(Timestamp(seconds = instant.getEpochSecond, nanos = instant.getNano))
+    instant => Some(instant.transformInto[Timestamp])
 
   private given Transformer[Applied, v1.Applied] =
     case Applied.Ok    => v1.Applied.APPLIED_OK

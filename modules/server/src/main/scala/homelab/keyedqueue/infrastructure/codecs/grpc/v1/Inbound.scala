@@ -4,6 +4,7 @@ package homelab.keyedqueue.infrastructure.codecs.grpc.v1
 import com.google.protobuf.ByteString
 import com.google.protobuf.duration.Duration as ProtoDuration
 import com.google.protobuf.timestamp.Timestamp
+import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.model.queue.Message
 import homelab.keyedqueue.domain.model.queue.Settlement.Verdict
 import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, HeartbeatRequest, SettleRequest }
@@ -27,6 +28,24 @@ import java.time.Instant
  */
 object Inbound:
 
+  /**
+   * A request the domain cannot hold: a `v1.EnqueueRequest` without its `message`, a `v1.SettleRequest` whose
+   * `outcomes` hold an unspecified outcome. The caller's to fix, so the protocol layer answers it with
+   * `INVALID_ARGUMENT`.
+   *
+   * Every problem is kept, not only the first, so one round trip tells the caller everything to change.
+   *
+   * @param reasons each problem, as `path: reason`
+   */
+  final case class DecodingError(reasons: Chunk[String]) extends ApplicationError.DecodingError:
+
+    /**
+     * Every problem, in one line.
+     *
+     * @return the reasons, separated by `; `
+     */
+    override def message: String = reasons.mkString("; ")
+
   private given Transformer[String, MessageKey] = MessageKey(_)
   private given Transformer[String, MessageId]  = MessageId(_)
 
@@ -36,15 +55,18 @@ object Inbound:
   private given Transformer[ProtoDuration, Duration] =
     duration => Duration.fromSeconds(duration.seconds) + Duration.fromNanos(duration.nanos.toLong)
 
-  private given Transformer[Timestamp, Instant] = stamp => Instant.ofEpochSecond(stamp.seconds, stamp.nanos.toLong)
+  private given Transformer[Timestamp, Instant] =
+    stamp => Instant.ofEpochSecond(stamp.seconds, stamp.nanos.toLong)
 
   /**
    * An absent duration reads as zero, which validation then refuses: a caller must say how long it will
    * wait rather than leave it to be inferred. Decoded rather than rejected here so the problem is reported
    * with the others in one pass, in the vocabulary of the domain.
    */
-  private given Transformer[Option[ProtoDuration], Duration] =
-    _.fold(Duration.Zero)(duration => Duration.fromSeconds(duration.seconds) + Duration.fromNanos(duration.nanos.toLong))
+  private given Transformer[Option[ProtoDuration], Duration] = {
+    case None        => Duration.Zero
+    case Some(proto) => proto.transformInto[Duration]
+  }
 
   /** A settle that does not say what the consumer decided cannot be acted on. */
   private given PartialTransformer[v1.Outcome, Verdict] = PartialTransformer:
@@ -67,29 +89,48 @@ object Inbound:
    * @return the domain message, or why it could not be read
    */
   def message(message: v1.Message): Either[String, Message] =
-    message
-      .transformIntoPartial[Message]
-      .asEitherErrorPathMessageStrings
-      .left
-      .map(_.map((path, reason) => s"$path: $reason").mkString("; "))
+    decoded(message.transformIntoPartial[Message]) match
+      case Right(read) => Right(read)
+      case Left(error) => Left(error.message)
+
+  /**
+   * Turn a partial decode into its value, or into a [[DecodingError]] listing every problem.
+   *
+   * @param result what the transformer produced
+   * @tparam A the domain type
+   * @return the value, or every reason it could not be read
+   */
+  private def decoded[A](result: partial.Result[A]): Either[DecodingError, A] =
+    result.asEitherErrorPathMessageStrings match
+      case Right(value) => Right(value)
+      case Left(errors) => Left(DecodingError(Chunk.fromIterable(errors).map(describe)))
+
+  /**
+   * One reason a request could not be read, with the field it concerns.
+   *
+   * @param error the path to the field, and what was wrong with it
+   * @return `path: reason`
+   */
+  private def describe(error: (String, String)): String =
+    s"${error._1}: ${error._2}"
 
   extension (request: v1.EnqueueRequest)
     /**
-     * @return the domain request; fails with the reasons the `v1.EnqueueRequest` could not be read
+     * @return the domain request, or a [[DecodingError]] when the `v1.EnqueueRequest` has no message
      */
-    def toDomain: partial.Result[EnqueueRequest] = request.transformIntoPartial[EnqueueRequest]
+    def toDomain: Either[DecodingError, EnqueueRequest] = decoded(request.transformIntoPartial[EnqueueRequest])
 
   extension (request: v1.DequeueRequest)
-    /** @return the domain request */
-    def toDomain: partial.Result[DequeueRequest] = request.transformIntoPartial[DequeueRequest]
+    /** @return the domain request, or a [[DecodingError]] saying why the `v1.DequeueRequest` cannot be read */
+    def toDomain: Either[DecodingError, DequeueRequest] = decoded(request.transformIntoPartial[DequeueRequest])
 
   extension (request: v1.SettleRequest)
-    /** @return the domain request; fails when the outcome is unspecified */
-    def toDomain: partial.Result[SettleRequest] = request.transformIntoPartial[SettleRequest]
+    /** @return the domain request, or a [[DecodingError]] when an outcome is unspecified */
+    def toDomain: Either[DecodingError, SettleRequest] = decoded(request.transformIntoPartial[SettleRequest])
 
   extension (request: v1.HeartbeatRequest)
-    /** @return the domain request */
-    def toDomain: partial.Result[HeartbeatRequest] = request.transformIntoPartial[HeartbeatRequest]
+    /** @return the domain request, or a [[DecodingError]] saying why the `v1.HeartbeatRequest` cannot be read */
+    def toDomain: Either[DecodingError, HeartbeatRequest] = decoded(request.transformIntoPartial[HeartbeatRequest])
 
   extension (request: v1.AcquireRequest)
     /** @return the domain request; total, because validation happens in the use case, not the codec */

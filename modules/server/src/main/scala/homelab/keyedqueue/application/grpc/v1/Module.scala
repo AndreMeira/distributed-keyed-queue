@@ -3,11 +3,14 @@ package homelab.keyedqueue.application.grpc.v1
 
 import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
+import homelab.keyedqueue.application.grpc.v1.errors.GrpcError
 import homelab.keyedqueue.domain.service.usecase.lock.LockUseCases
 import homelab.keyedqueue.domain.service.usecase.queue.QueueUseCases
 import homelab.keyedqueue.infrastructure.configuration.QueueConfig
-import io.grpc.ServerBuilder
-import scalapb.zio_grpc.{ ScopedServer, ServiceList }
+import homelab.keyedqueue.v1.ZioKeyedLockService.GKeyedLock
+import homelab.keyedqueue.v1.ZioKeyedQueueService.GKeyedQueue
+import io.grpc.{ ServerBuilder, StatusException }
+import scalapb.zio_grpc.{ RequestContext, ScopedServer, ServiceList }
 import zio.{ Scope, ZIO, ZLayer }
 
 
@@ -34,14 +37,36 @@ object Module:
    * @return never completes; aborts with `StartupFailed` when the port cannot be bound
    */
   def init: ZIO[QueueService & LockService & QueueConfig & Scope, ApplicationError, Nothing] =
-    ZIO.serviceWithZIO[QueueConfig] { config =>
-      ScopedServer
-        .fromServiceList(
-          ServerBuilder.forPort(config.port),
-          ServiceList.addFromEnvironment[QueueService].addFromEnvironment[LockService],
-        )
-        .mapError(error => StartupFailed(s"the gRPC server did not start: ${error.getMessage}"))
-    } *> ZIO.never
+    for
+      config  <- ZIO.service[QueueConfig]
+      queue   <- ZIO.service[QueueService]
+      lock    <- ZIO.service[LockService]
+      _       <- ScopedServer
+                   .fromServiceList(ServerBuilder.forPort(config.port), ServiceList.add(bindable(queue)).add(bindable(lock)))
+                   .mapError(error => StartupFailed(s"the gRPC server did not start: ${error.getMessage}"))
+      serving <- ZIO.never
+    yield serving
+
+  /**
+   * The queue service as the server binds it, its failures turned into statuses once for every RPC.
+   *
+   * Typed with `RequestContext` because that is the shape zio-grpc can bind; the service ignores its context,
+   * so it accepts any.
+   *
+   * @param service the service, failing with the domain's errors
+   * @return the same service, failing with `StatusException`
+   */
+  private def bindable(service: QueueService): GKeyedQueue[RequestContext, StatusException] =
+    service.mapError(GrpcError.fromApplicationError)
+
+  /**
+   * The lock service as the server binds it, its failures turned into statuses once for every RPC.
+   *
+   * @param service the service, failing with the domain's errors
+   * @return the same service, failing with `StatusException`
+   */
+  private def bindable(service: LockService): GKeyedLock[RequestContext, StatusException] =
+    service.mapError(GrpcError.fromApplicationError)
 
   /**
    * Both services, as one layer.
