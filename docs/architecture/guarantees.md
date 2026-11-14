@@ -124,7 +124,9 @@ of other keys, ids that never existed, and ids the same claim already settled.
 **C6. A nack may ask the key to wait before anyone works it again.** The wait applies to the *key*, not to
 one message. Where several nacks in a claim ask for different waits, the longest applies. The **backoff** ends
 within about 10 ms of the wait's end (one backoff quantum plus the slack) while the instance that took the nack
-runs, and within the backoff backstop (5 s by default) if that instance dies. The key is then claimable at once,
+runs, and within the backoff backstop (5 s by default) if that instance dies. On a cluster, a partition that stops
+answering delays the release of every partition's backoffs, by up to the command timeout (`max-wait`, 30 s), until
+it answers or fails (see [`scheduling.md`](scheduling.md), "Not built"). The key is then claimable at once,
 **unless a claim still holds it**: after a partial nack, the claim lives on while it owes other messages, and the
 key becomes claimable when that claim is settled or its lease lapses (E1 comes first).
 

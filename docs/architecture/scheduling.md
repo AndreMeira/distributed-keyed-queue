@@ -141,10 +141,11 @@ durable as the store's persistence: with persistence off, a restart of the store
 
 Cancelling a schedule.
 
-**One partition stalled delays the next tick for all of them.** The partitions are moved concurrently, so a healthy
-partition's due messages are moved at once, but a call answers only when every partition has, and the mover asks
-for its next tick then. A partition waiting out the command timeout (`max-wait`, 30 s) therefore delays the next
-tick of every partition, though their next due times are aged correctly. It only arises on a cluster with a node
-down (a single server has one partition); a mover loop per partition would remove it. The scope these choices assume — one DKQ with its own Valkey per service — and
+**One partition stalled delays the next tick for all of them.** The partitions are moved or released concurrently,
+so a healthy partition's due entries are handled at once, but a call answers only when every partition has, and the
+mover asks for its next tick then. A partition waiting out the command timeout (`max-wait`, 30 s) therefore delays
+the next tick of either mover for every partition, and with it the next move of every scheduled message and the
+next release of every backoff, though their next due times are aged correctly. It only arises on a cluster with a
+node down (a single server has one partition); a mover loop per partition would remove it. The scope these choices assume — one DKQ with its own Valkey per service — and
 what an infrastructure-level DKQ would rework are in
 [`../research/tick-driven-mover.md`](../research/tick-driven-mover.md).
