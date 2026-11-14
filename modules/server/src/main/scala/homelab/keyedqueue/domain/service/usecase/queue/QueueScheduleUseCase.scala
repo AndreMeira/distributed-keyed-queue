@@ -7,8 +7,9 @@ import homelab.keyedqueue.domain.request.queue.ScheduleRequest
 import homelab.keyedqueue.domain.response.queue.ScheduleResponse
 import homelab.keyedqueue.domain.service.maintenance.{ DueTimer, Watchdog }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
+import homelab.keyedqueue.domain.model.queue.ScheduledSubmission
 import homelab.keyedqueue.domain.service.validation.QueueInputValidation
-import zio.IO
+import zio.{ IO, ZIO }
 
 
 /**
@@ -37,6 +38,24 @@ final class QueueScheduleUseCase(store: QueueStore, watchdog: Watchdog, validati
     for
       scheduled <- validation.parse(request).orFail
       _         <- watchdog.watch(scheduled.submission.queue)
-      recorded  <- store.schedule(scheduled)
-      _         <- timer.triggerIn(recorded.dueIn)
+      recorded  <- record(scheduled)
     yield ScheduleResponse(recorded.scheduled, recorded.dueIn)
+
+  /**
+   * Record the schedule, then ask the timer for a tick at its due time, as one step a cancellation cannot split.
+   *
+   * Uninterruptible because a caller cancelled between the two would leave a schedule recorded with no tick
+   * asked for, so it would wait for another pass (up to the backstop) while this instance is healthy, which S3
+   * does not allow. A cancelled request may therefore still be recorded; that is harmless, since a retry of it is
+   * ignored (the first schedule of an id wins). Nothing in the step blocks beyond the store call, which waits for
+   * its reply uninterruptibly anyway and is bounded by the command timeout.
+   *
+   * @param scheduled what to record
+   * @return what the store recorded; aborts with `ApplicationError` when the store fails
+   */
+  private def record(scheduled: ScheduledSubmission): IO[ApplicationError, QueueStore.Scheduled] =
+    ZIO.uninterruptible:
+      for
+        recorded <- store.schedule(scheduled)
+        _        <- timer.triggerIn(recorded.dueIn)
+      yield recorded

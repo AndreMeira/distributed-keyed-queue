@@ -25,6 +25,7 @@ import java.time.Instant
  * @param moves the replies the next moves answer with, in order; a move with none left answers that nothing
  *              moved and nothing is scheduled
  * @param moveCalls how many moves have been asked for
+ * @param held when set, a schedule waits on this after recording, until a test releases it
  * @param leaseTtl the span it reports its leases run for
  */
 final class InMemoryQueueStore(
@@ -33,6 +34,7 @@ final class InMemoryQueueStore(
   schedules: Ref[Chunk[ScheduledSubmission]],
   moves: Ref[Chunk[Either[ApplicationError.AdapterError, QueueStore.Moved]]],
   moveCalls: Ref[Int],
+  held: Ref[Option[Promise[Nothing, Unit]]],
   val leaseTtl: Duration = 30.seconds,
 ) extends QueueStore:
 
@@ -74,13 +76,37 @@ final class InMemoryQueueStore(
   def moved: UIO[Int] = moveCalls.get
 
   /**
-   * Record the schedule, and answer that it was recorded with its own delay.
+   * Make every later schedule wait, once recorded, until `release` completes: the moment a caller can be cancelled
+   * after the store has written and before it has answered.
+   *
+   * @param release what the held schedules wait for
+   * @return noop
+   */
+  def holdSchedulesUntil(release: Promise[Nothing, Unit]): UIO[Unit] = held.set(Some(release))
+
+  /**
+   * Record the schedule, wait if schedules are held, and answer that it was recorded with its own delay.
    *
    * @param scheduled what was asked for
    * @return recorded, due in its delay
    */
   override def schedule(scheduled: ScheduledSubmission): IO[ApplicationError.AdapterError, QueueStore.Scheduled] =
-    schedules.update(_ :+ scheduled).as(QueueStore.Scheduled(scheduled = true, dueIn = scheduled.delay))
+    for
+      _       <- schedules.update(_ :+ scheduled)
+      release <- held.get
+      _       <- waitFor(release)
+    yield QueueStore.Scheduled(scheduled = true, dueIn = scheduled.delay)
+
+  /**
+   * Wait for a release, when there is one.
+   *
+   * @param release what to wait for, if schedules are held
+   * @return noop once released, or at once when nothing is held
+   */
+  private def waitFor(release: Option[Promise[Nothing, Unit]]): UIO[Unit] =
+    release match
+      case Some(promise) => promise.await
+      case None          => ZIO.unit
 
   /**
    * Answer with the next queued reply, or with nothing moved and nothing scheduled when none is left.
@@ -132,4 +158,5 @@ object InMemoryQueueStore:
       schedules <- Ref.make(Chunk.empty[ScheduledSubmission])
       moves     <- Ref.make(Chunk.empty[Either[ApplicationError.AdapterError, QueueStore.Moved]])
       moveCalls <- Ref.make(0)
-    yield InMemoryQueueStore(pending, looks, schedules, moves, moveCalls)
+      held      <- Ref.make(Option.empty[Promise[Nothing, Unit]])
+    yield InMemoryQueueStore(pending, looks, schedules, moves, moveCalls, held)
