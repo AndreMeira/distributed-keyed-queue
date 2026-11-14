@@ -2,7 +2,7 @@
 title: "A tick-driven mover — releasing backoffs and scheduled messages on time"
 type: research
 status: draft
-updated: 2026-11-06
+updated: 2026-11-14
 tags: [design, schedule, backoff, retry-after, nack, watchdog, ticker, latch, processor, redis, exploration, not-a-decision]
 ---
 
@@ -42,22 +42,28 @@ truth. A request is only a hint about when to look.
 
 ### The time latch
 
-A one-shot timer. Its current form is `TimeLatch` in the toolkit's incubator (`time/v3/TimeLatch.scala`).
-That draft is not committed yet, so the link resolves only once it has a branch of its own.
+A one-shot timer: **`homelab.common.flow.TimeLatch`, in `homelab-common` since toolkit 0.0.7** (toolkit PR
+#74, promoted from the incubator draft `time/v3`). DKQ depends on 0.0.7 from this branch on. Its spec,
+`TimeLatchSpec`, lives in the toolkit.
 
 | | |
 |---|---|
-| created | `make(in, slack)`: armed to fire `in` from now at the latest. Never unarmed, never `Instant.MAX` |
+| created | `make(in, slack)`: armed to fire `in` from now at the latest. Never unarmed. `in` and `slack` are clamped to `[0, Duration.Infinity]` |
 | `triggerAt(t)` / `triggerIn(d)` | brings the firing time earlier. A request later than the current time, or earlier by less than `slack`, changes nothing |
 | `await` | returns once the latch has fired. It sleeps until the current firing time and sleeps again whenever a trigger brings it earlier. Every waiter is woken |
-| after firing | `await` returns at once, and triggers are refused. **It is thrown away, not reset** |
+| after firing | `await` returns at once, and no trigger can make it wait again. **It is thrown away, not reset**. "Fired" is a time (`when ≤ now`), not a flag |
 
-Two properties it has to keep, both fixed during its review:
+The properties it keeps, each fixed during a review and pinned by a test:
 
-- **A waiter subscribes to the nudge before it reads the firing time,** so a trigger landing between the two
-  is not missed.
-- **It never sleeps towards `Instant.MAX`.** In ZIO 2.1.23 a wait to `Instant.MAX` overflows `toNanos`, and
-  the fiber dies (checked with a probe). Creating it armed rules that out.
+- **A trigger landing while a waiter starts to wait is not missed.** The firing instant and the promise that
+  wakes its waiters are one value, read and replaced together.
+- **A trigger is uninterruptible.** Replacing the state and waking the replaced state's waiters are one step,
+  so a caller interrupted in between cannot leave them asleep through the earlier instant. That matters here:
+  the schedule use case triggers on a request fiber, which a cancelled call interrupts.
+- **No input makes it throw.** Delays and `slack` are clamped, and a trigger compares
+  `Duration.fromInterval(instant, when)` with `slack` instead of shifting an instant. On ZIO 2.1.23 a wait of
+  `Duration.Infinity` (about 292 years) sleeps, but one of a billion years makes the live timer return at
+  once, and past `Instant.MAX` `Instant.plus` throws (both checked with a probe).
 
 ### The tick source
 
@@ -268,12 +274,8 @@ The use cases that create due work (settle, schedule) send their requests the sa
 
 ## Tests it would need
 
-**The time latch**, with the `TestClock`:
-- fires at its armed time;
-- an earlier trigger wakes every waiter at the new time;
-- a later trigger, or one inside `slack`, changes nothing;
-- once fired, `await` returns at once and triggers are refused;
-- a trigger landing between subscribe and read is not missed (promises, `nonFlaky`).
+**The time latch:** done, in the toolkit's `TimeLatchSpec` (11 cases on the `TestClock`, one on the live
+clock), including the interrupted trigger and the extremes of `Instant`.
 
 **The tick source:**
 - fire, swap and emit happen in that order;
@@ -300,12 +302,11 @@ The use cases that create due work (settle, schedule) send their requests the sa
 | the watchdog's fixed sweep, with a shorter interval | precision costs every instance a sweep of every known queue at that rate, and only known queues are swept |
 | `ready` scored by readyAt ([`ready-scored-by-readyat.md`](ready-scored-by-readyat.md)) | measured cheap, but nothing publishes a key becoming claimable, so the readiness would need a timed look; and it cannot hold a single message back, only a whole key |
 | promotion on the claim | a parked consumer does not claim at the due time, so it still needs a timer |
-| a reusable ticker (`time/v1`, `time/v2` in the toolkit incubator, not committed yet) | v1 is an edge-triggered broadcast, and a tick missed mid-sweep can be the only record of a nack; v2 works, but a throwaway latch plus a sliding pipe gets the same behaviour with less state |
+| a reusable ticker (`time/v1`, `time/v2`, incubator drafts kept on the toolkit's `incubator-time-drafts` branch) | v1 is an edge-triggered broadcast, and a tick missed mid-sweep can be the only record of a nack; v2 works, but a throwaway latch plus a sliding pipe gets the same behaviour with less state |
 
 ## Open questions
 
-- **The names:** the tick source, the mover, and whether `TimeLatch` stays in the toolkit or moves into
-  DKQ.
+- **The names:** the tick source and the mover. (`TimeLatch` is settled: it is in the toolkit.)
 - **How the mover reaches the tick source:** a direct `triggerAt`, or an unbounded pipe.
 - **Herding:** accept it, only the requester arms early, or jitter.
 - **Batching:** whether to quantise, and the quantum per pair.
