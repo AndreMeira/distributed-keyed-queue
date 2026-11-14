@@ -60,6 +60,11 @@ object SpecHelper {
         wakeBlock = 200.millis,
         maxWait = 5.seconds,
         maxBatchLimit = 32,
+        maxScheduleAhead = 7.days,
+        scheduleQuantum = 50.millis,
+        scheduleSlack = 50.millis,
+        scheduleBackstop = 60.seconds,
+        scheduleLimit = 100,
       )
 
     /**

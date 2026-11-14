@@ -2,13 +2,13 @@ package homelab.keyedqueue.infrastructure.redis
 
 
 import homelab.common.monitor.Monitor
-import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Settlement, Submission }
+import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, ScheduledSubmission, Settlement, Submission }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.infrastructure.codecs.storage.StoredMessage
 import homelab.keyedqueue.domain.types.*
-import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, QueueKeys }
+import homelab.keyedqueue.infrastructure.redis.keys.{ KeyLayout, QueueKeys, ScheduleKeys }
 import homelab.keyedqueue.infrastructure.redis.script.QueueScripts
-import homelab.keyedqueue.infrastructure.redis.script.queue.{ ClaimScript, RenewScript }
+import homelab.keyedqueue.infrastructure.redis.script.queue.{ ClaimScript, MoveScript, RenewScript }
 import zio.*
 
 import java.time.Instant
@@ -123,6 +123,82 @@ final class RedisQueueStore(
     monitor.trace("RedisQueueStore.sweep"):
       connection.provide:
         scripts.sweep.execute(layout.queue(queue), limit)
+
+  /**
+   * One `schedule` call, in the partition the queue falls in. Whether the id is already scheduled and the
+   * recording are one script, so two racing schedules for one id cannot both be recorded.
+   *
+   * @param scheduled where the message goes, the message, and how long until it is due
+   * @return whether it was recorded, and how long until the recorded schedule is due
+   */
+  override def schedule(scheduled: ScheduledSubmission): IO[RedisFailure, QueueStore.Scheduled] =
+    monitor.trace("RedisQueueStore.schedule"):
+      connection.provide:
+        scripts.schedule.execute(layout.schedule(scheduled.submission.queue), scheduled)
+
+  /**
+   * One `move` call per partition, every partition tried even when one fails, so an unreachable node holds back
+   * only what it holds.
+   *
+   * @param limit the most entries one partition's call moves
+   * @return the partitions' results combined, with how many could not be reached; aborts with the first
+   *         partition's failure only when none could be
+   */
+  override def moveDue(limit: Int): IO[RedisFailure, QueueStore.Moved] =
+    monitor.trace("RedisQueueStore.moveDue"):
+      connection.provide:
+        ZIO.partition(layout.schedules)(moveIn(limit)).flatMap(combined)
+
+  /**
+   * One partition's move.
+   *
+   * @param limit the most entries to move
+   * @param keys the partition's schedule keys
+   * @return what the partition's call did; aborts with `RedisFailure` when it fails
+   */
+  private def moveIn(limit: Int)(keys: ScheduleKeys): ZIO[Connection.Commands, RedisFailure, MoveScript.Output] =
+    scripts.move.execute(keys, limit)
+
+  /**
+   * The partitions' results as one, or the first failure when no partition answered.
+   *
+   * @param results the failures, then the partitions' answers
+   * @return the combined result; aborts with the first failure when there is no answer at all
+   */
+  private def combined(results: (Iterable[RedisFailure], Iterable[MoveScript.Output])): IO[RedisFailure, QueueStore.Moved] =
+    val (failures, answers) = results
+    failures.headOption match
+      case Some(failure) if answers.isEmpty => ZIO.fail(failure)
+      case _                                => ZIO.succeed(answers.foldLeft(QueueStore.Moved(0, 0, false, None, failures.size))(add))
+
+  /**
+   * One partition's answer added to the total.
+   *
+   * @param total what the partitions so far did
+   * @param answer one more partition's answer
+   * @return the total with it: counts summed, full if any was, and the earliest next due time
+   */
+  private def add(total: QueueStore.Moved, answer: MoveScript.Output): QueueStore.Moved =
+    QueueStore.Moved(
+      moved = total.moved + answer.moved,
+      discarded = total.discarded + answer.discarded,
+      full = total.full || answer.full,
+      nextDueIn = earliest(total.nextDueIn, answer.nextDueIn),
+      failed = total.failed,
+    )
+
+  /**
+   * The earlier of two optional delays.
+   *
+   * @param left one
+   * @param right the other
+   * @return the earlier, or whichever is present, or `None`
+   */
+  private def earliest(left: Option[Duration], right: Option[Duration]): Option[Duration] =
+    (left, right) match
+      case (Some(a), Some(b)) => Some(a.min(b))
+      case (Some(a), None)    => Some(a)
+      case (None, other)      => other
 
   /**
    * The claim a granted reply amounts to.

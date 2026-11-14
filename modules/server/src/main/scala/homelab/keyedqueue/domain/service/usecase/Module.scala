@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.service.usecase
 
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.persistence.LockStore
-import homelab.keyedqueue.domain.service.maintenance.Watchdog
+import homelab.keyedqueue.domain.service.maintenance.{ DueTimer, Watchdog }
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.service.readiness.{ LockReadiness, QueueReadiness }
 import homelab.keyedqueue.domain.service.usecase.lock.*
@@ -22,23 +22,25 @@ import zio.ZLayer
  */
 object Module:
   type Provided = QueueUseCases & LockUseCases
-  type Required = QueueStore & Watchdog & QueueInputValidation & QueueReadiness & LockStore & LockInputValidation & LockReadiness
+  type Required =
+    QueueStore & Watchdog & DueTimer & QueueInputValidation & QueueReadiness & LockStore & LockInputValidation & LockReadiness
 
   lazy val layer: ZLayer[Required, ApplicationError, Provided] =
     queueUseCases ++ lockUseCases
 
   /**
-   * The four use cases, as one dependency for whatever adapter serves them.
+   * The five use cases, as one dependency for whatever adapter serves them.
    *
    * @return the layer
    */
-  val queueUseCases: ZLayer[QueueStore & Watchdog & QueueInputValidation & QueueReadiness, Nothing, QueueUseCases] =
-    ZLayer.fromFunction: (store: QueueStore, watchdog: Watchdog, validation: QueueInputValidation, readiness: QueueReadiness) =>
+  val queueUseCases: ZLayer[QueueStore & Watchdog & DueTimer & QueueInputValidation & QueueReadiness, Nothing, QueueUseCases] =
+    ZLayer.fromFunction: (store: QueueStore, watchdog: Watchdog, timer: DueTimer, validation: QueueInputValidation, readiness: QueueReadiness) =>
       QueueUseCases(
         enqueue = EnqueueUseCase(store, watchdog, validation),
         dequeue = DequeueUseCase(store, watchdog, validation, readiness),
         settle = SettleUseCase(store, validation),
         heartbeat = HeartbeatUseCase(store),
+        schedule = QueueScheduleUseCase(store, watchdog, validation, timer),
       )
 
   /**

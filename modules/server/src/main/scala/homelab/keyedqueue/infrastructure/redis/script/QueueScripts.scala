@@ -9,7 +9,7 @@ import zio.*
 
 
 /**
- * The five Lua scripts, loaded once and held as the calls they can make.
+ * The seven Lua scripts, loaded once and held as the calls they can make.
  *
  * Loading up front rather than on first use keeps the failure at startup, where a missing or unparseable
  * script is obvious, instead of on the first message. There is no `NOSCRIPT` fallback for the same reason a
@@ -25,6 +25,8 @@ import zio.*
  * @param settle records what became of each message, and decides the key's next state
  * @param renew extends the claims a consumer still holds
  * @param sweep the two repair passes
+ * @param schedule records a message to be appended once its delay has elapsed
+ * @param move appends a partition's due scheduled messages to their key's line
  */
 final case class QueueScripts(
   enqueue: LuaScript[EnqueueScript.Input, EnqueueScript.Output],
@@ -32,6 +34,8 @@ final case class QueueScripts(
   settle: LuaScript[SettleScript.Input, SettleScript.Output],
   renew: LuaScript[RenewScript.Input, RenewScript.Output],
   sweep: LuaScript[SweepScript.Input, SweepScript.Output],
+  schedule: LuaScript[ScheduleScript.Input, ScheduleScript.Output],
+  move: LuaScript[MoveScript.Input, MoveScript.Output],
 )
 
 
@@ -47,9 +51,11 @@ object QueueScripts:
    */
   def make: ZIO[Commands, RedisFailure, QueueScripts] =
     for
-      enqueue <- EnqueueScript.load
-      claim   <- ClaimScript.load
-      settle  <- SettleScript.load
-      renew   <- RenewScript.load
-      sweep   <- SweepScript.load
-    yield QueueScripts(enqueue, claim, settle, renew, sweep)
+      enqueue  <- EnqueueScript.load
+      claim    <- ClaimScript.load
+      settle   <- SettleScript.load
+      renew    <- RenewScript.load
+      sweep    <- SweepScript.load
+      schedule <- ScheduleScript.load
+      move     <- MoveScript.load
+    yield QueueScripts(enqueue, claim, settle, renew, sweep, schedule, move)

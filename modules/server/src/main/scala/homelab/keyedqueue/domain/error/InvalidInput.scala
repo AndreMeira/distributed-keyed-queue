@@ -1,6 +1,8 @@
 package homelab.keyedqueue.domain.error
 
+
 import homelab.common.error.ValidationError
+import zio.{ Duration, duration2DurationOps }
 
 
 /**
@@ -62,20 +64,39 @@ enum InvalidInput extends ValidationError.InvalidInput:
   case NonPositiveMaxWait
 
   /**
+   * A schedule asked for a delay of no time, or a negative one.
+   *
+   * An absent `deliver_after` lands here too: "deliver now" is what an enqueue is for.
+   */
+  case NonPositiveDeliverAfter
+
+  /**
+   * A schedule asked for a delay beyond the horizon this service accepts.
+   *
+   * A scheduled message waits in the store's memory until it is due, so the horizon bounds how long one can
+   * hold it; refused rather than clamped, since a clamped message would arrive earlier than asked.
+   *
+   * @param horizon the longest delay accepted
+   */
+  case DeliverAfterBeyondHorizon(horizon: Duration)
+
+  /**
    * What to tell the caller.
    *
    * @return the problem, phrased in terms of the request
    */
   override def message: String = this match
-    case EmptyQueueName     => "a queue name is required"
-    case EmptyMessageKey    => "a message key is required: it is what ordering is defined by"
-    case EmptyMessageId     => "a message id is required: it is what a message is addressed by"
-    case EmptyEncoding      => "an encoding is required: it is how a consumer knows to read the payload"
-    case EmptyDiscardId     => "a discarded message must be named"
-    case DuplicateDiscardId => "the same message was named twice to discard"
-    case UnreadableReceipt  => "the receipt is not one this service issued"
-    case EmptySettle        => "a settle must name at least one message"
-    case NegativeMaxBatch   => "max_batch cannot be negative; zero or one means one message"
-    case NonPositiveMaxWait => "max_wait is required and must be greater than zero"
-    case EmptyLockName      => "a lock name is required"
-    case NonPositiveTtl     => "ttl is required and must be greater than zero"
+    case EmptyQueueName                     => "a queue name is required"
+    case EmptyMessageKey                    => "a message key is required: it is what ordering is defined by"
+    case EmptyMessageId                     => "a message id is required: it is what a message is addressed by"
+    case EmptyEncoding                      => "an encoding is required: it is how a consumer knows to read the payload"
+    case EmptyDiscardId                     => "a discarded message must be named"
+    case DuplicateDiscardId                 => "the same message was named twice to discard"
+    case UnreadableReceipt                  => "the receipt is not one this service issued"
+    case EmptySettle                        => "a settle must name at least one message"
+    case NegativeMaxBatch                   => "max_batch cannot be negative; zero or one means one message"
+    case NonPositiveMaxWait                 => "max_wait is required and must be greater than zero"
+    case NonPositiveDeliverAfter            => "deliver_after is required and must be greater than zero"
+    case DeliverAfterBeyondHorizon(horizon) => s"deliver_after cannot exceed ${horizon.render}"
+    case EmptyLockName                      => "a lock name is required"
+    case NonPositiveTtl                     => "ttl is required and must be greater than zero"

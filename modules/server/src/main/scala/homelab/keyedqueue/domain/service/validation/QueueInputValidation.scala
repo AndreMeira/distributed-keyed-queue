@@ -4,7 +4,7 @@ package homelab.keyedqueue.domain.service.validation
 import homelab.common.Validated
 import homelab.keyedqueue.domain.error.InvalidInput
 import homelab.keyedqueue.domain.model.queue.*
-import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, SettleRequest }
+import homelab.keyedqueue.domain.request.queue.{ DequeueRequest, EnqueueRequest, ScheduleRequest, SettleRequest }
 import homelab.keyedqueue.domain.request.lock.*
 import homelab.keyedqueue.domain.service.validation.CommonValidation.{ nonNegative, nonEmpty as nonEmptyString }
 import homelab.keyedqueue.domain.types.*
@@ -35,6 +35,18 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
     Validation
       .validate(nonEmptyQueueName(request.queue), message(request.message))
       .map(Submission.apply)
+
+  /**
+   * Everything `Schedule` needs to be actionable: what `Enqueue` needs, and a delay within the horizon.
+   *
+   * @param request what the caller sent, untrusted
+   * @return the scheduled submission to hand the store; accumulates what [[parse(EnqueueRequest)]] does, and
+   *         `NonPositiveDeliverAfter` or `DeliverAfterBeyondHorizon`
+   */
+  def parse(request: ScheduleRequest): Validated[ScheduledSubmission] =
+    Validation
+      .validate(nonEmptyQueueName(request.queue), message(request.message), delay(request.deliverAfter))
+      .map(scheduled)
 
   /**
    * Everything `Dequeue` needs to be actionable.
@@ -134,6 +146,31 @@ final class QueueInputValidation(config: QueueInputValidation.Config):
     else Validation.succeed(if asked > config.maxWait then config.maxWait else asked)
 
   /**
+   * How long a schedule waits, once it is known to wait at all and no longer than the horizon.
+   *
+   * Compared rather than converted, so a delay too large for milliseconds is refused instead of overflowing.
+   *
+   * @param asked the delay the caller asked for
+   * @return the same delay; fails with `NonPositiveDeliverAfter` when it is not greater than zero, and with
+   *         `DeliverAfterBeyondHorizon` when it exceeds the horizon
+   */
+  private def delay(asked: Duration): Validated[Duration] =
+    if asked <= Duration.Zero then Validation.fail(InvalidInput.NonPositiveDeliverAfter)
+    else if asked > config.maxScheduleAhead then Validation.fail(InvalidInput.DeliverAfterBeyondHorizon(config.maxScheduleAhead))
+    else Validation.succeed(asked)
+
+  /**
+   * The three parts of a schedule, put together.
+   *
+   * @param queue where it goes
+   * @param message what it is
+   * @param delay how long until it is due
+   * @return the scheduled submission
+   */
+  private def scheduled(queue: QueueName, message: Message, delay: Duration): ScheduledSubmission =
+    ScheduledSubmission(Submission(queue, message), delay)
+
+  /**
    * How many messages this claim may take.
    *
    * Zero and one both mean one message, so the floor is one rather than a refusal.
@@ -203,5 +240,7 @@ object QueueInputValidation:
    * @param maxBatchLimit the most messages one claim may take, whatever a caller asks for — the ceiling is
    *                      here so no single caller decides how much of a key's backlog it withholds from
    *                      everyone else
+   * @param maxScheduleAhead the longest delay a schedule may ask for, the horizon: a scheduled message waits
+   *                         in the store's memory until it is due
    */
-  final case class Config(maxWait: Duration, maxBatchLimit: Int)
+  final case class Config(maxWait: Duration, maxBatchLimit: Int, maxScheduleAhead: Duration)

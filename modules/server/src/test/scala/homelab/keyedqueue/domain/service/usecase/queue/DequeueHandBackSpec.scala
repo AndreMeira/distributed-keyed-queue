@@ -3,7 +3,7 @@ package homelab.keyedqueue.domain.service.usecase.queue
 
 import homelab.common.error.ApplicationError
 import homelab.keyedqueue.SpecHelper.Helper
-import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, Settlement, Submission }
+import homelab.keyedqueue.domain.model.queue.{ Claim, Grant, ScheduledSubmission, Settlement, Submission }
 import homelab.keyedqueue.domain.model.queue.Settlement.{ Outcome, Verdict }
 import homelab.keyedqueue.domain.request.queue.DequeueRequest
 import homelab.keyedqueue.domain.response.queue.DequeueResponse
@@ -186,6 +186,12 @@ object DequeueHandBackSpec extends ZIOSpecDefault:
 
       override def sweep(queue: QueueName, limit: Int): IO[ApplicationError.AdapterError, QueueStore.Swept] =
         ZIO.succeed(QueueStore.Swept(Chunk.empty, Chunk.empty))
+
+      override def schedule(scheduled: ScheduledSubmission): IO[ApplicationError.AdapterError, QueueStore.Scheduled] =
+        ZIO.succeed(QueueStore.Scheduled(scheduled = true, dueIn = scheduled.delay))
+
+      override def moveDue(limit: Int): IO[ApplicationError.AdapterError, QueueStore.Moved] =
+        ZIO.succeed(QueueStore.Moved(0, 0, full = false, nextDueIn = None, failed = 0))
 
     object Recording:
 

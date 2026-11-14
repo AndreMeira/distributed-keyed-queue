@@ -17,7 +17,7 @@ import zio.*
 object UseCaseSpecSupport {
 
   /** The limits a parsed demand is held to, wide enough that these specs are never clamped. */
-  val limits: QueueInputValidation.Config = QueueInputValidation.Config(maxWait = 30.seconds, maxBatchLimit = 32)
+  val limits: QueueInputValidation.Config = QueueInputValidation.Config(maxWait = 30.seconds, maxBatchLimit = 32, maxScheduleAhead = 7.days)
 
   /** How often the watchdog would sweep, which these specs never let it do. */
   val sweeping: Watchdog.Config = Watchdog.Config(sweepInterval = 1.minute, sweepLimit = 100)

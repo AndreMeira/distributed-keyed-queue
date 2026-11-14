@@ -48,6 +48,13 @@ final case class KeyLayout(partitions: Int):
   val locks: Chunk[LockKeys] = tags.map(LockKeys(_))
 
   /**
+   * Every partition's schedule keys — for the mover, which moves what is due in all of them.
+   *
+   * @return the keys, in partition order
+   */
+  val schedules: Chunk[ScheduleKeys] = tags.map(ScheduleKeys(_))
+
+  /**
    * Every wake stream in the deployment — the fixed set a listener reads, and so what decides how many
    * connections it holds on a cluster.
    *
@@ -81,6 +88,15 @@ final case class KeyLayout(partitions: Int):
    */
   def queue(name: QueueName): QueueKeys =
     QueueKeys(KeyLayout.Tag(partitionOf(name)), name)
+
+  /**
+   * The schedule keys of the partition a queue falls in, where its scheduled messages wait.
+   *
+   * @param name the queue
+   * @return its partition's schedule keys
+   */
+  def schedule(name: QueueName): ScheduleKeys =
+    ScheduleKeys(KeyLayout.Tag(partitionOf(name)))
 
   /**
    * The keys of the partition a lock falls in.
