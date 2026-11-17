@@ -81,14 +81,13 @@ final class BackoffMover(monitor: Monitor, store: QueueStore, timer: DueTimer, c
       case None     => ZIO.unit
 
   /**
-   * Report what a call released, when it released anything, and any part of the store it could not reach.
+   * Report what a call released, when it released anything.
    *
    * @param result what the store released
    * @return noop
    */
   private def releasedInfo(result: QueueStore.Released): UIO[Unit] =
-    if result.failed > 0 then ZIO.logWarning(s"releasing ended backoffs: ${result.failed} part(s) unreachable; released=${result.released}")
-    else if result.released == 0 then ZIO.unit
+    if result.released == 0 then ZIO.unit
     else ZIO.logInfo(s"released ended backoffs: released=${result.released}")
 
 

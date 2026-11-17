@@ -153,7 +153,7 @@ object RedisQueueStoreScheduleSpec extends ZIOSpecDefault:
           store <- ZIO.service[QueueStore]
           _     <- store.schedule(scheduled(QueueName("schedule-next"), MessageKey("k1"), "m1", 5.seconds))
           moved <- store.moveDue(limit)
-        yield assertTrue(moved.nextDueIn.exists(_ <= 5.seconds + rounding), moved.failed == 0)
+        yield assertTrue(moved.nextDueIn.exists(_ <= 5.seconds + rounding))
       },
     ) @@ RedisSpecSupport.Aspect.init @@ SpecHelper.Aspect.common
   }.provideSomeShared[Scope](RedisSpecSupport.config(2.seconds) >+> RedisSpecSupport.layer)

@@ -67,10 +67,10 @@ maintenance module next to the watchdog.
   and none is lost. A request ("fire no later than X") brings the latch earlier; requests are rounded up to
   `schedule-quantum`, so entries due within one window share one pass. The first latch fires at once, so a pass
   runs on boot.
-- **`ScheduleMover`**, on every tick, calls `QueueStore.moveDue`, which runs `move.lua` on every partition: one
-  unreachable partition holds back only what it holds, and is counted in `failed`. A full call is repeated at
-  once; otherwise the mover asks the timer for a tick at the next due time the store reported. A failed call is
-  logged, and the backstop retries.
+- **`ScheduleMover`**, on every tick, calls `QueueStore.moveDue`, which runs `move.lua` on every partition. Every
+  partition is tried even when another fails, but the answer is all or nothing: one unreachable partition fails
+  the call. A full call is repeated at once; otherwise the mover asks the timer for a tick at the next due time
+  the store reported. A failed call is logged, and the backstop retries.
 - **The schedule use case** asks the timer for a tick at the due time it recorded, after the write. A request is
   only a hint: the store is the truth, and an instance that dies with its requests in memory loses nothing but
   time.
@@ -142,11 +142,12 @@ durable as the store's persistence: with persistence off, a restart of the store
 
 Cancelling a schedule.
 
-**One partition stalled delays the next tick for all of them.** The partitions are moved or released concurrently,
-so a healthy partition's due entries are handled at once, but a call answers only when every partition has, and the
-mover asks for its next tick then. A partition waiting out the command timeout (`max-wait`, 30 s) therefore delays
-the next tick of either mover for every partition, and with it the next move of every scheduled message and the
-next release of every backoff, though their next due times are aged correctly. It only arises on a cluster with a
-node down (a single server has one partition); a mover loop per partition would remove it. The scope these choices assume — one DKQ with its own Valkey per service — and
-what an infrastructure-level DKQ would rework are in
-[`../research/tick-driven-mover.md`](../research/tick-driven-mover.md).
+**One partition unreachable puts every partition on the backstop.** The partitions are moved or released
+concurrently, and every one is tried, so a reachable partition's due entries are still handled by each pass. But
+a call that any partition fails is a failed call, so the mover has no next due time to ask for and waits for its
+backstop: while a partition is unreachable, due entries everywhere are handled up to one backstop late (60 s for
+schedules, 5 s for backoffs), plus the command timeout (`max-wait`, 30 s) when the partition times out rather than
+refusing. It only arises on a cluster with a node down (a single server has one partition). Reporting the
+reachable partitions' next due time despite the failure, or a mover loop per partition, would remove it; neither
+is worth its cost for one DKQ with its own Valkey per service, the scope these choices assume. That scope, and
+what an infrastructure-level DKQ would rework, are in [`../research/tick-driven-mover.md`](../research/tick-driven-mover.md).

@@ -49,7 +49,8 @@ final class ScheduleMover(monitor: Monitor, store: QueueStore, timer: DueTimer, 
    *         not a reason to stop delivering for ever (the next backstop retries)
    */
   private def move: UIO[Unit] =
-    monitor.measure("ScheduleMover.move")(store.moveDue(config.limit)).foldZIO(failed, moved)
+    monitor.measure("ScheduleMover.move"):
+      store.moveDue(config.limit).foldZIO(failed, moved)
 
   /**
    * Report a move that failed.
@@ -86,16 +87,14 @@ final class ScheduleMover(monitor: Monitor, store: QueueStore, timer: DueTimer, 
       case None     => ZIO.unit
 
   /**
-   * Report what a call moved, when it moved anything, and any part of the store it could not reach.
+   * Report what a call moved, when it moved anything.
    *
    * @param result what the store moved
    * @return noop
    */
   private def movedInfo(result: QueueStore.Moved): UIO[Unit] =
-    val counts = s"moved=${result.moved} discarded=${result.discarded}"
-    if result.failed > 0 then ZIO.logWarning(s"moving due scheduled messages: ${result.failed} part(s) unreachable; $counts")
-    else if result.moved == 0 && result.discarded == 0 then ZIO.unit
-    else ZIO.logInfo(s"moved due scheduled messages: $counts")
+    if result.moved == 0 && result.discarded == 0 then ZIO.unit
+    else ZIO.logInfo(s"moved due scheduled messages: moved=${result.moved} discarded=${result.discarded}")
 
 
 object ScheduleMover:

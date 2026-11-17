@@ -137,14 +137,18 @@ final class RedisQueueStore(
 
   /**
    * One `move` call per partition, all of them at once and every one tried even when another fails, so an
-   * unreachable node holds back only what it holds rather than every partition after it.
+   * unreachable node does not stop the moves on every partition after it.
+   *
+   * The result is all or nothing: a partition that fails fails the call, with the first failure. The reachable
+   * partitions are still moved; only their report is lost, and the mover's backstop retries. Reporting the
+   * reachable ones' next due time instead would only matter on a cluster with a node down, which is outside the
+   * scope DKQ assumes (`docs/research/tick-driven-mover.md`).
    *
    * Each partition's next due time is "in X ms" as of its own reply; by the time the last reply arrives the
    * earlier ones have aged, so each is shortened by the time elapsed since it was read.
    *
    * @param limit the most entries one partition's call moves
-   * @return the partitions' results combined, with how many could not be reached; aborts with the first
-   *         partition's failure only when none could be
+   * @return the partitions' results combined; aborts with the first partition's failure when any failed
    */
   override def moveDue(limit: Int): IO[RedisFailure, QueueStore.Moved] =
     monitor.trace("RedisQueueStore.moveDue"):
@@ -166,11 +170,11 @@ final class RedisQueueStore(
     scripts.move.execute(keys, limit).zip(Clock.instant)
 
   /**
-   * The partitions' results as one, or the first failure when no partition answered.
+   * The partitions' results as one, or the first failure when any partition failed.
    *
    * @param results the failures, then the partitions' answers with the time each was read
    * @param now the time the last of them was in, which each answer's next due time is aged to
-   * @return the combined result; aborts with the first failure when there is no answer at all
+   * @return the combined result; aborts with the first failure when there is one
    */
   private def combined(
     results: (Iterable[RedisFailure], Iterable[(MoveScript.Output, Instant)]),
@@ -178,9 +182,8 @@ final class RedisQueueStore(
   ): IO[RedisFailure, QueueStore.Moved] =
     val (failures, answers) = results
     failures.headOption match
-      case Some(failure) if answers.isEmpty => ZIO.fail(failure)
-      case _                                =>
-        ZIO.succeed(answers.foldLeft(QueueStore.Moved(0, 0, false, None, failures.size))(add(now)))
+      case Some(failure) => ZIO.fail(failure)
+      case None          => ZIO.succeed(answers.foldLeft(QueueStore.Moved(0, 0, false, None))(add(now)))
 
   /**
    * One partition's answer added to the total, its next due time aged to `now`.
@@ -197,16 +200,14 @@ final class RedisQueueStore(
       discarded = total.discarded + output.discarded,
       full = total.full || output.full,
       nextDueIn = earliest(total.nextDueIn, aged(output.nextDueIn, Duration.fromInterval(read, now))),
-      failed = total.failed,
     )
 
   /**
    * One `backoff` call per partition, all of them at once and every one tried even when another fails, as for
-   * [[moveDue]]; each partition's next end is aged to when the last reply arrived.
+   * [[moveDue]], and all or nothing as it is; each partition's next end is aged to when the last reply arrived.
    *
    * @param limit the most backoffs one partition's call releases
-   * @return the partitions' results combined, with how many could not be reached; aborts with the first
-   *         partition's failure only when none could be
+   * @return the partitions' results combined; aborts with the first partition's failure when any failed
    */
   override def releaseDue(limit: Int): IO[RedisFailure, QueueStore.Released] =
     monitor.trace("RedisQueueStore.releaseDue"):
@@ -228,11 +229,11 @@ final class RedisQueueStore(
     scripts.backoff.execute(keys, limit).zip(Clock.instant)
 
   /**
-   * The partitions' releases as one, or the first failure when no partition answered.
+   * The partitions' releases as one, or the first failure when any partition failed.
    *
    * @param results the failures, then the partitions' answers with the time each was read
    * @param now the time the last of them was in, which each answer's next end is aged to
-   * @return the combined result; aborts with the first failure when there is no answer at all
+   * @return the combined result; aborts with the first failure when there is one
    */
   private def releasedAll(
     results: (Iterable[RedisFailure], Iterable[(BackoffScript.Output, Instant)]),
@@ -240,9 +241,8 @@ final class RedisQueueStore(
   ): IO[RedisFailure, QueueStore.Released] =
     val (failures, answers) = results
     failures.headOption match
-      case Some(failure) if answers.isEmpty => ZIO.fail(failure)
-      case _                                =>
-        ZIO.succeed(answers.foldLeft(QueueStore.Released(0, false, None, failures.size))(addReleased(now)))
+      case Some(failure) => ZIO.fail(failure)
+      case None          => ZIO.succeed(answers.foldLeft(QueueStore.Released(0, false, None))(addReleased(now)))
 
   /**
    * One partition's release added to the total, its next end aged to `now`.
@@ -258,7 +258,6 @@ final class RedisQueueStore(
       released = total.released + output.released,
       full = total.full || output.full,
       nextDueIn = earliest(total.nextDueIn, aged(output.nextDueIn, Duration.fromInterval(read, now))),
-      failed = total.failed,
     )
 
   /**
