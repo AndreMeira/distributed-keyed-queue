@@ -49,8 +49,7 @@ final class ScheduleMover(monitor: Monitor, store: QueueStore, timer: DueTimer, 
    *         not a reason to stop delivering for ever (the next backstop retries)
    */
   private def move: UIO[Unit] =
-    monitor.measure("ScheduleMover.move"):
-      store.moveDue(config.limit).foldZIO(failed, moved)
+    monitor.measure("ScheduleMover.move")(store.moveDue(config.limit)).foldZIO(failed, moved)
 
   /**
    * Report a move that failed.

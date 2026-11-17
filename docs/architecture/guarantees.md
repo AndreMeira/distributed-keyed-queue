@@ -127,8 +127,8 @@ one message. Where several nacks in a claim ask for different waits, the longest
 `max-retry-after` (1 hour by default) is clamped to it. The **backoff** ends
 within about 10 ms of the wait's end (one backoff quantum plus the slack) while the instance that took the nack
 runs, and within the backoff backstop (5 s by default) if that instance dies. On a cluster, while a partition cannot be
-reached, every partition's backoffs end up to one backoff backstop late, plus the command timeout (`max-wait`,
-30 s) when the partition times out rather than refusing (see [`scheduling.md`](scheduling.md), "Not built"). The key is then claimable at once,
+reached, backoffs are released once per backoff backstop, at most one batch per reachable partition each time, and
+the unreachable partition's backoffs wait for it to come back (see [`scheduling.md`](scheduling.md), "Not built"). The key is then claimable at once,
 **unless a claim still holds it**: after a partial nack, the claim lives on while it owes other messages, and the
 key becomes claimable when that claim is settled or its lease lapses (E1 comes first).
 

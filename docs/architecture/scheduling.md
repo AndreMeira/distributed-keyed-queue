@@ -143,11 +143,13 @@ durable as the store's persistence: with persistence off, a restart of the store
 Cancelling a schedule.
 
 **One partition unreachable puts every partition on the backstop.** The partitions are moved or released
-concurrently, and every one is tried, so a reachable partition's due entries are still handled by each pass. But
-a call that any partition fails is a failed call, so the mover has no next due time to ask for and waits for its
-backstop: while a partition is unreachable, due entries everywhere are handled up to one backstop late (60 s for
-schedules, 5 s for backoffs), plus the command timeout (`max-wait`, 30 s) when the partition times out rather than
-refusing. It only arises on a cluster with a node down (a single server has one partition). Reporting the
+concurrently, and every one is tried, so each pass still handles what is due on the reachable partitions. But a
+call that any partition fails is a failed call: the mover learns neither the next due time nor whether a partition
+was full, so it neither re-arms nor repeats, and waits for its backstop. While a partition is unreachable the mover
+therefore runs once per backstop (60 s for schedules, 5 s for backoffs, plus the command timeout, `max-wait` 30 s,
+when the partition times out rather than refusing), and each pass handles at most one batch (`schedule-limit` or
+`backoff-limit`) per reachable partition: a backlog drains one batch per backstop, and the unreachable
+partition's own entries wait for it to come back. It only arises on a cluster with a node down (a single server has one partition). Reporting the
 reachable partitions' next due time despite the failure, or a mover loop per partition, would remove it; neither
 is worth its cost for one DKQ with its own Valkey per service, the scope these choices assume. That scope, and
 what an infrastructure-level DKQ would rework, are in [`../research/tick-driven-mover.md`](../research/tick-driven-mover.md).
