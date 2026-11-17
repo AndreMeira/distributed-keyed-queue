@@ -64,8 +64,9 @@ maintenance module next to the watchdog.
 
 - **`DueTimer`** holds a `homelab.common.flow.TimeLatch` (toolkit 0.0.7), armed for the backstop at the latest.
   When it fires, the timer swaps in a fresh latch and emits a tick into a `Queue.sliding(1)`, so ticks coalesce
-  and none is lost. A request ("fire no later than X") brings the latch earlier; requests are rounded up to
-  `schedule-quantum`, so entries due within one window share one pass. The first latch fires at once, so a pass
+  and none is lost. A request ("fire no later than X") brings the latch earlier, but never closer than
+  `schedule-floor`: firings are at least one floor apart, and entries due within one floor of a pass share the
+  next one. The first latch fires at once, so a pass
   runs on boot.
 - **`ScheduleMover`**, on every tick, calls `QueueStore.moveDue`, which runs `move.lua` on every partition. Every
   partition is tried even when another fails, but the answer is all or nothing: one unreachable partition fails
@@ -77,22 +78,26 @@ maintenance module next to the watchdog.
 
 ## Lateness
 
-A scheduled message joins its key's line **within one quantum plus the slack of its due time** (about 100 ms at
+A scheduled message joins its key's line **within one floor plus the slack of its due time** (about 100 ms at
 most) while the instance that accepted it runs, and **within one backstop (60 s)** if that instance dies, since any
 other instance's backstop then moves it.
 
-**Usually within one quantum (50 ms).** A request is rounded up to the quantum grid, which costs up to one
-quantum, and requests on the grid are at least one quantum apart, so the slack drops none of them. The exception is
-the backstop latch, which is not on the grid: a request that falls less than the slack before the backstop is
-dropped, and the latch then fires at the backstop, up to one slack later. Every instance that learns a due time sweeps then (herding); the move is idempotent, so
-the extra passes find nothing.
+**Usually on time.** A tick is never asked for closer than the floor (50 ms), so an entry due more than one floor
+after the last request or pass that armed the timer is moved at its due time; one due sooner waits for the floor,
+up to 50 ms late. A pass for another entry re-arms the timer, so a message scheduled well ahead can still land
+within a floor of that pass, and wait for it. The slack drops a request that would move the timer earlier by less than the slack,
+so an entry due just before one already asked for is moved with it, up to the slack late.
+
+The floor is also what caps the mover: every request on a latch is made after the previous firing, so firings are
+at least one floor apart, one pass per floor per instance at most, however dense the due times. Every instance that
+learns a due time sweeps then (herding); the move is idempotent, so the extra passes find nothing.
 
 ## Configuration
 
 | key | default | meaning |
 |---|---|---|
 | `max-schedule-ahead` | 7 days | the horizon: the longest delay accepted |
-| `schedule-quantum` | 50 ms | the window a tick request is rounded up to |
+| `schedule-floor` | 50 ms | the shortest delay a tick is asked for, so passes are at least this far apart |
 | `schedule-slack` | 50 ms | how much earlier a request must be to move the timer |
 | `schedule-backstop` | 60 s | the longest the timer waits with no request |
 | `schedule-limit` | 100 | the most entries one call moves per partition |
@@ -116,7 +121,7 @@ them on time:
 | key | default | meaning |
 |---|---|---|
 | `max-retry-after` | 1 hour | the longest backoff a nack may ask for; a longer one is clamped to it |
-| `backoff-quantum` | 5 ms | the window a backoff tick request is rounded up to |
+| `backoff-floor` | 5 ms | the shortest delay a backoff tick is asked for |
 | `backoff-slack` | 5 ms | how much earlier a request must be to move the timer |
 | `backoff-backstop` | 5 s | the longest the timer waits with no request |
 | `backoff-limit` | 100 | the most backoffs one call releases per partition |

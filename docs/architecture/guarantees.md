@@ -125,7 +125,7 @@ of other keys, ids that never existed, and ids the same claim already settled.
 **C6. A nack may ask the key to wait before anyone works it again.** The wait applies to the *key*, not to
 one message. Where several nacks in a claim ask for different waits, the longest applies, and a wait longer than
 `max-retry-after` (1 hour by default) is clamped to it. The **backoff** ends
-within about 10 ms of the wait's end (one backoff quantum plus the slack) while the instance that took the nack
+within about 10 ms of the wait's end (one backoff floor plus the slack) while the instance that took the nack
 runs, and within the backoff backstop (5 s by default) if that instance dies. On a cluster, while a partition cannot be
 reached, backoffs are released once per backoff backstop, at most one batch per reachable partition each time, and
 the unreachable partition's backoffs wait for it to come back (see [`scheduling.md`](scheduling.md), "Not built"). The key is then claimable at once,
@@ -172,9 +172,9 @@ moved, behind whatever was sent for the key in between, and O1–O4, E1–E5, D1
 then on. The first schedule of an id wins (a repeat is answered `scheduled = false`), and an id still queued for
 the key when it falls due is the same message (D5): the scheduled copy is discarded.
 
-**S3. Lateness is bounded.** A scheduled message joins its key's line within one quantum plus the slack of its due
-time (about 100 ms at most, usually within 50 ms) while the instance that accepted it runs, and within one
-backstop (60 s by default) if that instance dies.
+**S3. Lateness is bounded.** A scheduled message joins its key's line within one floor plus the slack of its due
+time (about 100 ms at most, and usually on time: see [`scheduling.md`](scheduling.md), "Lateness") while the
+instance that accepted it runs, and within one backstop (60 s by default) if that instance dies.
 Delivery to a consumer then follows the ordinary path.
 
 **S4. A scheduled message is as durable as the store's persistence, no more.** It waits in the store's memory

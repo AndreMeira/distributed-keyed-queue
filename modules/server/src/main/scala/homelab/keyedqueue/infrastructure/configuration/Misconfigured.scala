@@ -11,7 +11,7 @@ import homelab.common.error.ApplicationError
  *
  * @param reason what could not be read, or what was wrong with it
  */
-final case class Misconfigured(reason: String) extends ApplicationError, ApplicationError.AdapterError, ApplicationError.UnrecoverableError:
+final case class Misconfigured(reason: String) extends ApplicationError.AdapterError, ApplicationError.UnrecoverableError:
 
   /** @return the message */
   override def message: String = s"The service is misconfigured: $reason"

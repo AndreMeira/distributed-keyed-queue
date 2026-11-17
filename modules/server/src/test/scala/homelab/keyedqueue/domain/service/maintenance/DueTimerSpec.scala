@@ -35,14 +35,26 @@ object DueTimerSpec extends ZIOSpecDefault:
         _     <- done(tick, "the tick")
       yield assertTrue(early.isEmpty)
     },
-    test("a request is rounded up to the quantum, so entries due within one window share a tick") {
+    test("a request for less than the floor fires one floor from now, so entries due within it share a tick") {
       for
         timer <- booted(DueTimer.Config(50.millis, Duration.Zero, 1.hour))
         _     <- timer.triggerIn(10.millis)
         tick  <- timer.tick.fork
-        _     <- TestClock.adjust(40.millis)
+        _     <- TestClock.adjust(49.millis)
         early <- tick.poll
-        _     <- TestClock.adjust(10.millis)
+        _     <- TestClock.adjust(1.milli)
+        _     <- done(tick, "the tick")
+      yield assertTrue(early.isEmpty)
+    },
+    test("a request for more than the floor fires at its own time, not rounded to a window") {
+      // The grid this replaced rounded 70 ms up to 100 ms; the floor leaves it alone.
+      for
+        timer <- booted(DueTimer.Config(50.millis, Duration.Zero, 1.hour))
+        _     <- timer.triggerIn(70.millis)
+        tick  <- timer.tick.fork
+        _     <- TestClock.adjust(69.millis)
+        early <- tick.poll
+        _     <- TestClock.adjust(1.milli)
         _     <- done(tick, "the tick")
       yield assertTrue(early.isEmpty)
     },

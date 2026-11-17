@@ -34,12 +34,12 @@ import zio.*
  * @param maxScheduleAhead the longest delay a schedule may ask for: scheduled messages wait in the store's
  *                         memory until due
  * @param maxRetryAfter the longest backoff a nack may ask for; longer requests are clamped
- * @param scheduleQuantum the window a request for a schedule tick is rounded up to, so entries due together
- *                        share one pass
+ * @param scheduleFloor the shortest delay a schedule tick is asked for, so passes are at least this far apart and
+ *                      entries due within one floor of a pass share the next
  * @param scheduleSlack how much earlier a request must be to move the schedule timer
  * @param scheduleBackstop the longest the schedule timer waits with no request
  * @param scheduleLimit the most scheduled messages one call moves per partition
- * @param backoffQuantum the window a request for a backoff tick is rounded up to
+ * @param backoffFloor the shortest delay a backoff tick is asked for
  * @param backoffSlack how much earlier a request must be to move the backoff timer
  * @param backoffBackstop the longest the backoff timer waits with no request
  * @param backoffLimit the most ended backoffs one call releases per partition
@@ -59,11 +59,11 @@ final case class QueueConfig(
   maxBatchLimit: Int,
   maxScheduleAhead: Duration,
   maxRetryAfter: Duration,
-  scheduleQuantum: Duration,
+  scheduleFloor: Duration,
   scheduleSlack: Duration,
   scheduleBackstop: Duration,
   scheduleLimit: Int,
-  backoffQuantum: Duration,
+  backoffFloor: Duration,
   backoffSlack: Duration,
   backoffBackstop: Duration,
   backoffLimit: Int,
@@ -124,11 +124,11 @@ object QueueConfig:
       Option.when(config.maxBatchLimit <= 0)("max-batch-limit must be greater than zero"),
       Option.when(config.maxScheduleAhead.toMillis <= 0)("max-schedule-ahead must be greater than zero"),
       Option.when(config.maxRetryAfter.toMillis <= 0)("max-retry-after must be greater than zero"),
-      Option.when(config.scheduleQuantum.toMillis < 0)("schedule-quantum must not be negative"),
+      Option.when(config.scheduleFloor.toMillis < 0)("schedule-floor must not be negative"),
       Option.when(config.scheduleSlack.toMillis < 0)("schedule-slack must not be negative"),
       Option.when(config.scheduleBackstop.toMillis <= 0)("schedule-backstop must be greater than zero"),
       Option.when(config.scheduleLimit <= 0)("schedule-limit must be greater than zero"),
-      Option.when(config.backoffQuantum.toMillis < 0)("backoff-quantum must not be negative"),
+      Option.when(config.backoffFloor.toMillis < 0)("backoff-floor must not be negative"),
       Option.when(config.backoffSlack.toMillis < 0)("backoff-slack must not be negative"),
       Option.when(config.backoffBackstop.toMillis <= 0)("backoff-backstop must be greater than zero"),
       Option.when(config.backoffLimit <= 0)("backoff-limit must be greater than zero"),

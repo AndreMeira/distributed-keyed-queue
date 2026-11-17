@@ -4,8 +4,6 @@ package homelab.keyedqueue.domain.service.maintenance
 import homelab.common.flow.TimeLatch
 import zio.*
 
-import java.time.Instant
-
 
 /**
  * When the next scheduled message may be due: a one-shot latch, swapped for a fresh one each time it fires, and
@@ -16,30 +14,33 @@ import java.time.Instant
  * asked for, or after the backstop when nobody asks. Ticks coalesce: the pipe holds at most one, which means
  * "move again", so a tick emitted while the mover is busy is never lost and never doubled.
  *
- * Requests are rounded up to a multiple of the quantum, so entries due within one window share a firing and a
- * pass, at most one quantum late; the latch's slack drops a request that would move it earlier by less than
- * that. See `docs/research/tick-driven-mover.md`.
+ * No request is closer than the floor: one asking for less fires one floor from now. Every request on a latch is
+ * made after the previous firing, so firings are at least one floor apart, which caps the mover at one pass per
+ * floor however dense the due times are, and entries due within one floor of a pass share the next one. An entry
+ * due further out fires on time; only one due within a floor of its request is late, by up to the floor. The
+ * latch's slack drops a request that would move it earlier by less than the slack, so a dropped one is up to the
+ * slack late. See `docs/research/tick-driven-mover.md`.
  *
  * @param latch the current latch, replaced by a fresh one each time it fires
  * @param ticks one pending tick at most, for the mover
- * @param config the quantum, the slack and the backstop
+ * @param config the floor, the slack and the backstop
  */
 final class DueTimer(latch: Ref[TimeLatch], ticks: Queue[Unit], config: DueTimer.Config):
 
   /**
-   * Fire no later than `delay` from now, rounded up to the quantum.
+   * Fire no later than `delay` from now, and no sooner than the floor.
    *
    * A request landing between a firing and the swap hits the fired latch and changes nothing; it is covered,
    * because it was made after its write to the store and the tick being emitted comes before the next pass.
    *
-   * @param delay how long from now, at the latest; a negative one means now
+   * @param delay how long from now, at the latest; one shorter than the floor, negative included, means one floor
    * @return noop
    */
   def triggerIn(delay: Duration): UIO[Unit] =
     for
       now     <- Clock.instant
       current <- latch.get
-      _       <- current.triggerAt(DueTimer.quantised(now.plus(DueTimer.bounded(delay)), config.quantum))
+      _       <- current.triggerAt(now.plus(DueTimer.bounded(delay.max(config.floor))))
     yield ()
 
   /**
@@ -79,12 +80,13 @@ object DueTimer:
   /**
    * How the timer fires.
    *
-   * @param quantum the window requests are rounded up to; zero or less means no rounding
+   * @param floor the shortest delay a request is honoured with, so firings are at least this far apart; zero or
+   *              less means none
    * @param slack how much earlier a request must be to move the latch
    * @param backstop the longest the latch waits with no request, which bounds lateness when early requests are
    *                 lost with the instance that held them
    */
-  final case class Config(quantum: Duration, slack: Duration, backstop: Duration)
+  final case class Config(floor: Duration, slack: Duration, backstop: Duration)
 
   /**
    * A timer whose first latch fires at once, so the first pass after a boot runs immediately and its answer
@@ -93,7 +95,7 @@ object DueTimer:
    * Building one allocates its latch and its pipe and nothing else; firing is [[DueTimer.run]], which whoever
    * owns the lifetime forks.
    *
-   * @param config the quantum, the slack and the backstop
+   * @param config the floor, the slack and the backstop
    * @return the timer
    */
   def make(config: Config): UIO[DueTimer] =
@@ -102,25 +104,6 @@ object DueTimer:
       latch <- Ref.make(first)
       ticks <- Queue.sliding[Unit](1)
     yield DueTimer(latch, ticks, config)
-
-  /**
-   * An instant rounded up to the next multiple of the quantum, counted from the epoch.
-   *
-   * Rounding absolute instants rather than delays is what lets requests made at different moments for the
-   * same window share one firing.
-   *
-   * @param instant the instant asked for
-   * @param quantum the window; zero or less leaves the instant as it is
-   * @return the rounded instant, never earlier than `instant`
-   */
-  private def quantised(instant: Instant, quantum: Duration): Instant =
-    val window = quantum.toMillis
-    if window <= 0 then instant
-    else
-      val millis = instant.toEpochMilli
-      val above  = Math.floorMod(millis, window)
-      val rest   = if above == 0 && instant.getNano % 1_000_000 == 0 then 0L else window - above
-      Instant.ofEpochMilli(millis + rest)
 
   /**
    * A delay brought within `[0, 7 days × 1,000]`, far beyond any schedule and far from overflowing an instant

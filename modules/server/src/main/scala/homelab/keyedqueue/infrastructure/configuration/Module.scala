@@ -65,15 +65,15 @@ object Module:
     ZLayer.fromFunction((config: QueueConfig) => LockCleanup.Config(config.lockTrimInterval, config.lockTrimGrace, config.sweepLimit))
 
   /**
-   * The two timers' slices: each one's quantum, slack and backstop.
+   * The two timers' slices: each one's floor, slack and backstop.
    *
    * @return the layer
    */
   val dueTimers: ZLayer[QueueConfig, Nothing, DueTimers.Config] =
     ZLayer.fromFunction((config: QueueConfig) =>
       DueTimers.Config(
-        schedules = DueTimer.Config(config.scheduleQuantum, config.scheduleSlack, config.scheduleBackstop),
-        backoffs = DueTimer.Config(config.backoffQuantum, config.backoffSlack, config.backoffBackstop),
+        schedules = DueTimer.Config(config.scheduleFloor, config.scheduleSlack, config.scheduleBackstop),
+        backoffs = DueTimer.Config(config.backoffFloor, config.backoffSlack, config.backoffBackstop),
       )
     )
 
