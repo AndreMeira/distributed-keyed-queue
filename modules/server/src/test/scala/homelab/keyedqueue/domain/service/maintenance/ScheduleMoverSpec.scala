@@ -26,7 +26,7 @@ object ScheduleMoverSpec extends ZIOSpecDefault:
     test("it asks the timer for a tick when the store says the next message falls due") {
       for
         store <- InMemoryQueueStore.make
-        _     <- store.movesWith(Right(QueueStore.Moved(0, 0, full = false, nextDueIn = Some(10.seconds), failed = 0)))
+        _     <- store.movesWith(Right(QueueStore.Moved(0, 0, full = false, nextDueIn = Some(10.seconds))))
         _     <- moving(store)
         _     <- movedTimes(store, 1)
         _     <- TestClock.adjust(9.seconds)
@@ -38,8 +38,8 @@ object ScheduleMoverSpec extends ZIOSpecDefault:
     test("a full call is repeated at once, without waiting for a tick") {
       for
         store <- InMemoryQueueStore.make
-        _     <- store.movesWith(Right(QueueStore.Moved(100, 0, full = true, nextDueIn = None, failed = 0)))
-        _     <- store.movesWith(Right(QueueStore.Moved(1, 0, full = false, nextDueIn = None, failed = 0)))
+        _     <- store.movesWith(Right(QueueStore.Moved(100, 0, full = true, nextDueIn = None)))
+        _     <- store.movesWith(Right(QueueStore.Moved(1, 0, full = false, nextDueIn = None)))
         _     <- moving(store)
         _     <- movedTimes(store, 2)
       yield assertCompletes
@@ -51,16 +51,6 @@ object ScheduleMoverSpec extends ZIOSpecDefault:
         _     <- moving(store)
         _     <- movedTimes(store, 1)
         _     <- TestClock.adjust(backstop)
-        _     <- movedTimes(store, 2)
-      yield assertCompletes
-    },
-    test("an unreachable part of the store does not stop the rest from arming the next tick") {
-      for
-        store <- InMemoryQueueStore.make
-        _     <- store.movesWith(Right(QueueStore.Moved(0, 0, full = false, nextDueIn = Some(5.seconds), failed = 1)))
-        _     <- moving(store)
-        _     <- movedTimes(store, 1)
-        _     <- TestClock.adjust(5.seconds)
         _     <- movedTimes(store, 2)
       yield assertCompletes
     },

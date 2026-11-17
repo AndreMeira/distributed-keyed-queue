@@ -54,8 +54,8 @@ trait QueueStore:
    *
    * @param limit the most entries to move per part of the store in one call; a full call says so, and is
    *              repeated
-   * @return what it moved, when the next entry falls due, and how many parts could not be reached; aborts with an
-   *         `AdapterError` only when no part could be
+   * @return what it moved, and when the next entry falls due; aborts with an `AdapterError` when any part of the
+   *         store could not be reached, though every part is still tried, so the reachable ones are moved
    */
   def moveDue(limit: Int): IO[ApplicationError.AdapterError, QueueStore.Moved]
 
@@ -125,8 +125,8 @@ trait QueueStore:
    *
    * @param limit the most backoffs to release per part of the store in one call; a full call says so, and is
    *              repeated
-   * @return how many were released, when the next backoff ends, and how many parts could not be reached; aborts
-   *         with an `AdapterError` only when no part could be
+   * @return how many were released, and when the next backoff ends; aborts with an `AdapterError` when any part
+   *         of the store could not be reached, though every part is still tried, so the reachable ones are released
    */
   def releaseDue(limit: Int): IO[ApplicationError.AdapterError, QueueStore.Released]
 
@@ -149,10 +149,8 @@ object QueueStore:
    * @param full whether a part of the store hit the limit, so more may be due right now
    * @param nextDueIn how long until the next scheduled message falls due, on the store's clock; absent when
    *                  nothing is scheduled
-   * @param failed how many parts of the store could not be reached: the rest were still moved, and their next
-   *               due time is still reported, so one unreachable part does not hold the others back
    */
-  final case class Moved(moved: Int, discarded: Int, full: Boolean, nextDueIn: Option[Duration], failed: Int)
+  final case class Moved(moved: Int, discarded: Int, full: Boolean, nextDueIn: Option[Duration])
 
   /**
    * What one sweep repaired.
@@ -170,7 +168,5 @@ object QueueStore:
    * @param released how many held-back keys had their backoff end
    * @param full whether a part of the store hit the limit, so more may have ended right now
    * @param nextDueIn how long until the next backoff ends, on the store's clock; absent when none is pending
-   * @param failed how many parts of the store could not be reached: the rest were still released, and their next
-   *               end is still reported
    */
-  final case class Released(released: Int, full: Boolean, nextDueIn: Option[Duration], failed: Int)
+  final case class Released(released: Int, full: Boolean, nextDueIn: Option[Duration])

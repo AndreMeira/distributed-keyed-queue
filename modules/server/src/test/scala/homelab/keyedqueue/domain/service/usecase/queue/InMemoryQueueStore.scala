@@ -125,7 +125,7 @@ final class InMemoryQueueStore(
     for
       _     <- moveCalls.update(_ + 1)
       reply <- moves.modify(queued => (queued.headOption, queued.drop(1)))
-      moved <- ZIO.fromEither(reply.getOrElse(Right(QueueStore.Moved(0, 0, full = false, nextDueIn = None, failed = 0))))
+      moved <- ZIO.fromEither(reply.getOrElse(Right(QueueStore.Moved(0, 0, full = false, nextDueIn = None))))
     yield moved
 
   /**
@@ -171,7 +171,7 @@ final class InMemoryQueueStore(
     for
       _        <- releaseCalls.update(_ + 1)
       reply    <- releases.modify(queued => (queued.headOption, queued.drop(1)))
-      released <- ZIO.fromEither(reply.getOrElse(Right(QueueStore.Released(0, full = false, nextDueIn = None, failed = 0))))
+      released <- ZIO.fromEither(reply.getOrElse(Right(QueueStore.Released(0, full = false, nextDueIn = None))))
     yield released
 
   /**

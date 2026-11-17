@@ -27,7 +27,7 @@ object BackoffMoverSpec extends ZIOSpecDefault:
     test("it asks the timer for a tick when the store says the next backoff ends") {
       for
         store <- InMemoryQueueStore.make
-        _     <- store.releasesWith(Right(QueueStore.Released(0, full = false, nextDueIn = Some(10.seconds), failed = 0)))
+        _     <- store.releasesWith(Right(QueueStore.Released(0, full = false, nextDueIn = Some(10.seconds))))
         _     <- releasing(store)
         _     <- releasedTimes(store, 1)
         _     <- TestClock.adjust(9.seconds)
@@ -39,8 +39,8 @@ object BackoffMoverSpec extends ZIOSpecDefault:
     test("a full call is repeated at once, without waiting for a tick") {
       for
         store <- InMemoryQueueStore.make
-        _     <- store.releasesWith(Right(QueueStore.Released(100, full = true, nextDueIn = None, failed = 0)))
-        _     <- store.releasesWith(Right(QueueStore.Released(1, full = false, nextDueIn = None, failed = 0)))
+        _     <- store.releasesWith(Right(QueueStore.Released(100, full = true, nextDueIn = None)))
+        _     <- store.releasesWith(Right(QueueStore.Released(1, full = false, nextDueIn = None)))
         _     <- releasing(store)
         _     <- releasedTimes(store, 2)
       yield assertCompletes

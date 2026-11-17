@@ -188,13 +188,13 @@ object DequeueHandBackSpec extends ZIOSpecDefault:
         ZIO.succeed(QueueStore.Swept(Chunk.empty))
 
       override def releaseDue(limit: Int): IO[ApplicationError.AdapterError, QueueStore.Released] =
-        ZIO.succeed(QueueStore.Released(0, full = false, nextDueIn = None, failed = 0))
+        ZIO.succeed(QueueStore.Released(0, full = false, nextDueIn = None))
 
       override def schedule(scheduled: ScheduledSubmission): IO[ApplicationError.AdapterError, QueueStore.Scheduled] =
         ZIO.succeed(QueueStore.Scheduled(scheduled = true, dueIn = scheduled.delay))
 
       override def moveDue(limit: Int): IO[ApplicationError.AdapterError, QueueStore.Moved] =
-        ZIO.succeed(QueueStore.Moved(0, 0, full = false, nextDueIn = None, failed = 0))
+        ZIO.succeed(QueueStore.Moved(0, 0, full = false, nextDueIn = None))
 
     object Recording:
 
