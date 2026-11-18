@@ -34,8 +34,8 @@ import zio.*
  * @param maxScheduleAhead the longest delay a schedule may ask for: scheduled messages wait in the store's
  *                         memory until due
  * @param maxRetryAfter the longest backoff a nack may ask for; longer requests are clamped
- * @param scheduleFloor the shortest delay a schedule tick is asked for, so passes are at least this far apart and
- *                      entries due within one floor of a pass share the next
+ * @param scheduleFloor the shortest delay a schedule tick is asked for, so ticks are at least this far apart and
+ *                      entries due within one floor of a pass share the next; a full pass still repeats at once
  * @param scheduleSlack how much earlier a request must be to move the schedule timer
  * @param scheduleBackstop the longest the schedule timer waits with no request
  * @param scheduleLimit the most scheduled messages one call moves per partition

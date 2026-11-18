@@ -88,8 +88,10 @@ up to 50 ms late. A pass for another entry re-arms the timer, so a message sched
 within a floor of that pass, and wait for it. The slack drops a request that would move the timer earlier by less than the slack,
 so an entry due just before one already asked for is moved with it, up to the slack late.
 
-The floor is also what caps the mover: every request on a latch is made after the previous firing, so firings are
-at least one floor apart, one pass per floor per instance at most, however dense the due times. Every instance that
+The floor also spaces the ticks: every request on a latch is made after the previous firing, so firings are at
+least one floor apart, however dense the due times, and entries due close together share a pass. It bounds the
+ticks, not the calls to the store: a pass that comes back full is repeated at once, without a tick, so a backlog
+is drained as fast as its passes run. Every instance that
 learns a due time sweeps then (herding); the move is idempotent, so the extra passes find nothing.
 
 ## Configuration
@@ -97,7 +99,7 @@ learns a due time sweeps then (herding); the move is idempotent, so the extra pa
 | key | default | meaning |
 |---|---|---|
 | `max-schedule-ahead` | 7 days | the horizon: the longest delay accepted |
-| `schedule-floor` | 50 ms | the shortest delay a tick is asked for, so passes are at least this far apart |
+| `schedule-floor` | 50 ms | the shortest delay a tick is asked for, so ticks are at least this far apart |
 | `schedule-slack` | 50 ms | how much earlier a request must be to move the timer |
 | `schedule-backstop` | 60 s | the longest the timer waits with no request |
 | `schedule-limit` | 100 | the most entries one call moves per partition |

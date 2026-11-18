@@ -15,8 +15,9 @@ import zio.*
  * "move again", so a tick emitted while the mover is busy is never lost and never doubled.
  *
  * No request is closer than the floor: one asking for less fires one floor from now. Every request on a latch is
- * made after the previous firing, so firings are at least one floor apart, which caps the mover at one pass per
- * floor however dense the due times are, and entries due within one floor of a pass share the next one. An entry
+ * made after the previous firing, so firings are at least one floor apart however dense the due times are, and
+ * entries due within one floor of a pass share the next one. That bounds the ticks, not the store calls: a mover
+ * whose pass comes back full repeats it at once, without a tick, so a backlog drains as fast as its passes run. An entry
  * due further out fires on time; only one due within a floor of its request is late, by up to the floor. The
  * latch's slack drops a request that would move it earlier by less than the slack, so a dropped one is up to the
  * slack late. See `docs/research/tick-driven-mover.md`.
