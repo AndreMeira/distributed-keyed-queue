@@ -1,7 +1,6 @@
 package homelab.keyedqueue.domain.service.maintenance
 
 
-import homelab.common.error.ApplicationError
 import homelab.common.monitor.Monitor
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import zio.*
@@ -16,8 +15,8 @@ import zio.*
  * scheduled messages from arriving (the others' backstops move them, late).
  *
  * Every call to the store is measured as `ScheduleMover.move`: how many passes run, how long each takes, and
- * how many fail. What a pass moved is in its log line, not a metric: `Monitor` counts and times operations and
- * nothing finer, on purpose (`docs/research/tick-driven-mover.md`, "Metrics").
+ * how many fail. What a pass moved is not recorded: `Monitor` counts and times operations and nothing finer, on
+ * purpose (`docs/research/tick-driven-mover.md`, "Metrics").
  *
  * See `docs/research/tick-driven-mover.md`.
  *
@@ -45,23 +44,14 @@ final class ScheduleMover(monitor: Monitor, store: QueueStore, timer: DueTimer, 
   /**
    * One call to the store, and what follows from its answer.
    *
-   * @return noop; a failure is logged and the loop continues, because a store that is briefly unavailable is
-   *         not a reason to stop delivering for ever (the next backstop retries)
+   * @return noop; a failure is recorded by the measurement and the loop continues, because a store that is
+   *         briefly unavailable is not a reason to stop delivering for ever (the next backstop retries)
    */
   private def move: UIO[Unit] =
-    monitor.measure("ScheduleMover.move")(store.moveDue(config.limit)).foldZIO(failed, moved)
+    monitor.measure("ScheduleMover.move")(store.moveDue(config.limit)).flatMap(moved).ignore
 
   /**
-   * Report a move that failed.
-   *
-   * @param error what the store reported
-   * @return noop
-   */
-  private def failed(error: ApplicationError): UIO[Unit] =
-    ZIO.logWarning(s"moving due scheduled messages failed: ${error.message}")
-
-  /**
-   * Report a move, then either move again at once or ask the timer for the next due time.
+   * Either move again at once or ask the timer for the next due time.
    *
    * A full call means more may be due right now, so it is repeated without waiting for a tick, as the watchdog
    * repeats a full sweep; going through the timer would cost a floor. `handled > 0` keeps a
@@ -72,7 +62,7 @@ final class ScheduleMover(monitor: Monitor, store: QueueStore, timer: DueTimer, 
    */
   private def moved(result: QueueStore.Moved): UIO[Unit] =
     val handled = result.moved + result.discarded
-    movedInfo(result) *> (if result.full && handled > 0 then move else next(result))
+    if result.full && handled > 0 then move else next(result)
 
   /**
    * Ask the timer for a tick when the next scheduled message falls due.
@@ -84,16 +74,6 @@ final class ScheduleMover(monitor: Monitor, store: QueueStore, timer: DueTimer, 
     result.nextDueIn match
       case Some(in) => timer.triggerIn(in)
       case None     => ZIO.unit
-
-  /**
-   * Report what a call moved, when it moved anything.
-   *
-   * @param result what the store moved
-   * @return noop
-   */
-  private def movedInfo(result: QueueStore.Moved): UIO[Unit] =
-    if result.moved == 0 && result.discarded == 0 then ZIO.unit
-    else ZIO.logInfo(s"moved due scheduled messages: moved=${result.moved} discarded=${result.discarded}")
 
 
 object ScheduleMover:

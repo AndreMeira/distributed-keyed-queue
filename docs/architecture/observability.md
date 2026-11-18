@@ -2,7 +2,7 @@
 title: "What dkq reports about itself, and how to read it"
 type: architecture
 status: current
-updated: 2026-09-11
+updated: 2026-11-18
 tags: [observability, opentelemetry, metrics, tracing, latency, dashboards]
 ---
 
@@ -98,9 +98,9 @@ measurement; what the store shows is each thing the wait asked for:
 - **`tryAcquire`, `release`, `refresh`, `trim`, `withdraw`** are one script each, ordinary latencies.
 
 The cleanup loop follows the watchdog's rule: it runs on a timer (`DKQ_LOCK_TRIM_INTERVAL`), so what
-matters is what it removed, which it logs — abandoned locks by name, because a holder that died without
-releasing is an anomaly worth pointing at. `RedisLockStore.trim` spans exist for the call itself; the
-interesting number is in the log line.
+matters is what it removed — abandoned locks, each a holder that died without releasing. That is not recorded
+yet: `RedisLockStore.trim` spans cover the call itself, and reporting what it removed waits for a logging
+guideline.
 
 ## What the agent adds, and what it misses
 
@@ -119,9 +119,14 @@ Two gaps worth knowing before trusting a trace:
   multi-second `XREAD` span is the system idling correctly, not a slow query. The same caution as
   `dequeue`, one layer down.
 
-The watchdog is not instrumented at all: it runs on a timer (`DKQ_SWEEP_INTERVAL`), and what matters about
-it is what it repaired, which it logs. If it ever needs a metric, the count of reclaimed and released keys
-is the useful one — not its latency.
+The watchdog is not instrumented itself: it runs on a timer (`DKQ_SWEEP_INTERVAL`), and what matters about
+it is what it repaired, which is not recorded yet; `RedisQueueStore.sweep` spans cover each call. If it ever
+needs a metric, the count of reclaimed keys is the useful one — not its latency.
+
+**DKQ writes no log lines of its own.** The only ones come from the `Monitor`'s logging decorator
+(`Monitor.WithLogging`), which writes a line when a traced or measured operation fails. What the loops repaired,
+moved or released, and a wake read that failed, are left unreported until a logging guideline says what deserves a
+line.
 
 ## Turning it on
 

@@ -71,7 +71,7 @@ maintenance module next to the watchdog.
 - **`ScheduleMover`**, on every tick, calls `QueueStore.moveDue`, which runs `move.lua` on every partition. Every
   partition is tried even when another fails, but the answer is all or nothing: one unreachable partition fails
   the call. A full call is repeated at once; otherwise the mover asks the timer for a tick at the next due time
-  the store reported. A failed call is logged, and the backstop retries.
+  the store reported. A failed call is recorded by its measurement, and the backstop retries.
 - **The schedule use case** asks the timer for a tick at the due time it recorded, after the write. A request is
   only a hint: the store is the truth, and an instance that dies with its requests in memory loses nothing but
   time.
@@ -135,8 +135,8 @@ other messages): the key then becomes claimable when that claim is settled or re
 ## Observability
 
 Each call the movers make to the store is measured, as `ScheduleMover.move` and `BackoffMover.release` (count,
-latency, failures), and `RedisQueueStore.schedule`, `moveDue` and `releaseDue` are traced. What a pass moved and discarded is in its log line. Nothing
-finer is recorded: per-message counts or a lateness histogram would take a metrics system of their own
+latency, failures), and `RedisQueueStore.schedule`, `moveDue` and `releaseDue` are traced. Nothing
+finer is recorded, not even what a pass moved and discarded: per-message counts or a lateness histogram would take a metrics system of their own
 ([`observability.md`](observability.md)).
 
 ## Memory and durability

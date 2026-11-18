@@ -1,7 +1,6 @@
 package homelab.keyedqueue.domain.service.maintenance
 
 
-import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.persistence.QueueStore
 import homelab.keyedqueue.domain.types.QueueName
 import zio.*
@@ -47,8 +46,8 @@ final class Watchdog(store: QueueStore, config: Watchdog.Config, queues: Ref[Set
   /**
    * One pass over the known queues.
    *
-   * @return noop; a failure is logged and the loop continues, because a store that is briefly unavailable is
-   *         not a reason to stop repairing for ever
+   * @return noop; a failure is recorded by the store's trace and the loop continues, because a store that is
+   *         briefly unavailable is not a reason to stop repairing for ever
    */
   private def sweepAll: UIO[Unit] =
     queues.get.flatMap(ZIO.foreachDiscard(_)(sweep))
@@ -60,41 +59,21 @@ final class Watchdog(store: QueueStore, config: Watchdog.Config, queues: Ref[Set
    * @return noop
    */
   private def sweep(queue: QueueName): UIO[Unit] =
-    store
-      .sweep(queue, config.sweepLimit)
-      .foldZIO(
-        error => sweptWarn(queue, error),
-        swept =>
-          val touched = swept.reclaimed.size
-          // A full pass means there is more waiting; do not make it wait for the next tick. `touched > 0`
-          // keeps a non-positive limit from turning an empty pass into an immediate one, forever.
-          sweptInfo(queue, swept) *> sweep(queue).when(touched > 0 && touched >= config.sweepLimit).unit,
-      )
+    store.sweep(queue, config.sweepLimit).flatMap(swept(queue)).ignore
 
   /**
-   * Report a sweep that failed.
+   * Sweep again at once when the pass was full.
    *
-   * Logged as a warning: the loop carries on, and the next pass is one interval away.
-   *
-   * @param queue the queue whose sweep failed
-   * @param error what the store reported
-   * @return noop
-   */
-  private def sweptWarn(queue: QueueName, error: ApplicationError): UIO[Unit] =
-    ZIO.logWarning(s"sweep of $queue failed: ${error.message}")
-
-  /**
-   * Report what a pass repaired, when it repaired anything.
-   *
-   * Silent on an empty pass, so the only lines are the ones that say a claim lapsed or a worker died.
+   * A full pass means there is more waiting; it does not wait for the next tick. `touched > 0` keeps a
+   * non-positive limit from turning an empty pass into an immediate one, for ever.
    *
    * @param queue the queue just swept
-   * @param swept what the pass repaired
-   * @return noop
+   * @param result what the pass repaired
+   * @return noop, once the queue is quiet
    */
-  private def sweptInfo(queue: QueueName, swept: QueueStore.Swept): UIO[Unit] =
-    if swept.isEmpty then ZIO.unit
-    else ZIO.logInfo(s"swept $queue: reclaimed=${swept.reclaimed.size}")
+  private def swept(queue: QueueName)(result: QueueStore.Swept): UIO[Unit] =
+    val touched = result.reclaimed.size
+    sweep(queue).when(touched > 0 && touched >= config.sweepLimit).unit
 
 
 object Watchdog:
