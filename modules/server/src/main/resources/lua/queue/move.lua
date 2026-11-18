@@ -5,7 +5,7 @@
 -- KEYS[3] wake       stream  the partition's; one entry per queue in which a key was made claimable
 -- KEYS[4] delayed    zset  the partition's held-back keys, <len(queue)>:<queue><key> -> when it may be worked
 -- ARGV[1] limit      the most due entries to move in this call
--- ARGV[2] queues     what every queue key of the partition starts with, e.g. {p:3}:v3:q:
+-- ARGV[2] queues     what every queue key of the partition starts with, e.g. {p:3}:v4:q:
 -- returns            {moved, discarded, full (1 or 0), millis until the next entry falls due, or -1 when none}
 --
 -- Idempotent, so every instance can run it at the same moment: the script is atomic, so one moves an entry and
