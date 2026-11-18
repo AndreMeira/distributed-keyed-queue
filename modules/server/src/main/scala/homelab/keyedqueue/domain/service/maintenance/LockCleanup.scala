@@ -1,7 +1,6 @@
 package homelab.keyedqueue.domain.service.maintenance
 
 
-import homelab.common.error.ApplicationError
 import homelab.keyedqueue.domain.service.persistence.LockStore
 import homelab.keyedqueue.domain.types.LockName
 import zio.*
@@ -37,41 +36,23 @@ final class LockCleanup(store: LockStore, config: LockCleanup.Config):
   /**
    * One trim, repeated while full.
    *
-   * @return noop; a failure is logged and the loop continues, because a store that is briefly unavailable
-   *         is not a reason to stop cleaning for ever
+   * @return noop; a failure is recorded by the store's trace and the loop continues, because a store that is
+   *         briefly unavailable is not a reason to stop cleaning for ever
    */
   private def pass: UIO[Unit] =
-    store
-      .trim(config.grace, config.limit)
-      .foldZIO(
-        error => trimWarn(error),
-        // A full pass means there is more waiting; do not make it wait for the next tick. `nonEmpty`
-        // keeps a non-positive limit from turning an empty pass into an immediate one, for ever.
-        freed => trimInfo(freed) *> pass.when(freed.nonEmpty && freed.size >= config.limit).unit,
-      )
+    store.trim(config.grace, config.limit).flatMap(trimmed).ignore
 
   /**
-   * Report a trim that failed.
+   * Trim again at once when the pass was full.
    *
-   * Logged as a warning: the loop carries on, and the next pass is one interval away.
+   * A full pass means there is more waiting; it does not wait for the next tick. `nonEmpty` keeps a
+   * non-positive limit from turning an empty pass into an immediate one, for ever.
    *
-   * @param error what the store reported
-   * @return noop
+   * @param freed the locks the pass freed
+   * @return noop, once nothing more is due
    */
-  private def trimWarn(error: ApplicationError): UIO[Unit] =
-    ZIO.logWarning(s"lock trim failed: ${error.message}")
-
-  /**
-   * Report what a pass removed, when it removed anything.
-   *
-   * Named, not counted: an abandoned hold is a holder that died without releasing, which is an anomaly
-   * worth pointing at.
-   *
-   * @param freed the locks freed
-   * @return noop
-   */
-  private def trimInfo(freed: Chunk[LockName]): UIO[Unit] =
-    ZIO.logInfo(s"trimmed abandoned locks: ${freed.mkString(", ")}").unless(freed.isEmpty).unit
+  private def trimmed(freed: Chunk[LockName]): UIO[Unit] =
+    pass.when(freed.nonEmpty && freed.size >= config.limit).unit
 
 
 object LockCleanup:

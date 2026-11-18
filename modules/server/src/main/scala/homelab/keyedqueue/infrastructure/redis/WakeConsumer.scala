@@ -19,8 +19,8 @@ import scala.jdk.CollectionConverters.*
  * One reader per partition — a blocking `XREAD` holds its connection for the whole wait and may not span
  * slots — feeding one queue that `consume` drains, so a caller sees a single intake however the streams are
  * spread. A batch is what had accumulated rather than what one read returned, and repeated names within it
- * collapse. A read that fails does not reach the caller: the reader logs it, backs off, and carries on from
- * the id it already holds.
+ * collapse. A read that fails does not reach the caller: the reader backs off and carries on from the id it
+ * already holds.
  *
  * See `docs/architecture/readiness-and-wake.md`.
  *
@@ -61,8 +61,8 @@ final class WakeConsumer(
   /**
    * Check that every partition has a connection to read on, before any reader is forked.
    *
-   * A partition without one is this code wired wrong, and a reader cannot report it: its loop logs every
-   * failure and retries, so the mistake would show up as a stream nobody reads. Refusing here makes it a
+   * A partition without one is this code wired wrong, and a reader cannot report it: its loop retries every
+   * failure, so the mistake would show up as a stream nobody reads. Refusing here makes it a
    * startup failure instead.
    *
    * @return noop; aborts with `PartitionConnectionMissing` when a partition has no connection
@@ -86,19 +86,19 @@ final class WakeConsumer(
         .flatMap(resolved => positions.set(resolved.toMap))
 
   /**
-   * What a failed read leaves behind: a line in the log, and a pause before trying again.
+   * What a failed read leaves behind: a pause before trying again.
    *
    * No gap is reported: the stream replays, so the next read resumes from the id this one holds and a
    * failure delays entries rather than losing them. A trim while the reader was away costs latency — a
    * waiter sleeps until its recheck or its patience — and never work. A reader that lands here every round
-   * has degraded into interval polling, which the log line makes visible.
+   * has degraded into interval polling. Nothing in DKQ reports it: the read is not traced (the Java agent's
+   * `XREAD` span is the one record), and a log line waits for a logging guideline.
    *
-   * @param error why the read failed
+   * @param error why the read failed, not reported
    * @return noop
    */
   private def recovered(error: RedisFailure): UIO[Unit] =
-    ZIO.logWarning(s"wake read failed, retrying: ${error.message}")
-      *> ZIO.sleep(WakeConsumer.retryBackoff)
+    ZIO.sleep(WakeConsumer.retryBackoff)
 
   /**
    * One `XREAD` on this partition's stream, resuming from where it was left.
