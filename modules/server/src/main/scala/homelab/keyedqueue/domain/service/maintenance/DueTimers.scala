@@ -18,7 +18,7 @@ object DueTimers:
   /**
    * How each timer fires.
    *
-   * @param schedules the schedule timer's quantum, slack and backstop
-   * @param backoffs the backoff timer's quantum, slack and backstop
+   * @param schedules the schedule timer's floor, slack and backstop
+   * @param backoffs the backoff timer's floor, slack and backstop
    */
   final case class Config(schedules: DueTimer.Config, backoffs: DueTimer.Config)

@@ -64,7 +64,7 @@ final class ScheduleMover(monitor: Monitor, store: QueueStore, timer: DueTimer, 
    * Report a move, then either move again at once or ask the timer for the next due time.
    *
    * A full call means more may be due right now, so it is repeated without waiting for a tick, as the watchdog
-   * repeats a full sweep; going through the timer would cost up to a quantum. `handled > 0` keeps a
+   * repeats a full sweep; going through the timer would cost a floor. `handled > 0` keeps a
    * non-positive limit from turning an empty call into an immediate one, for ever.
    *
    * @param result what the store moved
