@@ -2,7 +2,7 @@
 title: "What dkq keeps in Redis, and what each structure is for"
 type: architecture
 status: current
-updated: 2026-11-14
+updated: 2026-11-18
 tags: [redis, keys, data-structures, lua, claims, ordering, streams]
 ---
 
@@ -11,15 +11,17 @@ tags: [redis, keys, data-structures, lua, claims, ordering, streams]
 Every piece of state lives in Redis; dkq pods hold nothing but connections. This is the whole layout, why
 each structure has the type it has, and which script touches it.
 
-`QueueKeys` builds the queue's names and `LockKeys` the lock's. Nothing else in the codebase constructs a
-key name, apart from `claim.lua`, `sweep.lua` and the lock's `trim.lua`, which rebuild per-key ones at
-runtime — see [Cluster](#one-partition-one-slot).
+`QueueKeys` builds a queue's names, `ScheduleKeys` and `BackoffKeys` the partition's names the two movers need,
+`LockKeys` the lock's, and `KeyLayout` the keys every kind shares (the partition's `wake` and `delayed`) and the
+schema marker. Nothing else in the code constructs a key name, apart from the scripts that rebuild names at runtime
+from a prefix: `claim.lua` and `sweep.lua` a key's own, `move.lua` and `backoff.lua` a queue's, and the lock's
+`trim.lua` a waiters list — see [One partition, one slot](#one-partition-one-slot).
 
 ## The layout
 
-Everything a queue owns is prefixed `{p:<partition>}:v4:q:<queue>`, where the partition is
-`hash(queue) % 16` (the partition count is a constant of the code) and decides which cluster slot the queue
-lives in, and `v4` is the schema version every key carries
+Everything a queue owns is prefixed `{p:<partition>}:v4:q:<queue>`, where the partition is the queue name's
+hash modulo the partition count (sixteen on a cluster, one on a single server, recorded in the schema marker) and
+decides which cluster slot the queue lives in, and `v4` is the schema version every key carries
 ([`../research/schema-versioned-keys.md`](../research/schema-versioned-keys.md)). Five structures belong to
 the queue and three to a key inside it; `wake` and `delayed` belong to the partition and are shared by every
 queue in it. `{Q}` below is one queue's prefix, `{W}` its partition's (version included in both). A queue name
@@ -28,15 +30,15 @@ another queue's key; a key may hold anything:
 
 | key | type | maps | written by |
 |---|---|---|---|
-| `{Q}:ready` | zset | key → its place in line; keys with work and nobody working them | produce, consume, complete, watchdog |
-| `{Q}:seq` | string | the counter that scores `ready` | produce, complete, watchdog |
-| `{Q}:claimed` | zset | key → lease deadline, unix millis | consume, complete, watchdog |
+| `{Q}:ready` | zset | key → its place in line; keys with work and nobody working them | produce, consume, complete, watchdog, move, backoff |
+| `{Q}:seq` | string | the counter that scores `ready` | produce, complete, watchdog, move, backoff |
+| `{Q}:claimed` | zset | key → lease deadline, unix millis | consume, renew, complete, watchdog |
 | `{Q}:fence` | hash | key → claim counter | consume, complete, watchdog |
 | `{Q}:attempts` | hash | **message id** → delivery count | consume, complete |
-| `{W}:delayed` | zset | `<len(queue)>:<queue><key>` → when that key may be worked again, unix millis: the partition's held-back keys | complete, produce, move, watchdog, backoff |
-| `{W}:wake` | **stream** | one entry per key made claimable: `kind` `q`, the queue's name, the key (a move appends one per queue, without the key) | produce, complete, watchdog, move |
-| `{Q}:msgs:<key>` | list | that key's message ids, producer order | produce, complete |
-| `{Q}:payloads:<key>` | hash | message id → the message | produce, consume, complete |
+| `{W}:delayed` | zset | `<len(queue)>:<queue><key>` → when that key may be worked again, unix millis: the partition's held-back keys | complete, backoff |
+| `{W}:wake` | **stream** | one entry per key made claimable: `kind` `q`, `name` (the queue) and `key`; a move or a backoff release appends one per queue, without `key`. Shared with the lock, whose entries are `kind` `l` | produce, complete, watchdog, move, backoff; the lock's release and trim |
+| `{Q}:msgs:<key>` | list | that key's message ids, producer order | produce, complete, move |
+| `{Q}:payloads:<key>` | hash | message id → the message | produce, complete, move |
 | `{Q}:owned:<key>` | set | ids the live claim holds and has not settled | consume, complete, watchdog |
 | `{W}:scheduled` | zset | member → when the scheduled message falls due, unix millis | schedule, move |
 | `{W}:scheduled:payloads` | hash | member → the scheduled message, until it is moved | schedule, move |
@@ -44,6 +46,14 @@ another queue's key; a key may hold anything:
 The last two belong to the partition, like `wake`: one scheduled set for all of its queues. A member names the
 queue, the key and the message id, length-prefixed: `<byte length of queue>:<queue><byte length of key>:<key><id>`.
 `move.lua` builds the queue keys it appends to from the partition's prefix. See [`scheduling.md`](scheduling.md).
+
+"Written by" means the scripts that change a structure; reading it (`delayed` is checked by most of them) is not
+listed.
+
+**One key sits outside every prefix: `dkq:layout:schema`.** A string recording the layout the store was written
+under, `v<schema>.p<partitions>` (`v4.p16` on a cluster), deliberately without a version or a hash tag: it is the
+fence every version reads. An instance records its layout with `SET NX` when it boots and refuses to start when a
+different one is recorded (`KeyLayout.verify`). See [`redis-cluster.md`](redis-cluster.md).
 
 ## Why the types are what they are
 
@@ -94,9 +104,11 @@ land between the two. Shared by every queue in the partition because a listener'
 was issued with — a stream per queue means a set that grows as queues are served, and a queue asked for
 while a read is in flight goes unheard until that read returns.
 
-Entries are trimmed with `MAXLEN ~ 1000` on every append and carry two fields: `queue`, which is what routes
-the entry to the right waiting consumers now that the stream name no longer says, and `key`, which is for a
-human reading `XRANGE` — a consumer claims whatever is at the head rather than the key it was told about.
+Entries are trimmed with `MAXLEN ~ 1000` on every append and carry `kind`; `name`, the queue's or the lock's,
+which is what routes the entry to the right waiters now that the stream name no longer says; and, for one key made
+claimable, `key`, which is for a human reading `XRANGE`: a consumer claims whatever is at the head rather than
+the key it was told about. A move or a backoff release appends one entry per queue it touched, without `key`, so a
+burst of due entries cannot trim unread ones.
 
 The trim is a budget shared by the partition, and it is denominated in entries rather than time: at a few
 thousand appends a second, a thousand entries is a fraction of a second of history. That only matters to a
@@ -139,9 +151,10 @@ taken away — and both have to be asked, because the deadline itself says nothi
 the same millisecond as the one before it writes the deadline the claim already had, and is a renewal like
 any other.
 
-**Every addition to `ready` appends a wake.** `enqueue.lua`, `settle.lua` and both watchdog sweeps append
-to `wake` in the same script, and only where the key actually became claimable — a nacked key parked in
-`delayed` announces nothing, because its wake comes later, from the sweep that releases it.
+**Every addition to `ready` appends a wake.** `enqueue.lua`, `settle.lua`, the watchdog's `sweep.lua` and the
+movers' `move.lua` and `backoff.lua` append to `wake` in the same script, and only where a key actually became
+claimable — a nacked key parked in `delayed` announces nothing, because its wake comes later, from the backoff
+release that frees it.
 
 ## Two rules that are easy to break
 
@@ -154,7 +167,8 @@ counter moving when the claim ends — including when the watchdog ends it.
 while the claim is still alive, so both `settle.lua`'s claim-end and the watchdog's reclaim must check
 `ZSCORE delayed` before pushing to `ready`. Push in both places and the key lands on `ready` twice, and two
 consumers claim it — the fence stops the loser corrupting anything, but it works for nothing.
-`QueueStoreSpec` has a regression test for exactly this.
+`RedisQueueStoreSpec` has a regression test for exactly this ("a claim reclaimed while a nack's backoff is pending
+queues its key once, not twice").
 
 The same partial nack is why the backoff release (`backoff.lua`) must check `claimed` before it publishes a key
 whose backoff has ended. The backoff can end while the holder is still working the rest of its batch, and publishing the key
@@ -183,7 +197,10 @@ announces them — hash to one cluster slot and a script may touch them all. Onl
 the `v4` that follows the tag names the schema without moving anything between slots. `claim.lua` and `sweep.lua`
 build `msgs:<key>`, `payloads:<key>` and `owned:<key>` at runtime from `prefix` rather than receiving them
 in `KEYS` — legal only because the tag guarantees the same slot, and unavoidable for `claim.lua`, which
-does not know which key it has until it pops one. That is why both take `prefix` as an argument.
+does not know which key it has until it pops one. That is why both take `prefix` as an argument. `move.lua` and
+`backoff.lua` go one step further: they serve every queue of the partition, so they build a queue's keys as well,
+from the partition's `…:v4:q:` prefix and the queue their entry names, which no caller could list in `KEYS`
+because which queues are due is only known once the script has read its range.
 
 The same rule is what decides where `wake` lives: a stream tagged differently from the keys it announces
 would be a different slot, so the append could not share a script with the push that made the key claimable.
@@ -198,7 +215,8 @@ them. See [`redis-cluster.md`](redis-cluster.md).
 What moves between them is [`lock-mechanics.md`](lock-mechanics.md).
 
 The lock API shares the store but none of the queue's structures. Everything it owns is prefixed
-`{p:<partition>}:v4:l`, where the partition is `hash(lock) % 16` — the queue's tag space, so a lock's keys
+`{p:<partition>}:v4:l`, where the partition is the lock name's hash modulo the partition count, as for a queue —
+the queue's tag space, so a lock's keys
 and the stream announcing it hash to one slot and a script may touch them together
 ([`redis-cluster.md`](redis-cluster.md)). `{L}` below is one partition's prefix, and the structures it names
 are shared by every lock in that partition, with the lock's name as a member or field:
